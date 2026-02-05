@@ -1,0 +1,6 @@
+# Go build workflow script requires approval (state-changing).
+prefix_rule(
+  pattern = ["./scripts/go-build.sh"],
+  decision = "prompt",
+  justification = "Go build diagnostics run toolchain commands and write logs; require explicit approval",
+)

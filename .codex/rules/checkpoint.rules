@@ -1,0 +1,20 @@
+# Read-only git commands: allow
+prefix_rule(
+  pattern = ["git", ["status", "diff", "log", "show", "rev-parse", "merge-base"]],
+  decision = "allow",
+  justification = "Read-only git inspection is safe",
+)
+
+# Potentially state-changing commands: prompt
+prefix_rule(
+  pattern = ["git", ["stash", "commit", "tag", "reset", "checkout", "switch"]],
+  decision = "prompt",
+  justification = "State-changing git actions require approval",
+)
+
+# Running our checkpoint tool: prompt (even though it's ours)
+prefix_rule(
+  pattern = ["./scripts/checkpoint.sh"],
+  decision = "prompt",
+  justification = "Checkpoint tool modifies git state and writes logs; require explicit approval",
+)

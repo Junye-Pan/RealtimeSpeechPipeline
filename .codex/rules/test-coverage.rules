@@ -1,0 +1,6 @@
+# Test coverage workflow script requires approval (state-changing).
+prefix_rule(
+  pattern = ["./scripts/test-coverage.sh"],
+  decision = "prompt",
+  justification = "Test coverage run executes tests and writes reports; require explicit approval",
+)

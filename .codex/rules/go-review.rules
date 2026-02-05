@@ -1,0 +1,6 @@
+# Go review workflow script requires approval (state-changing).
+prefix_rule(
+  pattern = ["./scripts/go-review.sh"],
+  decision = "prompt",
+  justification = "Go review diagnostics run toolchain commands and write logs; require explicit approval",
+)

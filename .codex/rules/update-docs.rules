@@ -1,0 +1,6 @@
+# Update-docs workflow script requires approval (state-changing).
+prefix_rule(
+  pattern = ["./scripts/update-docs.sh"],
+  decision = "prompt",
+  justification = "Update-docs writes documentation files and logs; require explicit approval",
+)

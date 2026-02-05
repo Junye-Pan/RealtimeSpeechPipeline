@@ -1,0 +1,6 @@
+# Refactor-clean workflow script requires approval (state-changing).
+prefix_rule(
+  pattern = ["./scripts/refactor-clean.sh"],
+  decision = "prompt",
+  justification = "Refactor-clean moves files and runs verification; require explicit approval",
+)
