@@ -44,8 +44,9 @@ detect_cmd() {
 
 RUN_CMD="$(detect_cmd)"
 if [[ -z "$RUN_CMD" ]]; then
+  MODE_UPPER="$(printf '%s' "$MODE" | tr '[:lower:]' '[:upper:]')"
   echo "verify.sh: No default verify command found."
-  echo "Set VERIFY_${MODE^^}_CMD to enforce checks."
+  echo "Set VERIFY_${MODE_UPPER}_CMD to enforce checks."
   exit 0
 fi
 

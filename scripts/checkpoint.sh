@@ -8,11 +8,30 @@ KEEP="${3:-5}"
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$ROOT"
 
-LOG_DIR=".codex"
+DEFAULT_LOG_DIR="${CHECKPOINT_LOG_DIR:-.codex}"
+FALLBACK_LOG_DIR="${CHECKPOINT_FALLBACK_LOG_DIR:-.checkpoint}"
+
+dir_is_writable() {
+  local dir="$1"
+  local test_file="$dir/.checkpoint-write-test.$$"
+  mkdir -p "$dir" "$dir/checkpoints" 2>/dev/null || return 1
+  : > "$test_file" 2>/dev/null || return 1
+  rm -f "$test_file"
+  return 0
+}
+
+if dir_is_writable "$DEFAULT_LOG_DIR"; then
+  LOG_DIR="$DEFAULT_LOG_DIR"
+elif dir_is_writable "$FALLBACK_LOG_DIR"; then
+  LOG_DIR="$FALLBACK_LOG_DIR"
+  echo "checkpoint.sh: warning: default log dir not writable; using $LOG_DIR" >&2
+else
+  echo "checkpoint.sh: no writable log dir (checked: $DEFAULT_LOG_DIR, $FALLBACK_LOG_DIR)" >&2
+  exit 1
+fi
+
 LOG_FILE="$LOG_DIR/checkpoints.log"
 META_DIR="$LOG_DIR/checkpoints"
-
-mkdir -p "$LOG_DIR" "$META_DIR"
 
 now_ts() { date +%Y-%m-%d-%H:%M; }
 slugify() { echo "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g' | sed -E 's/^-+|-+$//g'; }
@@ -33,10 +52,67 @@ tests_run() {
   ./scripts/verify.sh "$mode"
 }
 
+create_workspace_snapshot() {
+  local ts="$1"
+  local slug="$2"
+  local snap_dir snap_path log_dir_rel
+  local -a tar_excludes
+  snap_dir="$META_DIR/snapshots"
+  snap_path="$snap_dir/${ts}_${slug}.tar.gz"
+  mkdir -p "$snap_dir"
+  tar_excludes=(--exclude="./.git")
+  if [[ "$LOG_DIR" != /* ]]; then
+    log_dir_rel="${LOG_DIR#./}"
+    tar_excludes+=(--exclude="./${log_dir_rel}/checkpoints/snapshots")
+  fi
+  tar -czf "$snap_path" "${tar_excludes[@]}" .
+  echo "$snap_path"
+}
+
+ensure_log_dirs() {
+  mkdir -p "$LOG_DIR" "$META_DIR"
+}
+
+stash_push_checkpoint() {
+  local msg="$1"
+  local dir rel spec seen
+  local -a excludes
+
+  for dir in "$LOG_DIR" "$DEFAULT_LOG_DIR" "$FALLBACK_LOG_DIR"; do
+    [[ -z "$dir" ]] && continue
+    [[ "$dir" = /* ]] && continue
+    rel="${dir#./}"
+    spec=":(exclude)$rel"
+    seen=0
+    for existing in "${excludes[@]:-}"; do
+      if [[ "$existing" == "$spec" ]]; then
+        seen=1
+        break
+      fi
+    done
+    if [[ "$seen" -eq 0 ]]; then
+      excludes+=("$spec")
+    fi
+  done
+
+  if [[ "${#excludes[@]}" -eq 0 ]]; then
+    git stash push -u -m "$msg" >/dev/null 2>&1
+  else
+    # Keep checkpoint artifacts out of stash so logs persist across runs.
+    git stash push -u -m "$msg" -- . "${excludes[@]}" >/dev/null 2>&1
+  fi
+}
+
 latest_checkpoint_line() {
   local name="$1"
   # last matching line
   grep -F " | $name | " "$LOG_FILE" | tail -n 1 || true
+}
+
+trim_spaces() {
+  local s="$1"
+  # shellcheck disable=SC2001
+  echo "$s" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
 }
 
 write_meta() {
@@ -60,20 +136,34 @@ create_checkpoint() {
   echo "1) verify quick..."
   tests_run "quick" || { echo "verify quick failed; aborting checkpoint create"; exit 1; }
 
-  local KIND REF EXTRA=""
+  local KIND REF EXTRA="" STASH_MSG SNAP_PATH
   if git_clean; then
     KIND="tag"
     REF="checkpoint/${SLUG}/${TS}"
-    git tag -a "$REF" -m "checkpoint $NAME @ $TS" "$SHA"
+    if ! git tag -a "$REF" -m "checkpoint $NAME @ $TS" "$SHA" >/dev/null 2>&1; then
+      KIND="head"
+      REF="$SHA"
+      EXTRA="fallback=tag-failed"
+    fi
   else
     KIND="stash"
-    git stash push -u -m "checkpoint:${NAME} @ ${TS}" >/dev/null
-    REF="$(git rev-parse --short stash@{0})"
-    EXTRA="stash_ref=stash@{0}"
+    STASH_MSG="checkpoint:${NAME} @ ${TS}"
+    if stash_push_checkpoint "$STASH_MSG"; then
+      REF="$(git rev-parse --short stash@{0})"
+      EXTRA="stash_ref=stash@{0}"
+    else
+      SNAP_PATH="$(create_workspace_snapshot "$TS" "$SLUG")"
+      KIND="workspace-snapshot"
+      REF="$SNAP_PATH"
+      EXTRA="fallback=stash-failed"
+    fi
   fi
 
   local COV
   COV="$(coverage_read | tail -n 1 || true)"
+
+  # `git stash -u` can remove untracked log dirs; re-create before writing artifacts.
+  ensure_log_dirs
 
   echo "${TS} | ${NAME} | ${SHA} | kind=${KIND} ref=${REF} branch=${BRANCH} cov=${COV} ${EXTRA}" >> "$LOG_FILE"
 
@@ -107,9 +197,10 @@ verify_checkpoint() {
     echo "Checkpoint not found: $NAME"; exit 1
   fi
 
-  local BASE_TS BASE_SHA
-  BASE_TS="$(echo "$LINE" | awk -F' | ' '{print $1}')"
-  BASE_SHA="$(echo "$LINE" | awk -F' | ' '{print $3}')"
+  local BASE_TS BASE_SHA _base_name _rest _ts_raw _sha_raw
+  IFS='|' read -r _ts_raw _base_name _sha_raw _rest <<< "$LINE"
+  BASE_TS="$(trim_spaces "$_ts_raw")"
+  BASE_SHA="$(trim_spaces "$_sha_raw")"
 
   local CUR_SHA
   CUR_SHA="$(git rev-parse --short HEAD)"
@@ -154,11 +245,13 @@ list_checkpoints() {
 
   echo "NAME | TIMESTAMP | SHA | STATUS"
   echo "--------------------------------"
+  local ts name sha _rest _ts_raw _name_raw _sha_raw
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
-    ts="$(echo "$line" | awk -F' | ' '{print $1}')"
-    name="$(echo "$line" | awk -F' | ' '{print $2}')"
-    sha="$(echo "$line" | awk -F' | ' '{print $3}')"
+    IFS='|' read -r _ts_raw _name_raw _sha_raw _rest <<< "$line"
+    ts="$(trim_spaces "$_ts_raw")"
+    name="$(trim_spaces "$_name_raw")"
+    sha="$(trim_spaces "$_sha_raw")"
     status="behind"
     if [[ "$sha" == "$HEAD" ]]; then
       status="current"
