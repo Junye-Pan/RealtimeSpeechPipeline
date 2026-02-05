@@ -212,6 +212,12 @@ A named behavior profile (for example, simple versus advanced) that defines defa
 17) **Runtime Contract**
 The invariant set the framework guarantees: deterministic graph semantics, cancellation-first behavior, bounded resource behavior, and end-to-end observability.
 
+18) **State Contract**
+A contract that defines state classes and ownership boundaries: turn-ephemeral runtime state, session-durable conversational state, and control-plane configuration state, including lifecycle and handoff expectations across execution locations.
+
+19) **Identity/Correlation Contract**
+A contract that defines canonical identities and correlation keys (session, turn, event, pipeline version) plus idempotency-key semantics so events, retries, replay, and observability remain unambiguous across transports and regions.
+
 ### 4.2 Core signals
 
 1) **Data progress signals**
