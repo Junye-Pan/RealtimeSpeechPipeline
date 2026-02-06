@@ -79,7 +79,7 @@ Definition: "RSPP is the infrastructure runtime that executes real-time speech p
 - Adaptive scheduling / shared execution pools (dynamic batching as a possible optimization)
 
 11) **Multi-region routing and failover**
-- Policy-driven active-active session routing across regions
+- Active-active at the fleet level (sessions distributed across regions), with single-authority execution per session enforced via placement leases/epochs.
 - Multi-region routing means the control plane assigns sessions to the lowest-latency healthy region based on policy, with failover to a secondary region if capacity or health degrades.
 
 12) **Transport-agnostic orchestration**
@@ -174,13 +174,16 @@ A named profile that defines default runtime semantics (e.g., **Simple** vs **Ad
 3) **GraphDefinition**  
 The canonical directed streaming dataflow implied by a normalized PipelineSpec for a given pipeline version. It defines legal paths and declared semantics (fan‑out/fan‑in, merge rules, fallback graph, terminal outcomes).
 
-4) **CompiledGraph** (turn-scoped)  
+4) **ResolvedTurnPlan** (turn-scoped)  
 A *turn‑scoped*, immutable plan produced at turn start by combining:  
 - PipelineSpec (normalized)  
 - Control-plane decisions (placement, resolved pipeline version, admission outcome)  
 - Policy evaluation results (provider binding, degrade posture)  
 - Provider/transport capability snapshots (as of turn start)  
-CompiledGraph freezes provider bindings, budgets, edge buffering policies, and determinism rules **for the duration of the turn**.
+ResolvedTurnPlan freezes provider bindings, budgets, edge buffering policies, and determinism rules **for the duration of the turn**.
+
+SessionPreludeGraph (optional)  
+A session-scoped subgraph that runs continuously and may emit turn boundary intent signals (for example `turn_open`) from continuous inputs (for example VAD + turn detection). Its outputs feed Turn Arbitration Rules and are outside turn-scoped work accounting.
 
 ---
 
@@ -194,6 +197,8 @@ The smallest conversational work unit from user-intent intake to assistant outpu
 - `commit`: successful completion for that turn  
 - `abort`: terminated before commit (reason: cancel, timeout, error, admission reject, disconnect, etc.)  
 A `close` marker is emitted after terminal outcome to finalize lifecycle.
+`commit` indicates the runtime has completed generation for the turn and will emit no further DataLane outputs for that turn. Delivery completion (e.g., playback finished / transport accepted) is represented separately via ControlLane delivery signals.
+A turn begins when the runtime accepts a `turn_open` (TurnStart) ControlLane event, typically emitted by a session-scoped turn detector (for example VAD) and/or transport boundary signals.
 
 7) **Turn Arbitration Rules**  
 A contract defining whether turns may overlap and how preemption behaves (e.g., barge‑in creates a new turn that can preempt an in‑flight turn). It defines late-event handling (events arriving after abort), grace windows, and which terminal semantics are authoritative within a session.
@@ -204,7 +209,7 @@ A contract defining whether turns may overlap and how preemption behaves (e.g., 
 
 8) **Event ABI (Schema + Envelope) Contract**  
 The versioned ABI for all RSPP events. It defines:  
-- Envelope fields (session_id, turn_id, pipeline_version, edge_id/node_id, event_id, causal_parent_id, idempotency_key, lane, sequence numbers)  
+- Envelope fields (session_id, turn_id (optional; required for turn-scoped events), pipeline_version, edge_id/node_id, event_id, causal_parent_id, idempotency_key, lane, sequence numbers, sync_id (optional), sync_domain (optional), discontinuity_id (optional))  
 - Timestamp fields (see Timebase in 4.1.5)  
 - Compatibility rules (schema evolution, version negotiation, deprecation)  
 - Ordering and dedupe expectations (per lane/per edge)  
@@ -216,7 +221,7 @@ The universal, immutable exchange unit. Events carry **data** (audio/text), **co
 RSPP classifies events into lanes with explicit priority and buffering semantics:  
 - **DataLane**: audio frames, text deltas, semantic content outputs  
 - **ControlLane**: turn boundaries, cancellation, budgets, admission, routing/migration, connection state  
-- **TelemetryLane**: metrics, traces, logs, debug snapshots, replay markers  
+- **TelemetryLane**: metrics, traces, logs, debug snapshots (best-effort).  
 Lanes share the same Event ABI but may use different buffering strategies and drop policies to protect low latency.
 
 ---
@@ -230,15 +235,19 @@ A typed event processor: `in(EventStream) → out(EventStream)` subject to runti
 - cancel responsiveness (preemptible vs cooperative)  
 - resource characteristics (CPU/GPU/network)  
 - state usage (hot vs durable)  
+- execution scope (session-scoped or turn-scoped)
+Session-scoped nodes run continuously within a session (including outside active turns) and may emit ControlLane turn boundary signals. Turn-scoped nodes run only within an active turn and MUST assume a valid `turn_id`.
 
-12) **NodeExecutionContext** (turn-scoped)  
+12) **NodeExecutionContext** (session- or turn-scoped)  
 A runtime-provided context injected into every node invocation, containing:  
+- `turn_id` (optional): absent in session-scoped execution  
 - `CancelToken` and cancel scope (see 4.1.5)  
 - `BudgetHandle` (remaining time/capacity, degrade triggers)  
 - `TimebaseHandle` (timestamping and latency measurement)  
 - `StateHandle` (turn-ephemeral, session-hot, session-durable state access)  
 - `TelemetryHandle` (non-blocking emission to TelemetryLane)  
-- `DeterminismContext` (random seed, ordering markers; see 4.1.6)
+- `DeterminismContext` (required for turn-scoped execution; optional in session scope; see 4.1.6)
+If `turn_id` is absent, the context is session-scoped and MUST NOT allow access to turn-ephemeral state. StateHandle MUST enforce this scope boundary. If `DeterminismContext` is present in session scope, it is session-level only and MUST NOT claim turn-level replay guarantees.
 
 13) **Preemption Hooks Contract**  
 Nodes must implement lifecycle hooks that enable fast interruption when required by policy/runtime:  
@@ -259,8 +268,23 @@ A declarative buffer/queue policy attached to an edge, defining:
 - defaulting source (explicit edge config vs ExecutionProfile defaults)
 In **Simple** mode, an edge may omit explicit BufferSpec fields when the selected ExecutionProfile supplies deterministic defaults; **Advanced** mode can override per edge.
 
+SyncDropPolicy (optional)  
+Declares how drops behave for synchronized data streams:
+- `group_by`: envelope field used for atomic grouping (default: `sync_id`)
+- `policy`: `atomic_drop`, `drop_with_discontinuity`, or `no_sync`
+- `scope`: `edge_local` or `plan_wide`
+If `policy=atomic_drop`, dropping any event in a group on an edge MUST drop all events in that group for that edge. If `policy=drop_with_discontinuity`, runtime MUST emit `discontinuity(sync_domain, discontinuity_id, reason)` ControlLane signals so downstream can reset and recover.
+If cross-edge synchronization is required, the ResolvedTurnPlan MUST declare `scope=plan_wide` and propagate discontinuity markers to all affected edges in the sync domain.
+
+FlowControlMode
+Declares how this edge applies flow control under load:
+- `signal`: producer may send until receiving `flow_xoff`; resumes on `flow_xon`
+- `credit`: producer MUST hold credits to send; downstream grants credits explicitly
+- `hybrid`: signal for coarse control plus optional credit for burst control
+ExecutionProfile MUST define default FlowControlMode per lane. Low-latency profiles SHOULD default DataLane to `signal` with deterministic shedding (for example leaky-bucket, merge, or latest-only) rather than unbounded blocking.
+
 16) **Watermarks** (a BufferSpec property)  
-High/low watermark thresholds for queue depth and/or time-in-queue. Crossing watermarks emits pressure signals and may deterministically trigger policy outcomes (drop/merge/degrade/admission actions).
+High/low watermark thresholds for queue depth and/or time-in-queue. Crossing watermarks emits pressure signals. The resulting actions (block/drop/merge/degrade/fallback) MUST be pre-resolved into the ResolvedTurnPlan at turn start, so runtime behavior remains deterministic and replayable.
 
 ---
 
@@ -284,7 +308,7 @@ A bounded execution contract across time and capacity scopes (turn/node/path/edg
 #### 4.1.6 Determinism, replay, and “sources of nondeterminism”
 
 20) **Determinism Contract**  
-Defines ordering, merge semantics, fan-in resolution, and fallback terminal-outcome semantics such that execution and replay remain consistent within a turn under a CompiledGraph.
+Defines ordering, merge semantics, fan-in resolution, and fallback terminal-outcome semantics such that execution and replay remain consistent within a turn under a ResolvedTurnPlan.
 
 21) **DeterminismContext**  
 A turn-scoped context containing:  
@@ -340,7 +364,7 @@ Defines state classes and ownership boundaries:
 The contract explicitly declares which state may be lost/reset on migration to protect low latency. This reconciles with the **stateless runtime** model: runtime instances remain disposable, while only declared durable state is externalized and reattached on placement changes.
 
 30) **Identity / Correlation / Idempotency Contract**  
-Defines canonical identities and keys: session_id, turn_id, pipeline_version, event_id, provider_invocation_id, plus idempotency rules and dedupe semantics across retries, reconnects, and failovers. Lease epoch is part of correlation to disambiguate concurrent placements.
+Defines canonical identities and keys: session_id, turn_id (required for turn-scoped events), pipeline_version, event_id, provider_invocation_id, plus idempotency rules and dedupe semantics across retries, reconnects, and failovers. Lease epoch is part of correlation to disambiguate concurrent placements.
 
 31) **Transport Boundary Contract**  
 Maps transport-domain inputs/outputs to RSPP Events (and back) while preserving non-goals (RSPP is not the transport). It defines required mappings for audio frames, playback control, and connection lifecycle.
@@ -354,17 +378,17 @@ A transport-specific adapter that normalizes connection semantics into RSPP cont
 ConnectionAdapter is a normalization surface only; it does **not** implement transport-stack media responsibilities (SFU/WebRTC/ICE/TURN, rooms/participants, or track routing).
 
 33) **Runtime Contract**  
-The invariant set RSPP guarantees: lane-prioritized control preemption, deterministic turn execution under a CompiledGraph, bounded buffering via BufferSpec/Watermarks, cancellation propagation with explicit scope, and end-to-end observability/replay correlation.
+The invariant set RSPP guarantees: lane-prioritized control preemption, deterministic turn execution under a ResolvedTurnPlan, bounded buffering via BufferSpec/Watermarks, cancellation propagation with explicit scope, and end-to-end observability/replay correlation.
 
 ---
 
 #### 4.1.9 Governance, admission, and security contracts
 
 34) **Policy Contract**  
-Defines declarative policy intent and evaluation boundaries for provider selection, degradation posture, routing preferences, circuit-break behavior, and cost controls. Policy is resolved into the CompiledGraph at turn start; policy changes apply only at explicit boundaries.
+Defines declarative policy intent and evaluation boundaries for provider selection, degradation posture, routing preferences, circuit-break behavior, and cost controls. Policy is resolved into the ResolvedTurnPlan at turn start; policy changes apply only at explicit boundaries.
 
 35) **Resource & Admission Contract**  
-Defines admission control, concurrency quotas, fairness, shared-pool scheduling, and load-shedding behavior across tenant/session/turn scopes. It specifies authoritative admit/reject/defer outcomes and overload actions that feed ControlLane signals.
+Defines admission control, concurrency quotas, fairness, shared-pool scheduling, and load-shedding behavior across tenant/session/turn scopes. It specifies authoritative admit/reject/defer outcomes and overload actions that feed ControlLane signals. At minimum, the contract MUST define: (a) the fairness key(s) used for scheduling (tenant/session/turn), (b) overload precedence rules across lanes (ControlLane protected, TelemetryLane best-effort), and (c) the scheduling points where admission and shedding decisions may be applied (edge enqueue, edge dequeue, node dispatch).
 
 36) **Security & Tenant Isolation Contract**  
 Defines tenant isolation and security responsibilities across runtime, control plane, and external-node execution: identity/authentication/authorization context propagation, secret handling, data-access constraints, and per-tenant execution plus telemetry isolation. This complements (not replaces) the External Node Boundary Contract and transport non-goals.
@@ -384,13 +408,17 @@ All signals are Events that follow the Event ABI, but are classified by lane for
 **Rule:** DataLane events may be dropped/merged under pressure only if BufferSpec declares a deterministic strategy (e.g., “latest-only” for interim ASR).
 
 #### 4.2.2 ControlLane signals (preemptive)
-- turn boundaries: open, commit/abort(reason), close  
+- turn boundaries: turn_open, commit/abort(reason), close  
 - interruption/cancellation: barge-in, stop, cancel(scope)  
 - pressure/budget: watermark crossing, budget warnings/exhaustion, runtime-selected degrade/fallback outcomes  
+- discontinuity(sync_domain, discontinuity_id, reason): indicates a break in continuity; downstream MUST reset stateful decoding/presentation pipelines for that domain
+- flow control: flow_xoff(edge_id, lane, reason), flow_xon(edge_id, lane), credit_grant(edge_id, lane, amount) (credit mode only)
 - provider outcomes: normalized errors, circuit-break events, provider switch decisions (as allowed by plan)  
 - routing/migration: placement lease issued/rotated, migration start/finish, session handoff markers  
 - admission/capacity: admit/reject/defer outcomes, load-shedding decisions  
-- connection lifecycle: connected/reconnecting/disconnected/ended, transport silence/stall
+- connection lifecycle: connected/reconnecting/disconnected/ended, transport silence/stall  
+- replay-critical markers (plan hash, determinism seed, ordering markers)
+- output delivery signals: output_accepted, playback_started, playback_completed, playback_cancelled
 
 **Rule:** ControlLane events have preemptive priority over DataLane and TelemetryLane; runtime must deliver them with minimal buffering and must not allow telemetry/data backpressure to block control delivery.
 
@@ -398,7 +426,7 @@ All signals are Events that follow the Event ABI, but are classified by lane for
 - metrics samples (queue depth, drops, cancel latency, provider RTT, p95/p99)  
 - traces/spans and correlation markers  
 - debug snapshots (selected, rate-limited)  
-- replay markers and evaluation annotations
+- non-critical replay annotations and evaluation metadata
 
 **Rule:** TelemetryLane must be safe-by-default under overload (aggressive dropping/sampling) so it cannot add tail latency to DataLane or delay ControlLane.
 
@@ -406,12 +434,15 @@ All signals are Events that follow the Event ABI, but are classified by lane for
 
 ### 4.3 Minimal rule set (what “runtime semantics” means)
 
-- **Plan freezing:** A CompiledGraph is immutable within a turn; policy/control-plane changes apply only at explicit boundaries (turn boundary or lease epoch change).  
+- **Plan freezing:** A ResolvedTurnPlan is immutable within a turn; policy/control-plane changes apply only at explicit boundaries (turn boundary or lease epoch change). Flow-control mode and thresholds (watermarks, XON/XOFF boundaries, shedding strategy) MUST be resolved into the ResolvedTurnPlan at turn start.  
 - **One terminal outcome per turn:** exactly one of `commit` or `abort` is emitted, followed by `close`.  
 - **Lane priority:** ControlLane preempts everything; DataLane is latency-protected; TelemetryLane is best-effort.  
 - **Bounded buffering:** Every Edge must have BufferSpec and watermarks (explicit or via profile defaults) so latency accumulation is always observable and controllable.  
+- **No hidden blocking:** In low-latency profiles, DataLane edges MUST NOT block indefinitely. If blocking is permitted, BufferSpec MUST declare a bounded `max_block_time` after which deterministic shedding (drop/merge/degrade) occurs.  
 - **Cancellation scope:** cancel propagation is explicit and must cancel provider invocations and buffered output generation where applicable.  
 - **Failover safety:** PlacementLease epochs prevent split-brain outputs; HotState may reset; DurableState survives with declared consistency.  
 - **Replayability:** EventTimeline + plan + determinism context define what can be replayed; provider determinism is not assumed unless recorded outputs are used.
 
 ---
+
+## 5) Modular Design: What Modules the Framework Needs
