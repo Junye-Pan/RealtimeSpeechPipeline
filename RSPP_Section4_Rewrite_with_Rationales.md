@@ -1,161 +1,4 @@
-# RSPP Voice Runtime Framework — Report (Transport-Agnostic, with LiveKit as an Optional Integration)
-
-> Goal: step beyond the current implementation constraints and redefine RSPP as a **foundational runtime framework for voice agents**—the way **NVIDIA Triton** provides a kernel and contract for inference.
-> Developers implement business logic (Nodes / Policies / custom operators); the framework guarantees **low latency, controllability, observability, and swap-ability**.
-> LiveKit is an optional integration path, not a platform dependency.
-
----
-
-## 1) Framework Positioning & Value Proposition
-
-### 1.1 One-liner
-**RSPP is the infrastructure framework for real-time voice AI teams to ship agents without rebuilding streaming, scaling, and reliability primitives.**
-
-RSPP = Real-time Speech Pipeline Platform.
-Definition: "RSPP is the infrastructure runtime that executes real-time speech pipelines (ASR/LLM/TTS) with low latency, cancellation, and observability built in."
-
-**Value proposition (for product + development teams)**
-- Saves teams weeks of infra work for real-time voice AI.
-- Latency-first runtime semantics (budgets, backpressure, cancellation).
-- Provider/model swap-ability without rewriting business logic.
-- Observability and replay built in (traces/metrics/logs/events).
-- Kubernetes-native: stateless runtime, horizontal scaling, portable deployment.
-- Multi-region routing and failover as a platform capability.
-
-### 1.2 Positioning in the Stack (vendor-agnostic)
-- **Not a voice SDK** (e.g., Vapi/Retell) and **not an RTC platform** (e.g., LiveKit/Twilio).
-- **Not a model API** (e.g., OpenAI/Google/Anthropic).
-- **RSPP sits between** transport and models: it is the runtime kernel that executes streaming speech graphs with guarantees and operational tooling.
-- LiveKit can be one transport integration, but the same runtime contract applies over WebSocket/telephony and other transport layers.
-
-### 1.3 Core User Journey (minimal example)
-- Journey: "A client streams audio → ASR → LLM → TTS → audio back."
-- Where RSPP sits: "RSPP runs the pipeline between the transport layer (LiveKit/WebSocket/telephony) and model providers, handling routing, budgets, and cancellation."
-
----
-
-## 2) What the Framework Can / Cannot Do
-
-### 2.1 What RSPP *can* do (capability boundary)
-
-1) **Executable real-time speech graphs**
-- Streaming partial/final events, multi-output, fan-out/fan-in (fan-out = one->many, fan-in = many->one (merge/select)), and fallback paths
-- Deterministic routing/ordering as part of the runtime contract
-
-2) **Unified event-driven ABI**
-- All nodes exchange a stable Event stream (audio/text/control/metrics/debug)
-- Versioned schema for compatibility and replay
-
-3) **Cancellation-first runtime**
-- Barge-in/interrupt propagates end-to-end: stop downstream generation/output, cancel in-flight calls, flush queues
-
-4) **Backpressure & budgets**
-- Bounded queues with explicit strategies (block/drop/merge)
-- Node-level budgets with timeout/fallback/degrade behaviors
-
-5) **Pluggable providers**
-- Policy-driven adapters for STT/LLM/TTS/translation
-- Swap providers/models without rewriting business nodes
-
-6) **Observability + replay by default**
-- Per node/edge latency, queue depth, drops, cancels, provider error rates
-- Session/turn/pipeline correlation; event timelines for replay/evals
-
-7) **Low-overhead runtime**
-- Low-overhead Event ABI designed to add minimal latency; overhead is measured and budgeted
-
-8) **Turn-detection primitives**
-- VAD and turn-detection are first-class and swappable
-- Kernel-managed primitive with a default implementation, represented as a node type and swappable via policy
-
-9) **Simple mode**
-- Opinionated defaults and templates to reduce developer cognitive load
-- Configuration design is a first-class concern (concise, readable, and scalable)
-- Minimal required fields; advanced knobs are opt-in
-- In practice, Simple mode is a predefined execution profile: developers provide minimal pipeline artifacts while the framework supplies default budgets, queue behavior, and fallback posture.
-
-10) **K8s-native, stateless runtime**
-- Horizontal scaling with pooled/multiplexed execution
-- Adaptive scheduling / shared execution pools (dynamic batching as a possible optimization)
-
-11) **Multi-region routing and failover**
-- Policy-driven active-active session routing across regions
-- Multi-region routing means the control plane assigns sessions to the lowest-latency healthy region based on policy, with failover to a secondary region if capacity or health degrades.
-
-12) **Transport-agnostic orchestration**
-- Same graph runs over RTC platforms, WebSockets, or telephony gateways without rewriting orchestration logic
-
-13) **Control-plane basics + external nodes**
-- Pipeline versioning + rollout policies
-- External node execution supported via isolation boundaries (sandbox/WASM later)
-
-### 2.2 What RSPP *does not* do (non-goals / explicit boundaries)
-
-1) **Not a real-time media transport stack**
-- Does not implement SFU/WebRTC/ICE/TURN, rooms/participants, or track routing
-- Use RTC platforms such as LiveKit, Mediasoup, or equivalent transport layers
-
-2) **Not a voice SDK / agent framework**
-- RSPP enables shipping agents, but is not an agent SDK
-- RSPP is a runtime kernel, not a code-first agent SDK (e.g., Pipecat, LiveKit Agents)
-- Planner/memory/tool orchestration can be built as nodes or upstream logic
-
-3) **Does not guarantee model quality**
-- Guarantees runtime semantics and operational properties, not accuracy
-
-4) **Does not own business-system integrations**
-- CRM/ticketing/payments/KB integrations belong to application nodes
-
-5) **Not a model API**
-- Works with model providers rather than replacing them
-- RSPP is not a model provider (for example OpenAI, Anthropic, Google)
-
----
-
-## 3) How Developers Use It (Developer Experience)
-
-RSPP is **spec-first**: developers define pipelines as versioned artifacts, while the runtime owns the hard parts (latency, cancellation, backpressure, observability). The control plane manages pipeline registry/versions/rollouts and session routing; the runtime kernel executes session graphs.
-
-### 3.1 What developers deliver
-
-1) **PipelineSpec (primary artifact)**
-- Declaratively defines nodes, edges, budgets, queue strategies, and fallbacks
-- Auditable, versioned, and portable across environments
-
-2) **Nodes**
-- Implement business logic: input Event stream → output Event stream
-- Examples: VAD, ASR, LLM, Segmenter, TTS, Translator, Compliance, Custom tool bridge
-
-3) **Policies (optional)**
-- Provider selection, degradation rules, circuit-breakers, cost controls, tenant/region/language routing
-
-Minimal artifact set to run a pipeline: PipelineSpec + referenced Nodes (built-in or custom) + provider configuration (API keys/endpoints).
-
-Ownership split (who defines what):
-- Developers define: PipelineSpec, custom nodes, and optional policy intent.
-- Platform/control plane defines: version resolution, rollout decisions, admission, placement/routing, and migration.
-- Runtime enforces: cancellation, backpressure, budgets, and observability semantics over the combined inputs.
-
-### 3.2 How developers run and ship
-
-1) **Quickstart (spec-first)**: pick a template PipelineSpec → configure providers → run the **local runner** (CLI that starts a single-node runtime plus a minimal control-plane stub) → connect via LiveKit/RTC/WebSocket transport → see streaming outputs + metrics  
-2) **Integration**: connect your client to a transport endpoint (LiveKit room/WebSocket/telephony gateway) using a session token/route from the control plane; the transport adapter maps audio/events into the runtime, and RSPP executes the PipelineSpec.  
-3) **Release**: publish PipelineSpec + nodes → apply rollout policies (short mention)  
-4) **CI/CD**: lint/validate specs + replay tests before deploy (short mention)  
-5) **Operate**: observe p95/p99, cancel latency, drops, provider error rates → tune budgets & strategies  
-
-### 3.3 What developers care about (the promises you must keep)
-
-- **“I only write business nodes—everything else is handled by the framework.”**
-  - budgets/backpressure/cancellation/resource limits
-  - observability by default
-  - provider swap-ability
-  - toolchain for debugging/regression/evals
-  - scale and deploy voice AI agents reliably using the framework
-
----
-
-## 4) Core Abstractions (no implementation details)
+## 4) Core Abstractions (Revised, Contract-First)
 
 RSPP is defined by a small set of **stable primitives** (what application teams build against) plus **cross‑cutting contracts** (what the runtime must guarantee). This section is intentionally transport‑agnostic and provider‑agnostic.
 
@@ -174,13 +17,13 @@ A named profile that defines default runtime semantics (e.g., **Simple** vs **Ad
 3) **GraphDefinition**  
 The canonical directed streaming dataflow implied by a normalized PipelineSpec for a given pipeline version. It defines legal paths and declared semantics (fan‑out/fan‑in, merge rules, fallback graph, terminal outcomes).
 
-4) **CompiledGraph** (turn-scoped)  
+4) **ResolvedTurnPlan** (a.k.a. **CompiledGraph**, turn-scoped)  
 A *turn‑scoped*, immutable plan produced at turn start by combining:  
 - PipelineSpec (normalized)  
 - Control-plane decisions (placement, resolved pipeline version, admission outcome)  
 - Policy evaluation results (provider binding, degrade posture)  
 - Provider/transport capability snapshots (as of turn start)  
-CompiledGraph freezes provider bindings, budgets, edge buffering policies, and determinism rules **for the duration of the turn**.
+ResolvedTurnPlan freezes provider bindings, budgets, edge buffering policies, and determinism rules **for the duration of the turn**.
 
 ---
 
@@ -284,7 +127,7 @@ A bounded execution contract across time and capacity scopes (turn/node/path/edg
 #### 4.1.6 Determinism, replay, and “sources of nondeterminism”
 
 20) **Determinism Contract**  
-Defines ordering, merge semantics, fan-in resolution, and fallback terminal-outcome semantics such that execution and replay remain consistent within a turn under a CompiledGraph.
+Defines ordering, merge semantics, fan-in resolution, and fallback terminal-outcome semantics such that execution and replay remain consistent within a turn under a ResolvedTurnPlan.
 
 21) **DeterminismContext**  
 A turn-scoped context containing:  
@@ -354,20 +197,7 @@ A transport-specific adapter that normalizes connection semantics into RSPP cont
 ConnectionAdapter is a normalization surface only; it does **not** implement transport-stack media responsibilities (SFU/WebRTC/ICE/TURN, rooms/participants, or track routing).
 
 33) **Runtime Contract**  
-The invariant set RSPP guarantees: lane-prioritized control preemption, deterministic turn execution under a CompiledGraph, bounded buffering via BufferSpec/Watermarks, cancellation propagation with explicit scope, and end-to-end observability/replay correlation.
-
----
-
-#### 4.1.9 Governance, admission, and security contracts
-
-34) **Policy Contract**  
-Defines declarative policy intent and evaluation boundaries for provider selection, degradation posture, routing preferences, circuit-break behavior, and cost controls. Policy is resolved into the CompiledGraph at turn start; policy changes apply only at explicit boundaries.
-
-35) **Resource & Admission Contract**  
-Defines admission control, concurrency quotas, fairness, shared-pool scheduling, and load-shedding behavior across tenant/session/turn scopes. It specifies authoritative admit/reject/defer outcomes and overload actions that feed ControlLane signals.
-
-36) **Security & Tenant Isolation Contract**  
-Defines tenant isolation and security responsibilities across runtime, control plane, and external-node execution: identity/authentication/authorization context propagation, secret handling, data-access constraints, and per-tenant execution plus telemetry isolation. This complements (not replaces) the External Node Boundary Contract and transport non-goals.
+The invariant set RSPP guarantees: lane-prioritized control preemption, deterministic turn execution under a resolved plan, bounded buffering via BufferSpec/Watermarks, cancellation propagation with explicit scope, and end-to-end observability/replay correlation.
 
 ---
 
@@ -406,7 +236,7 @@ All signals are Events that follow the Event ABI, but are classified by lane for
 
 ### 4.3 Minimal rule set (what “runtime semantics” means)
 
-- **Plan freezing:** A CompiledGraph is immutable within a turn; policy/control-plane changes apply only at explicit boundaries (turn boundary or lease epoch change).  
+- **Plan freezing:** A ResolvedTurnPlan is immutable within a turn; policy/control-plane changes apply only at explicit boundaries (turn boundary or lease epoch change).  
 - **One terminal outcome per turn:** exactly one of `commit` or `abort` is emitted, followed by `close`.  
 - **Lane priority:** ControlLane preempts everything; DataLane is latency-protected; TelemetryLane is best-effort.  
 - **Bounded buffering:** Every Edge must have BufferSpec and watermarks (explicit or via profile defaults) so latency accumulation is always observable and controllable.  
@@ -415,3 +245,59 @@ All signals are Events that follow the Event ABI, but are classified by lane for
 - **Replayability:** EventTimeline + plan + determinism context define what can be replayed; provider determinism is not assumed unless recorded outputs are used.
 
 ---
+
+## Change Notes & Rationales (one reason per modified area)
+
+1) **Added “ResolvedTurnPlan / CompiledGraph” (turn-scoped freezing).**  
+Reason: Without a frozen turn plan, dynamic policy/provider decisions can change mid-turn and break determinism, replay, and debuggability.
+
+2) **Promoted “Event ABI (Schema + Envelope) Contract” to a first-class abstraction.**  
+Reason: Replay, cross-transport compatibility, and end-to-end correlation require an explicit, versioned ABI—not just a generic “Event” concept.
+
+3) **Introduced “Lane” (DataLane / ControlLane / TelemetryLane) while keeping a single Event model.**  
+Reason: Separating QoS semantics prevents high-frequency telemetry or bulk data from blocking cancellation/turn control while preserving a unified event contract.
+
+4) **Expanded “Edge” from a generic channel to a buffering boundary with explicit semantics.**  
+Reason: In real-time voice pipelines, latency is dominated by queueing; Edge must therefore express buffering and ordering semantics directly.
+
+5) **Added “BufferSpec” as an Edge property.**  
+Reason: Drop/merge/block strategies and maximum in-queue latency must be declared and auditable to enforce backpressure and protect low latency, while still allowing Simple-mode profile defaults to keep required fields minimal.
+
+6) **Added “Watermarks” as an explicit buffering construct.**  
+Reason: Watermarks create deterministic triggers for pressure signals and runtime actions, making backpressure measurable and policy-driven rather than implicit.
+
+7) **Added a “Timebase Contract” (monotonic, wall-clock, media time, mapping).**  
+Reason: You cannot specify or measure real-time latency—and you cannot build reliable timelines for replay—without a unified session time model across transports.
+
+8) **Added “NodeExecutionContext” as a required runtime injection.**  
+Reason: Budgets, cancellation, timebase, state access, and telemetry must be enforceable and consistent across nodes, not left to convention.
+
+9) **Added “Preemption Hooks Contract” (on_cancel/on_barge_in/on_budget_exhausted).**  
+Reason: In streaming TTS/LLM/ASR nodes, rapid interruption requires explicit cooperative preemption semantics beyond merely sending a signal event.
+
+10) **Refined Session/Turn semantics by adding “Turn Arbitration Rules.”**  
+Reason: Barge-in and overlapping turns are common in voice UX; without explicit arbitration rules, commit/abort and late-event behavior becomes ambiguous.
+
+11) **Split “State Contract” into Turn-Ephemeral, Session Hot, and Session Durable state.**  
+Reason: Cross-region replication of hot pipeline state can destroy latency; explicitly allowing hot-state loss on failover reconciles multi-region resilience with low-latency goals while preserving the stateless-runtime deployment model.
+
+12) **Added “PlacementLease (Epoch / Lease Token)” to the control-plane boundary.**  
+Reason: Multi-region failover and reconnects can cause split-brain execution; epochs/leases are the minimal abstraction to prevent duplicated outputs and ambiguous authority.
+
+13) **Added “Routing View / Registry Handle” as a read-optimized routing surface.**  
+Reason: Transport adapters need a fast, runtime-usable representation of placement decisions to honor migrations without embedding control-plane logic inside the runtime.
+
+14) **Added “ProviderInvocation” as a first-class unit.**  
+Reason: Normalized observability, cancellation, idempotency, and replay often need to reference provider calls explicitly rather than treating them as opaque node internals.
+
+15) **Added “DeterminismContext” including a canonical random seed.**  
+Reason: Deterministic replay of node-internal behavior requires capturing allowed nondeterminism (like randomness) as part of turn-scoped recorded context.
+
+16) **Expanded “Replay & Timeline” into explicit objects (EventTimeline, ReplayCursor, ReplayMode).**  
+Reason: “Replay by default” is only meaningful if the system defines what is persisted, how it is stepped, and whether provider outputs are re-executed or played back.
+
+17) **Extended “Transport Boundary Contract” with “ConnectionAdapter” and normalized liveness/disconnect semantics.**  
+Reason: WebRTC/WebSocket/SIP have different failure semantics; normalizing them into control events is required for consistent cancellation, turn termination, and cleanup behavior without expanding RSPP into transport-stack ownership.
+
+18) **Reorganized Section 4 into grouped primitives + cross-cutting contracts.**  
+Reason: Treating principles (e.g., determinism, resource admission) as peers to concrete runtime objects obscures the stable surface area and makes implementation responsibilities unclear.
