@@ -22,7 +22,7 @@ Required Make targets (to add/maintain in repo root):
 
 - `verify-quick`:
   1. schema and contract checks
-  2. quick conformance subset
+  2. quick conformance subset (`CT-001..005`, `RD-001`, `CF-001`, `AE-001`, `AE-005`, `ML-001`)
   3. replay smoke divergence check
 
 - `verify-full`:
@@ -36,7 +36,7 @@ Required Make targets (to add/maintain in repo root):
 
 Minimum required checks:
 1. Validate `docs/ContractArtifacts.schema.json` fixtures.
-2. Run quick conformance subset from `docs/ConformanceTestPlan.md`.
+2. Run quick conformance subset from `docs/ConformanceTestPlan.md`: `CT-001..005`, `RD-001`, `CF-001`, `AE-001`, `AE-005`, `ML-001`.
 3. Run smoke failure set (`F1`, `F3`, `F7`) from `docs/FailureInjectionMatrix.md`.
 4. Produce replay divergence summary artifact.
 
@@ -64,21 +64,22 @@ A quick run passes only when all are true:
 3. No unexplained replay divergence in:
    - `PLAN_DIVERGENCE`
    - `OUTCOME_DIVERGENCE`
-   - `AUTHORITY_DIVERGENCE`
-4. `ORDERING_DIVERGENCE` count == 0 for quick fixtures.
-
-`TIMING_DIVERGENCE` handling in quick gate:
-- allowed only when within configured deterministic tolerance band.
-- outside tolerance => fail.
+4. No `AUTHORITY_DIVERGENCE` in quick fixtures.
+5. `ORDERING_DIVERGENCE` count == 0 for quick fixtures.
+6. `TIMING_DIVERGENCE` stays within configured deterministic tolerance band.
 
 ## 4.2 Full pass criteria
 
 A full run passes only when all are true:
 1. 100% pass for all conformance and failure-injection tests.
-2. No unexplained divergence classes in replay output.
-3. Terminal lifecycle correctness is 100% (`commit` or `abort`, then `close`).
-4. Authority safety invariant holds (zero accepted stale-epoch outputs).
-5. OR-02 baseline evidence completeness is 100% for accepted turns.
+2. No unexplained `PLAN_DIVERGENCE` or `OUTCOME_DIVERGENCE` in replay output.
+3. No `AUTHORITY_DIVERGENCE` in replay output.
+4. `ORDERING_DIVERGENCE` appears only in explicitly approved test scenarios declared in fixture metadata.
+5. `TIMING_DIVERGENCE` stays within configured deterministic tolerance policy.
+6. Race/soak checks (when configured for the gate) pass with no unapproved instability failures.
+7. Terminal lifecycle correctness is 100% (`commit` or `abort`, then `close`).
+8. Authority safety invariant holds (zero accepted stale-epoch outputs).
+9. OR-02 baseline evidence completeness is 100% for accepted turns.
 
 ## 5. Replay divergence fail conditions (normative)
 
@@ -101,6 +102,7 @@ Every CI run must upload:
 3. replay divergence report (machine-readable + human-readable)
 4. OR-02 baseline evidence completeness report
 5. lifecycle correctness report (terminal sequence and pre-turn outcome checks)
+6. race/soak summary when race/soak checks are executed by the gate
 
 ## 7. Suggested implementation checklist
 

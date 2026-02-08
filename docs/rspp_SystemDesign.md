@@ -201,7 +201,8 @@ A `close` marker is emitted after terminal outcome to finalize lifecycle.
 A turn begins when the runtime accepts a `turn_open` ControlLane event, typically emitted after a non-authoritative `turn_open_proposed` intent from session-scoped detection and/or transport boundary signals.
 `turn_open_proposed` MAY be emitted as a non-authoritative runtime-internal intent signal; it does not create turn lifecycle state and is not a stable external client-facing signal.
 `turn_open` acceptance is valid only when a ResolvedTurnPlan has been successfully materialized for that turn.
-`turn_open` acceptance also requires current authority validation (valid lease/epoch); stale or de-authorized authority outcomes MUST remain pre-turn and MUST NOT emit `abort` or `close`.
+`turn_open` acceptance also requires current authority validation (valid lease/epoch); stale or de-authorized authority outcomes at this pre-turn gate MUST remain pre-turn and MUST NOT emit `abort` or `close`.
+If authority is revoked after a turn is already `Active`, runtime emits `deauthorized_drain`, then `abort(reason=authority_loss)`, then `close`.
 Admission outcomes (`admit/reject/defer`) before `turn_open` are pre-turn ControlLane outcomes and MUST NOT emit `abort` or `close`.
 
 7) **Turn Arbitration Rules**  

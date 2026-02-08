@@ -1867,6 +1867,9 @@
             "properties": {
               "emitted_by": {
                 "const": "RK-25"
+              },
+              "phase": {
+                "const": "scheduling_point"
               }
             }
           }
@@ -1997,6 +2000,23 @@
         {
           "if": {
             "properties": {
+              "scope": {
+                "const": "turn"
+              }
+            },
+            "required": [
+              "scope"
+            ]
+          },
+          "then": {
+            "required": [
+              "turn_id"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
               "outcome_kind": {
                 "const": "deauthorized_drain"
               }
@@ -2008,12 +2028,90 @@
           "then": {
             "properties": {
               "phase": {
+                "enum": [
+                  "pre_turn",
+                  "active_turn"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome_kind": {
+                "const": "stale_epoch_reject"
+              },
+              "phase": {
+                "const": "pre_turn"
+              }
+            },
+            "required": [
+              "outcome_kind",
+              "phase"
+            ]
+          },
+          "then": {
+            "properties": {
+              "scope": {
+                "enum": [
+                  "session",
+                  "turn"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome_kind": {
+                "const": "deauthorized_drain"
+              },
+              "phase": {
                 "const": "active_turn"
+              }
+            },
+            "required": [
+              "outcome_kind",
+              "phase"
+            ]
+          },
+          "then": {
+            "properties": {
+              "scope": {
+                "const": "turn"
               }
             },
             "required": [
               "turn_id"
             ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome_kind": {
+                "const": "deauthorized_drain"
+              },
+              "phase": {
+                "const": "pre_turn"
+              }
+            },
+            "required": [
+              "outcome_kind",
+              "phase"
+            ]
+          },
+          "then": {
+            "properties": {
+              "scope": {
+                "enum": [
+                  "session",
+                  "turn"
+                ]
+              }
+            }
           }
         },
         {

@@ -29,13 +29,13 @@ Define mandatory conformance tests before feature implementation to enforce:
 | `CT-002` | Validate ControlLane signals and emitting module ownership constraints | all known signals map to allowed emitters; unknown signal rejected |
 | `CT-003` | Validate turn transition legality | only allowed transitions accepted; illegal transitions rejected |
 | `CT-004` | Validate `ResolvedTurnPlan` frozen fields and provenance refs | all required frozen fields present and immutable in-turn |
-| `CT-005` | Validate decision outcome schema and authority/admission emitter mapping | authority outcomes only from RK-24; admission outcomes only from RK-25/CP-05 |
+| `CT-005` | Validate decision outcome schema and authority/admission emitter mapping | authority outcomes only from RK-24; admission outcomes only from RK-25/CP-05; `shed` constrained to scheduling-point phase; phase/scope constraints and `scope=turn -> turn_id` requirement enforced |
 
 ## 3.2 Replay determinism tests (`RD`)
 
 | Test ID | Description | Pass criteria |
 | --- | --- | --- |
-| `RD-001` | Replay same trace with replay-decisions mode | no unexplained `PLAN_DIVERGENCE`, `OUTCOME_DIVERGENCE`, `AUTHORITY_DIVERGENCE` |
+| `RD-001` | Replay same trace with replay-decisions mode | no unexplained `PLAN_DIVERGENCE`/`OUTCOME_DIVERGENCE`/`ORDERING_DIVERGENCE`; zero `AUTHORITY_DIVERGENCE` |
 | `RD-002` | Replay with recompute-decisions when deterministic inputs are complete | deterministic outputs match baseline or produce explained `TIMING_DIVERGENCE` only within tolerance policy |
 | `RD-003` | Verify OR-02 baseline evidence completeness at L0 | required baseline evidence fields present for every accepted turn |
 | `RD-004` | Validate snapshot provenance influence on divergence classification | modified snapshot provenance must produce `PLAN_DIVERGENCE` |
@@ -55,8 +55,9 @@ Define mandatory conformance tests before feature implementation to enforce:
 | --- | --- | --- |
 | `AE-001` | Pre-turn stale epoch injection | emit `stale_epoch_reject`; no `turn_open`; no `abort/close` |
 | `AE-002` | In-turn authority revoke | emit `deauthorized_drain`, then `abort(authority_loss)`, then `close` |
-| `AE-003` | Old placement stale output during migration | stale output rejected; no split-brain accepted output |
+| `AE-003` | Old placement stale output during migration | emit `stale_epoch_reject` at scheduling point; no split-brain accepted output; no authoritative turn-state mutation from stale diagnostic alone |
 | `AE-004` | Ingress authority enrichment fallback path | if transport metadata missing, deterministic enrichment occurs before acceptance |
+| `AE-005` | Pre-turn authority deauthorization before open | emit `deauthorized_drain`; no `turn_open`; no `abort/close` |
 
 ## 3.5 Merge/drop lineage tests (`ML`)
 
@@ -85,12 +86,12 @@ Define mandatory conformance tests before feature implementation to enforce:
 ## 5. Gate criteria
 
 Quick conformance gate:
-- run `CT-001..005`, `RD-001`, `CF-001`, `AE-001`, `ML-001`
+- run `CT-001..005`, `RD-001`, `CF-001`, `AE-001`, `AE-005`, `ML-001`
 - required: 100% pass
 
 Full conformance gate:
 - run all suites and all cases
-- required: 100% pass with no unexplained divergence classes
+- required: 100% pass with no unexplained divergence classes, zero `AUTHORITY_DIVERGENCE`, `ORDERING_DIVERGENCE` only for explicitly approved scenarios in fixture metadata, and `TIMING_DIVERGENCE` only within configured tolerance policy
 
 ## 6. Exit criteria before feature expansion
 

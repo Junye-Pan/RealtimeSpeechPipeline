@@ -771,11 +771,11 @@ F6. Transport disconnect/stall:
 
 F7. Placement authority conflict:
 - Owner: CP-07 + RK-24.
-- Outcome: deterministic authority outcomes (`stale_epoch_reject`) and, when authority is revoked mid-session, de-authorized drain behavior (`deauthorized_drain`).
+- Outcome: deterministic authority outcomes (`stale_epoch_reject` and `deauthorized_drain`) with pre-turn stale/deauthorization paths, scheduling-point stale rejection paths, and in-turn de-authorized drain behavior.
 
 F8. Region failover:
-- Owner: CP-07/CP-08 + RK-01/RK-20.
-- Outcome: authority migration, durable reattach, hot-state reset allowed.
+- Owner: CP-07/CP-08 + RK-01/RK-20 + RK-24.
+- Outcome: authority migration, stale old-writer rejection during handoff, durable reattach, hot-state reset allowed.
 
 ## 11. Section 4 abstraction ownership matrix
 

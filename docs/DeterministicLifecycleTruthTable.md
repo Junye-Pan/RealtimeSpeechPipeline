@@ -120,3 +120,5 @@ while state == Active:
 3. Pre-turn failure paths never emit `abort` or `close`.
 4. `turn_open` cannot occur without valid authority and successful `ResolvedTurnPlan` materialization.
 5. `stale_epoch_reject` never mutates an already authoritative turn state unless accompanied by explicit in-turn authority-loss handling.
+6. Mapping to `decision_outcome` phase/scope: stale diagnostics during active execution are represented as `scheduling_point` outcomes, while hard authority revoke uses `deauthorized_drain` at `active_turn` scope.
+7. Any authority/admission `decision_outcome` emitted with `scope=turn` includes `turn_id` for deterministic turn correlation.
