@@ -1,0 +1,2072 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rspp.local/schemas/contract-artifacts.schema.json",
+  "title": "RSPP Section-4 Contract Artifacts",
+  "description": "Machine-checkable artifacts derived from docs/rspp_SystemDesign.md and docs/ModularDesign.md section-4 contracts.",
+  "anyOf": [
+    {
+      "$ref": "#/$defs/event_record"
+    },
+    {
+      "$ref": "#/$defs/control_signal"
+    },
+    {
+      "$ref": "#/$defs/turn_transition"
+    },
+    {
+      "$ref": "#/$defs/resolved_turn_plan"
+    },
+    {
+      "$ref": "#/$defs/decision_outcome"
+    },
+    {
+      "$ref": "#/$defs/artifact_bundle"
+    }
+  ],
+  "$defs": {
+    "lane": {
+      "type": "string",
+      "enum": [
+        "DataLane",
+        "ControlLane",
+        "TelemetryLane"
+      ]
+    },
+    "event_scope": {
+      "type": "string",
+      "enum": [
+        "session",
+        "turn"
+      ]
+    },
+    "payload_class": {
+      "type": "string",
+      "enum": [
+        "PII",
+        "PHI",
+        "audio_raw",
+        "text_raw",
+        "derived_summary",
+        "metadata"
+      ]
+    },
+    "control_signal_emitter": {
+      "type": "string",
+      "enum": [
+        "RK-02",
+        "RK-03",
+        "RK-06",
+        "RK-11",
+        "RK-12",
+        "RK-13",
+        "RK-14",
+        "RK-15",
+        "RK-16",
+        "RK-17",
+        "RK-22",
+        "RK-23",
+        "RK-24",
+        "RK-25",
+        "OR-02",
+        "CP-05",
+        "CP-07",
+        "CP-08"
+      ]
+    },
+    "media_time": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sample_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pts_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "sample_index"
+          ]
+        },
+        {
+          "required": [
+            "pts_ms"
+          ]
+        }
+      ]
+    },
+    "seq_range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "start",
+        "end"
+      ],
+      "properties": {
+        "start": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "end": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "event_envelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "pattern": "^v[0-9]+\\.[0-9]+(?:\\.[0-9]+)?$"
+        },
+        "event_scope": {
+          "$ref": "#/$defs/event_scope"
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pipeline_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "node_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "edge_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "event_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "causal_parent_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provider_invocation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lane": {
+          "$ref": "#/$defs/lane"
+        },
+        "transport_sequence": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "runtime_sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sync_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sync_domain": {
+          "type": "string",
+          "minLength": 1
+        },
+        "discontinuity_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "merge_group_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "merged_from_event_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "late_after_cancel": {
+          "type": "boolean"
+        },
+        "authority_epoch": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lease_token": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runtime_timestamp_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "wall_clock_timestamp_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timestamp_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "payload_class": {
+          "$ref": "#/$defs/payload_class"
+        },
+        "media_time": {
+          "$ref": "#/$defs/media_time"
+        },
+        "signal": {
+          "type": "string"
+        },
+        "emitted_by": {
+          "$ref": "#/$defs/control_signal_emitter"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "seq_range": {
+          "$ref": "#/$defs/seq_range"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "target_lane": {
+          "$ref": "#/$defs/lane"
+        },
+        "amount": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "event_scope": {
+                "const": "turn"
+              }
+            },
+            "required": [
+              "event_scope"
+            ]
+          },
+          "then": {
+            "required": [
+              "turn_id",
+              "authority_epoch"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "lane": {
+                "const": "ControlLane"
+              }
+            },
+            "required": [
+              "lane"
+            ]
+          },
+          "then": {
+            "required": [
+              "authority_epoch"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "lane": {
+                "const": "ControlLane"
+              }
+            },
+            "required": [
+              "lane"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload_class": {
+                "const": "metadata"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "payload_class": {
+                "const": "audio_raw"
+              }
+            },
+            "required": [
+              "payload_class"
+            ]
+          },
+          "then": {
+            "required": [
+              "media_time"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "merged_from_event_ids"
+            ]
+          },
+          "then": {
+            "required": [
+              "merge_group_id"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "discontinuity_id"
+            ]
+          },
+          "then": {
+            "required": [
+              "sync_domain"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "late_after_cancel": {
+                "const": true
+              }
+            },
+            "required": [
+              "late_after_cancel"
+            ]
+          },
+          "then": {
+            "properties": {
+              "event_scope": {
+                "const": "turn"
+              }
+            },
+            "required": [
+              "turn_id"
+            ]
+          }
+        }
+      ]
+    },
+    "event_abi": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/event_envelope"
+        },
+        {
+          "type": "object",
+          "required": [
+            "schema_version",
+            "event_scope",
+            "session_id",
+            "pipeline_version",
+            "event_id",
+            "lane",
+            "transport_sequence",
+            "runtime_sequence",
+            "runtime_timestamp_ms",
+            "wall_clock_timestamp_ms",
+            "payload_class"
+          ]
+        },
+        {
+          "if": {
+            "required": [
+              "signal"
+            ]
+          },
+          "then": {
+            "required": [
+              "emitted_by"
+            ],
+            "properties": {
+              "lane": {
+                "const": "ControlLane"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "lane": {
+                "const": "ControlLane"
+              }
+            },
+            "required": [
+              "lane"
+            ]
+          },
+          "then": {
+            "required": [
+              "signal",
+              "emitted_by"
+            ]
+          }
+        }
+      ]
+    },
+    "event_record": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/event_abi"
+        },
+        {
+          "not": {
+            "required": [
+              "signal"
+            ]
+          }
+        }
+      ]
+    },
+    "control_signal_name": {
+      "type": "string",
+      "enum": [
+        "turn_open_proposed",
+        "turn_open",
+        "commit",
+        "abort",
+        "close",
+        "barge_in",
+        "stop",
+        "cancel",
+        "watermark",
+        "budget_warning",
+        "budget_exhausted",
+        "degrade",
+        "fallback",
+        "discontinuity",
+        "drop_notice",
+        "flow_xoff",
+        "flow_xon",
+        "credit_grant",
+        "provider_error",
+        "circuit_event",
+        "provider_switch",
+        "lease_issued",
+        "lease_rotated",
+        "migration_start",
+        "migration_finish",
+        "session_handoff",
+        "admit",
+        "reject",
+        "defer",
+        "shed",
+        "stale_epoch_reject",
+        "deauthorized_drain",
+        "connected",
+        "reconnecting",
+        "disconnected",
+        "ended",
+        "silence",
+        "stall",
+        "output_accepted",
+        "playback_started",
+        "playback_completed",
+        "playback_cancelled",
+        "recording_level_downgraded"
+      ]
+    },
+    "control_signal": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/event_abi"
+        },
+        {
+          "type": "object",
+          "required": [
+            "signal",
+            "emitted_by"
+          ],
+          "properties": {
+            "signal": {
+              "$ref": "#/$defs/control_signal_name"
+            },
+            "emitted_by": {
+              "$ref": "#/$defs/control_signal_emitter"
+            },
+            "lane": {
+              "const": "ControlLane"
+            },
+            "payload_class": {
+              "const": "metadata"
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "session",
+                "turn",
+                "node",
+                "provider_invocation"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "signal": {
+                "const": "turn_open_proposed"
+              }
+            },
+            "required": [
+              "signal"
+            ]
+          },
+          "then": {
+            "properties": {
+              "event_scope": {
+                "const": "session"
+              },
+              "emitted_by": {
+                "const": "RK-02"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "signal": {
+                "enum": [
+                  "turn_open",
+                  "commit",
+                  "abort",
+                  "close"
+                ]
+              }
+            },
+            "required": [
+              "signal"
+            ]
+          },
+          "then": {
+            "properties": {
+              "event_scope": {
+                "const": "turn"
+              },
+              "emitted_by": {
+                "const": "RK-03"
+              }
+            },
+            "required": [
+              "turn_id"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "signal": {
+                "const": "abort"
+              }
+            },
+            "required": [
+              "signal"
+            ]
+          },
+          "then": {
+            "required": [
+              "reason"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "signal": {
+                "enum": [
+                  "barge_in",
+                  "stop",
+                  "cancel"
+                ]
+              }
+            },
+            "required": [
+              "signal"
+            ]
+          },
+          "then": {
+            "properties": {
+              "emitted_by": {
+                "enum": [
+                  "RK-06",
+                  "RK-16"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "signal": {
+                "const": "cancel"
+              }
+            },
+            "required": [
+              "signal"
+            ]
+          },
+          "then": {
+            "required": [
+              "scope"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "signal": {
+                "const": "watermark"
+              }
+            },
+            "required": [
+              "signal"
+            ]
+          },
+          "then": {
+            "properties": {
+              "emitted_by": {
+                "const": "RK-13"
+              }
+            },
+            "required": [
+              "edge_id",
+              "target_lane",
+              "reason"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "signal": {
+                "enum": [
+                  "budget_warning",
+                  "budget_exhausted"
+                ]
+              }
+            },
+            "required": [
+              "signal"
+            ]
+          },
+          "then": {
+            "properties": {
+              "emitted_by": {
+                "const": "RK-17"
+              }
+            },
+            "required": [
+              "reason"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "signal": {
+                "enum": [
+                  "degrade",
+                  "fallback"
+                ]
+              }
+            },
+            "required": [
+              "signal"
+            ]
+          },
+          "then": {
+            "properties": {
+              "emitted_by": {
+                "enum": [
+                  "RK-13",
+                  "RK-17"
+                ]
+              }
+            },
+            "required": [
+              "reason"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "signal": {
+                "const": "discontinuity"
+              }
+            },
+            "required": [
+              "signal"
+            ]
+          },
+          "then": {
+            "properties": {
+              "emitted_by": {
+                "const": "RK-15"
+              }
+            },
+            "required": [
+              "sync_domain",
+              "discontinuity_id",
+              "reason"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "signal": {
+                "const": "drop_notice"
+              }
+            },
+            "required": [
+              "signal"
+            ]
+          },
+          "then": {
+            "properties": {
+              "emitted_by": {
+                "enum": [
+                  "RK-12",
+                  "RK-13"
+                ]
+              }
+            },
+            "required": [
+              "edge_id",
+              "target_lane",
+              "reason",
+              "seq_range"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "signal": {
+                "const": "flow_xoff"
+              }
+            },
+            "required": [
+              "signal"
+            ]
+          },
+          "then": {
+            "properties": {
+              "emitted_by": {
+                "const": "RK-14"
+              }
+            },
+            "required": [
+              "edge_id",
+              "target_lane",
+              "reason"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "signal": {
+                "const": "flow_xon"
+              }
+            },
+            "required": [
+              "signal"
+            ]
+          },
+          "then": {
+            "properties": {
+              "emitted_by": {
+                "const": "RK-14"
+              }
+            },
+            "required": [
+              "edge_id",
+              "target_lane"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "signal": {
+                "const": "credit_grant"
+              }
+            },
+            "required": [
+              "signal"
+            ]
+          },
+          "then": {
+            "properties": {
+              "emitted_by": {
+                "const": "RK-14"
+              }
+            },
+            "required": [
+              "edge_id",
+              "target_lane",
+              "amount"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "signal": {
+                "enum": [
+                  "provider_error",
+                  "circuit_event",
+                  "provider_switch"
+                ]
+              }
+            },
+            "required": [
+              "signal"
+            ]
+          },
+          "then": {
+            "properties": {
+              "emitted_by": {
+                "const": "RK-11"
+              }
+            },
+            "required": [
+              "reason"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "signal": {
+                "enum": [
+                  "lease_issued",
+                  "lease_rotated",
+                  "migration_start",
+                  "migration_finish",
+                  "session_handoff"
+                ]
+              }
+            },
+            "required": [
+              "signal"
+            ]
+          },
+          "then": {
+            "properties": {
+              "emitted_by": {
+                "enum": [
+                  "CP-07",
+                  "CP-08"
+                ]
+              }
+            },
+            "required": [
+              "authority_epoch"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "signal": {
+                "enum": [
+                  "admit",
+                  "reject",
+                  "defer"
+                ]
+              }
+            },
+            "required": [
+              "signal"
+            ]
+          },
+          "then": {
+            "properties": {
+              "event_scope": {
+                "const": "session"
+              },
+              "emitted_by": {
+                "enum": [
+                  "RK-25",
+                  "CP-05"
+                ]
+              }
+            },
+            "required": [
+              "reason"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "signal": {
+                "const": "shed"
+              }
+            },
+            "required": [
+              "signal"
+            ]
+          },
+          "then": {
+            "properties": {
+              "emitted_by": {
+                "const": "RK-25"
+              }
+            },
+            "required": [
+              "reason"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "signal": {
+                "enum": [
+                  "stale_epoch_reject",
+                  "deauthorized_drain"
+                ]
+              }
+            },
+            "required": [
+              "signal"
+            ]
+          },
+          "then": {
+            "properties": {
+              "emitted_by": {
+                "const": "RK-24"
+              }
+            },
+            "required": [
+              "authority_epoch",
+              "reason"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "signal": {
+                "enum": [
+                  "connected",
+                  "reconnecting",
+                  "disconnected",
+                  "ended",
+                  "silence",
+                  "stall"
+                ]
+              }
+            },
+            "required": [
+              "signal"
+            ]
+          },
+          "then": {
+            "properties": {
+              "emitted_by": {
+                "const": "RK-23"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "signal": {
+                "enum": [
+                  "output_accepted",
+                  "playback_started",
+                  "playback_completed",
+                  "playback_cancelled"
+                ]
+              }
+            },
+            "required": [
+              "signal"
+            ]
+          },
+          "then": {
+            "properties": {
+              "event_scope": {
+                "const": "turn"
+              },
+              "emitted_by": {
+                "enum": [
+                  "RK-22",
+                  "RK-23"
+                ]
+              }
+            },
+            "required": [
+              "turn_id"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "signal": {
+                "const": "recording_level_downgraded"
+              }
+            },
+            "required": [
+              "signal"
+            ]
+          },
+          "then": {
+            "properties": {
+              "emitted_by": {
+                "const": "OR-02"
+              }
+            },
+            "required": [
+              "reason"
+            ]
+          }
+        }
+      ]
+    },
+    "turn_state": {
+      "type": "string",
+      "enum": [
+        "Idle",
+        "Opening",
+        "Active",
+        "Terminal",
+        "Closed"
+      ]
+    },
+    "turn_transition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "from_state",
+        "trigger",
+        "to_state",
+        "deterministic"
+      ],
+      "properties": {
+        "from_state": {
+          "$ref": "#/$defs/turn_state"
+        },
+        "trigger": {
+          "type": "string",
+          "enum": [
+            "turn_open_proposed",
+            "turn_open",
+            "commit",
+            "abort",
+            "close",
+            "reject",
+            "defer",
+            "stale_epoch_reject",
+            "deauthorized_drain"
+          ]
+        },
+        "to_state": {
+          "$ref": "#/$defs/turn_state"
+        },
+        "deterministic": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "from_state": {
+              "const": "Idle"
+            },
+            "trigger": {
+              "const": "turn_open_proposed"
+            },
+            "to_state": {
+              "const": "Opening"
+            }
+          }
+        },
+        {
+          "properties": {
+            "from_state": {
+              "const": "Opening"
+            },
+            "trigger": {
+              "const": "turn_open"
+            },
+            "to_state": {
+              "const": "Active"
+            }
+          }
+        },
+        {
+          "properties": {
+            "from_state": {
+              "const": "Opening"
+            },
+            "trigger": {
+              "enum": [
+                "reject",
+                "defer",
+                "stale_epoch_reject",
+                "deauthorized_drain"
+              ]
+            },
+            "to_state": {
+              "const": "Idle"
+            }
+          }
+        },
+        {
+          "properties": {
+            "from_state": {
+              "const": "Active"
+            },
+            "trigger": {
+              "enum": [
+                "commit",
+                "abort"
+              ]
+            },
+            "to_state": {
+              "const": "Terminal"
+            }
+          }
+        },
+        {
+          "properties": {
+            "from_state": {
+              "const": "Terminal"
+            },
+            "trigger": {
+              "const": "close"
+            },
+            "to_state": {
+              "const": "Closed"
+            }
+          }
+        }
+      ]
+    },
+    "buffer_strategy": {
+      "type": "string",
+      "enum": [
+        "block",
+        "drop",
+        "merge",
+        "sample",
+        "latest_only"
+      ]
+    },
+    "watermark_threshold": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "high",
+        "low"
+      ],
+      "properties": {
+        "high": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "low": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "resolved_turn_plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "turn_id",
+        "pipeline_version",
+        "plan_hash",
+        "graph_definition_ref",
+        "execution_profile",
+        "authority_epoch",
+        "budgets",
+        "provider_bindings",
+        "edge_buffer_policies",
+        "flow_control",
+        "allowed_adaptive_actions",
+        "snapshot_provenance",
+        "recording_policy",
+        "determinism"
+      ],
+      "properties": {
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pipeline_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "plan_hash": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{64}$"
+        },
+        "graph_definition_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "execution_profile": {
+          "type": "string",
+          "minLength": 1
+        },
+        "authority_epoch": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "budgets": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "turn_budget_ms",
+            "node_budget_ms_default",
+            "path_budget_ms_default",
+            "edge_budget_ms_default"
+          ],
+          "properties": {
+            "turn_budget_ms": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "node_budget_ms_default": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "path_budget_ms_default": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "edge_budget_ms_default": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "provider_bindings": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "edge_buffer_policies": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "strategy",
+              "max_queue_items",
+              "max_queue_ms",
+              "max_queue_bytes",
+              "max_latency_contribution_ms",
+              "watermarks",
+              "lane_handling",
+              "defaulting_source"
+            ],
+            "properties": {
+              "strategy": {
+                "$ref": "#/$defs/buffer_strategy"
+              },
+              "max_queue_items": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "max_queue_ms": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "max_queue_bytes": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "max_latency_contribution_ms": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "max_block_time_ms": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "watermarks": {
+                "type": "object",
+                "additionalProperties": false,
+                "minProperties": 1,
+                "properties": {
+                  "queue_items": {
+                    "$ref": "#/$defs/watermark_threshold"
+                  },
+                  "queue_ms": {
+                    "$ref": "#/$defs/watermark_threshold"
+                  }
+                }
+              },
+              "lane_handling": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "DataLane",
+                  "ControlLane",
+                  "TelemetryLane"
+                ],
+                "properties": {
+                  "DataLane": {
+                    "type": "string",
+                    "enum": [
+                      "block",
+                      "drop",
+                      "merge",
+                      "sample",
+                      "latest_only"
+                    ]
+                  },
+                  "ControlLane": {
+                    "type": "string",
+                    "const": "non_blocking_priority"
+                  },
+                  "TelemetryLane": {
+                    "type": "string",
+                    "enum": [
+                      "drop",
+                      "sample",
+                      "best_effort_drop"
+                    ]
+                  }
+                }
+              },
+              "fairness_key": {
+                "type": "string",
+                "minLength": 1
+              },
+              "defaulting_source": {
+                "type": "string",
+                "enum": [
+                  "explicit_edge_config",
+                  "execution_profile_default"
+                ]
+              },
+              "sync_drop_policy": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "policy",
+                  "scope"
+                ],
+                "properties": {
+                  "group_by": {
+                    "type": "string",
+                    "enum": [
+                      "sync_id",
+                      "event_id",
+                      "custom"
+                    ]
+                  },
+                  "policy": {
+                    "type": "string",
+                    "enum": [
+                      "atomic_drop",
+                      "drop_with_discontinuity",
+                      "no_sync"
+                    ]
+                  },
+                  "scope": {
+                    "type": "string",
+                    "enum": [
+                      "edge_local",
+                      "plan_wide"
+                    ]
+                  },
+                  "sync_domain": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "allOf": [
+                  {
+                    "if": {
+                      "properties": {
+                        "policy": {
+                          "enum": [
+                            "atomic_drop",
+                            "drop_with_discontinuity"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "policy"
+                      ]
+                    },
+                    "then": {
+                      "required": [
+                        "group_by"
+                      ]
+                    }
+                  },
+                  {
+                    "if": {
+                      "properties": {
+                        "policy": {
+                          "const": "drop_with_discontinuity"
+                        }
+                      },
+                      "required": [
+                        "policy"
+                      ]
+                    },
+                    "then": {
+                      "required": [
+                        "sync_domain"
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "strategy": {
+                      "const": "block"
+                    }
+                  },
+                  "required": [
+                    "strategy"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "max_block_time_ms"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "flow_control": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode_by_lane",
+            "watermarks",
+            "shedding_strategy_by_lane"
+          ],
+          "properties": {
+            "mode_by_lane": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "DataLane",
+                "ControlLane",
+                "TelemetryLane"
+              ],
+              "properties": {
+                "DataLane": {
+                  "type": "string",
+                  "enum": [
+                    "signal",
+                    "credit",
+                    "hybrid"
+                  ]
+                },
+                "ControlLane": {
+                  "type": "string",
+                  "enum": [
+                    "signal",
+                    "credit",
+                    "hybrid"
+                  ]
+                },
+                "TelemetryLane": {
+                  "type": "string",
+                  "enum": [
+                    "signal",
+                    "credit",
+                    "hybrid"
+                  ]
+                }
+              }
+            },
+            "watermarks": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "DataLane",
+                "ControlLane",
+                "TelemetryLane"
+              ],
+              "properties": {
+                "DataLane": {
+                  "$ref": "#/$defs/watermark_threshold"
+                },
+                "ControlLane": {
+                  "$ref": "#/$defs/watermark_threshold"
+                },
+                "TelemetryLane": {
+                  "$ref": "#/$defs/watermark_threshold"
+                }
+              }
+            },
+            "shedding_strategy_by_lane": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "DataLane",
+                "ControlLane",
+                "TelemetryLane"
+              ],
+              "properties": {
+                "DataLane": {
+                  "type": "string",
+                  "enum": [
+                    "drop",
+                    "merge",
+                    "latest_only",
+                    "degrade",
+                    "fallback"
+                  ]
+                },
+                "ControlLane": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "TelemetryLane": {
+                  "type": "string",
+                  "enum": [
+                    "drop",
+                    "sample"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "allowed_adaptive_actions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "retry",
+              "provider_switch",
+              "degrade",
+              "fallback"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "snapshot_provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "routing_view_snapshot",
+            "admission_policy_snapshot",
+            "abi_compatibility_snapshot",
+            "version_resolution_snapshot",
+            "policy_resolution_snapshot",
+            "provider_health_snapshot"
+          ],
+          "properties": {
+            "routing_view_snapshot": {
+              "type": "string",
+              "minLength": 1
+            },
+            "admission_policy_snapshot": {
+              "type": "string",
+              "minLength": 1
+            },
+            "abi_compatibility_snapshot": {
+              "type": "string",
+              "minLength": 1
+            },
+            "version_resolution_snapshot": {
+              "type": "string",
+              "minLength": 1
+            },
+            "policy_resolution_snapshot": {
+              "type": "string",
+              "minLength": 1
+            },
+            "provider_health_snapshot": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "recording_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "recording_level",
+            "allowed_replay_modes"
+          ],
+          "properties": {
+            "recording_level": {
+              "type": "string",
+              "enum": [
+                "L0",
+                "L1",
+                "L2"
+              ]
+            },
+            "allowed_replay_modes": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "re_simulate_nodes",
+                  "playback_recorded_provider_outputs",
+                  "replay_decisions",
+                  "recompute_decisions"
+                ]
+              }
+            }
+          }
+        },
+        "determinism": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "seed",
+            "ordering_markers",
+            "merge_rule_id",
+            "merge_rule_version",
+            "nondeterministic_inputs"
+          ],
+          "properties": {
+            "seed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "ordering_marker": {
+              "type": "string"
+            },
+            "ordering_markers": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "merge_rule_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "merge_rule_version": {
+              "type": "string",
+              "pattern": "^v?[0-9]+\\.[0-9]+(?:\\.[0-9]+)?$"
+            },
+            "nondeterministic_inputs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "input_key",
+                  "source",
+                  "evidence_ref"
+                ],
+                "properties": {
+                  "input_key": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "external_call",
+                      "system_time",
+                      "random",
+                      "operator_override",
+                      "other"
+                    ]
+                  },
+                  "evidence_ref": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "decision_outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "outcome_kind",
+        "phase",
+        "scope",
+        "session_id",
+        "event_id",
+        "runtime_timestamp_ms",
+        "wall_clock_timestamp_ms",
+        "emitted_by",
+        "reason"
+      ],
+      "properties": {
+        "outcome_kind": {
+          "type": "string",
+          "enum": [
+            "admit",
+            "reject",
+            "defer",
+            "shed",
+            "stale_epoch_reject",
+            "deauthorized_drain"
+          ]
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "pre_turn",
+            "scheduling_point",
+            "active_turn"
+          ]
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "tenant",
+            "session",
+            "turn",
+            "edge_enqueue",
+            "edge_dequeue",
+            "node_dispatch"
+          ]
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "event_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runtime_timestamp_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "wall_clock_timestamp_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timestamp_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "emitted_by": {
+          "type": "string",
+          "enum": [
+            "RK-24",
+            "RK-25",
+            "CP-05"
+          ]
+        },
+        "authority_epoch": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome_kind": {
+                "enum": [
+                  "admit",
+                  "reject",
+                  "defer"
+                ]
+              }
+            },
+            "required": [
+              "outcome_kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "emitted_by": {
+                "enum": [
+                  "RK-25",
+                  "CP-05"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome_kind": {
+                "const": "shed"
+              }
+            },
+            "required": [
+              "outcome_kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "emitted_by": {
+                "const": "RK-25"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome_kind": {
+                "enum": [
+                  "stale_epoch_reject",
+                  "deauthorized_drain"
+                ]
+              }
+            },
+            "required": [
+              "outcome_kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "emitted_by": {
+                "const": "RK-24"
+              }
+            },
+            "required": [
+              "authority_epoch"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "emitted_by": {
+                "const": "CP-05"
+              }
+            },
+            "required": [
+              "emitted_by"
+            ]
+          },
+          "then": {
+            "properties": {
+              "phase": {
+                "const": "pre_turn"
+              },
+              "scope": {
+                "enum": [
+                  "tenant",
+                  "session"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "phase": {
+                "const": "scheduling_point"
+              }
+            },
+            "required": [
+              "phase"
+            ]
+          },
+          "then": {
+            "properties": {
+              "scope": {
+                "enum": [
+                  "edge_enqueue",
+                  "edge_dequeue",
+                  "node_dispatch"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "phase": {
+                "const": "active_turn"
+              }
+            },
+            "required": [
+              "phase"
+            ]
+          },
+          "then": {
+            "properties": {
+              "scope": {
+                "enum": [
+                  "turn",
+                  "edge_enqueue",
+                  "edge_dequeue",
+                  "node_dispatch"
+                ]
+              }
+            },
+            "required": [
+              "turn_id"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "phase": {
+                "const": "pre_turn"
+              }
+            },
+            "required": [
+              "phase"
+            ]
+          },
+          "then": {
+            "properties": {
+              "scope": {
+                "enum": [
+                  "tenant",
+                  "session",
+                  "turn"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome_kind": {
+                "const": "deauthorized_drain"
+              }
+            },
+            "required": [
+              "outcome_kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "phase": {
+                "const": "active_turn"
+              }
+            },
+            "required": [
+              "turn_id"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome_kind": {
+                "const": "stale_epoch_reject"
+              }
+            },
+            "required": [
+              "outcome_kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "phase": {
+                "enum": [
+                  "pre_turn",
+                  "scheduling_point"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "artifact_bundle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event",
+        "control_signal",
+        "turn_transition",
+        "resolved_turn_plan",
+        "decision_outcome"
+      ],
+      "properties": {
+        "event": {
+          "$ref": "#/$defs/event_abi"
+        },
+        "control_signal": {
+          "$ref": "#/$defs/control_signal"
+        },
+        "turn_transition": {
+          "$ref": "#/$defs/turn_transition"
+        },
+        "resolved_turn_plan": {
+          "$ref": "#/$defs/resolved_turn_plan"
+        },
+        "decision_outcome": {
+          "$ref": "#/$defs/decision_outcome"
+        }
+      }
+    }
+  }
+}

@@ -180,10 +180,10 @@ A *turn‑scoped*, immutable plan produced at turn start by combining:
 - Control-plane decisions (placement, resolved pipeline version, admission outcome)  
 - Policy evaluation results (provider binding, degrade posture)  
 - Provider/transport capability snapshots (as of turn start)  
-ResolvedTurnPlan freezes provider bindings, budgets, edge buffering policies, and determinism rules **for the duration of the turn**.
+ResolvedTurnPlan freezes provider bindings, budgets, edge buffering policies, determinism rules, and snapshot provenance references **for the duration of the turn**.
 
 SessionPreludeGraph (optional)  
-A session-scoped subgraph that runs continuously and may emit turn boundary intent signals (for example `turn_open`) from continuous inputs (for example VAD + turn detection). Its outputs feed Turn Arbitration Rules and are outside turn-scoped work accounting.
+A session-scoped subgraph that runs continuously and may emit runtime-internal turn boundary intent signals (for example `turn_open_proposed`) from continuous inputs (for example VAD + turn detection). Its outputs feed Turn Arbitration Rules and are outside turn-scoped work accounting.
 
 ---
 
@@ -195,10 +195,14 @@ A logical conversation context with stable identity and policy scope (tenant/reg
 6) **Turn**  
 The smallest conversational work unit from user-intent intake to assistant output completion (or cancellation). Turns have explicit lifecycle and a single terminal outcome:  
 - `commit`: successful completion for that turn  
-- `abort`: terminated before commit (reason: cancel, timeout, error, admission reject, disconnect, etc.)  
+- `abort`: terminated before commit (reason: cancel, timeout, runtime error, authority loss, disconnect, policy termination, etc.)  
 A `close` marker is emitted after terminal outcome to finalize lifecycle.
-`commit` indicates the runtime has completed generation for the turn and will emit no further DataLane outputs for that turn. Delivery completion (e.g., playback finished / transport accepted) is represented separately via ControlLane delivery signals.
-A turn begins when the runtime accepts a `turn_open` (TurnStart) ControlLane event, typically emitted by a session-scoped turn detector (for example VAD) and/or transport boundary signals.
+`commit` indicates the runtime has completed generation for the turn and will emit no further DataLane outputs for that turn. Delivery completion (e.g., playback finished / transport accepted) is represented separately via ControlLane delivery signals. `commit` is also valid for control-only turns (no DataLane output) when terminal control outcomes are recorded and no further DataLane output will follow. In this context, "recorded" means appended to the runtime's non-blocking local timeline append path; durable export/persistence remains asynchronous.
+A turn begins when the runtime accepts a `turn_open` ControlLane event, typically emitted after a non-authoritative `turn_open_proposed` intent from session-scoped detection and/or transport boundary signals.
+`turn_open_proposed` MAY be emitted as a non-authoritative runtime-internal intent signal; it does not create turn lifecycle state and is not a stable external client-facing signal.
+`turn_open` acceptance is valid only when a ResolvedTurnPlan has been successfully materialized for that turn.
+`turn_open` acceptance also requires current authority validation (valid lease/epoch); stale or de-authorized authority outcomes MUST remain pre-turn and MUST NOT emit `abort` or `close`.
+Admission outcomes (`admit/reject/defer`) before `turn_open` are pre-turn ControlLane outcomes and MUST NOT emit `abort` or `close`.
 
 7) **Turn Arbitration Rules**  
 A contract defining whether turns may overlap and how preemption behaves (e.g., barge‑in creates a new turn that can preempt an in‑flight turn). It defines late-event handling (events arriving after abort), grace windows, and which terminal semantics are authoritative within a session.
@@ -209,7 +213,7 @@ A contract defining whether turns may overlap and how preemption behaves (e.g., 
 
 8) **Event ABI (Schema + Envelope) Contract**  
 The versioned ABI for all RSPP events. It defines:  
-- Envelope fields (session_id, turn_id (optional; required for turn-scoped events), pipeline_version, edge_id/node_id, event_id, causal_parent_id, idempotency_key, lane, sequence numbers, sync_id (optional), sync_domain (optional), discontinuity_id (optional))  
+- Envelope fields (session_id, turn_id (optional; required for turn-scoped events), pipeline_version, edge_id/node_id, event_id, causal_parent_id, idempotency_key, lane, sequence markers including transport_sequence/runtime_sequence, sync_id (optional), sync_domain (optional), discontinuity_id (optional), merge_group_id (optional), merged_from_event_ids (optional, bounded), late_after_cancel (optional))  
 - Timestamp fields (see Timebase in 4.1.5)  
 - Compatibility rules (schema evolution, version negotiation, deprecation)  
 - Ordering and dedupe expectations (per lane/per edge)  
@@ -220,7 +224,7 @@ The universal, immutable exchange unit. Events carry **data** (audio/text), **co
 10) **Lane** (QoS class for events)  
 RSPP classifies events into lanes with explicit priority and buffering semantics:  
 - **DataLane**: audio frames, text deltas, semantic content outputs  
-- **ControlLane**: turn boundaries, cancellation, budgets, admission, routing/migration, connection state  
+- **ControlLane**: turn intent/boundaries, cancellation, budgets, admission, routing/migration, connection state  
 - **TelemetryLane**: metrics, traces, logs, debug snapshots (best-effort).  
 Lanes share the same Event ABI but may use different buffering strategies and drop policies to protect low latency.
 
@@ -308,12 +312,14 @@ A bounded execution contract across time and capacity scopes (turn/node/path/edg
 #### 4.1.6 Determinism, replay, and “sources of nondeterminism”
 
 20) **Determinism Contract**  
-Defines ordering, merge semantics, fan-in resolution, and fallback terminal-outcome semantics such that execution and replay remain consistent within a turn under a ResolvedTurnPlan.
+Defines ordering, merge semantics, fan-in resolution, and fallback terminal-outcome semantics such that execution and replay remain consistent within a turn under a ResolvedTurnPlan. Determinism includes canonical fan-in merge-rule identity/version, resolved into the turn plan and used by replay.
 
 21) **DeterminismContext**  
 A turn-scoped context containing:  
 - a canonical **random seed** (and any allowed PRNG stream identifiers)  
 - stable ordering markers  
+- merge_rule_id and merge_rule_version for replay-stable fan-in semantics  
+- nondeterministic_inputs[] entries for captured runtime decisions that cannot be recomputed deterministically  
 - explicit declarations of allowed nondeterministic inputs (e.g., external calls)  
 This context is recorded so replay can reproduce node-internal nondeterminism when re-simulating.
 
@@ -321,8 +327,11 @@ This context is recorded so replay can reproduce node-internal nondeterminism wh
 Defines how to persist and replay event streams:  
 - **EventTimeline**: ordered event log per session/turn/lane  
 - **ReplayCursor**: a position in the timeline with deterministic stepping rules  
-- **ReplayMode**: re-simulate nodes vs “playback recorded provider outputs” (provider determinism is not assumed)  
+- **ReplayMode**: re-simulate nodes vs “playback recorded provider outputs” (provider determinism is not assumed), with decision handling modes (replay-decisions or recompute-decisions when deterministic inputs are sufficient)  
 Replay must honor lane priorities and turn arbitration rules.
+ExecutionProfile MUST declare a recording level (L0/L1/L2) that defines capture fidelity and supported replay modes. All levels MUST record replay-critical control evidence (plan hash, determinism markers, authority markers, terminal outcomes, turn-start snapshot provenance references, and admission/policy/authority decision outcomes that gate turn opening/execution); higher levels add partial/full payload capture under declared cost and security constraints.
+Replay/timeline recording semantics MUST separate low-latency local append from asynchronous durable export so timeline persistence cannot block ControlLane progression, cancellation propagation, or turn terminalization.
+If timeline pressure forces fidelity reduction, runtime MUST apply deterministic recording-level downgrade behavior while preserving replay-critical control evidence.
 
 ---
 
@@ -348,9 +357,10 @@ Defines isolation and trust boundaries for externally executed nodes (process/VM
 
 26) **Control Plane Contract**  
 The authoritative contract for: pipeline version resolution, rollout decisions, session admission, placement/routing, and migration actions. It emits explicit decisions the runtime must execute and record.
+Control-plane decisions are distributed as versioned snapshots/artifacts to runtime; hot-path enforcement remains runtime-local.
 
 27) **PlacementLease (Epoch / Lease Token)**  
-A control-plane-issued token proving current authority to execute a session/turn on a specific runtime placement. Leases have epochs and expiration. Runtime/transport must reject events and outputs that do not carry a valid current lease/epoch to prevent split-brain duplicates.
+A control-plane-issued token proving current authority to execute a session/turn on a specific runtime placement. Leases have epochs and expiration. Runtime/transport must reject events and outputs that do not carry a valid current lease/epoch to prevent split-brain duplicates. If transport metadata is missing, authority context must be deterministically enriched at ingress before acceptance; after ingress, all authority-relevant events/outputs MUST carry the current lease/epoch.
 
 28) **Routing View / Registry Handle**  
 A runtime-usable, read-optimized view of routing/placement decisions (derived from the control plane) used by transport adapters to locate the correct runtime endpoint and to detect/honor migrations quickly.
@@ -361,6 +371,7 @@ Defines state classes and ownership boundaries:
 - **Session Hot State**: pipeline-internal hot state (e.g., VAD windows, caches, KV-cache) that is *not required* to survive failover and is not cross-region replicated  
 - **Session Durable State**: session context state (identity, consent flags, intent slots, conversation memory pointers) that must survive failover and has defined consistency requirements  
 - **Control-Plane Configuration State**: pipeline specs, rollouts, policy configs  
+- **Fleet-Scoped Provider Health/Circuit State**: control-plane aggregated health/circuit snapshots used by policy and turn-start resolution  
 The contract explicitly declares which state may be lost/reset on migration to protect low latency. This reconciles with the **stateless runtime** model: runtime instances remain disposable, while only declared durable state is externalized and reattached on placement changes.
 
 30) **Identity / Correlation / Idempotency Contract**  
@@ -385,13 +396,13 @@ The invariant set RSPP guarantees: lane-prioritized control preemption, determin
 #### 4.1.9 Governance, admission, and security contracts
 
 34) **Policy Contract**  
-Defines declarative policy intent and evaluation boundaries for provider selection, degradation posture, routing preferences, circuit-break behavior, and cost controls. Policy is resolved into the ResolvedTurnPlan at turn start; policy changes apply only at explicit boundaries.
+Defines declarative policy intent and evaluation boundaries for provider selection, degradation posture, routing preferences, circuit-break behavior, and cost controls. Policy evaluation may consume fleet-scoped provider health/circuit snapshots. Policy is resolved into the ResolvedTurnPlan at turn start; policy changes apply only at explicit boundaries.
 
 35) **Resource & Admission Contract**  
-Defines admission control, concurrency quotas, fairness, shared-pool scheduling, and load-shedding behavior across tenant/session/turn scopes. It specifies authoritative admit/reject/defer outcomes and overload actions that feed ControlLane signals. At minimum, the contract MUST define: (a) the fairness key(s) used for scheduling (tenant/session/turn), (b) overload precedence rules across lanes (ControlLane protected, TelemetryLane best-effort), and (c) the scheduling points where admission and shedding decisions may be applied (edge enqueue, edge dequeue, node dispatch).
+Defines admission control, concurrency quotas, fairness, shared-pool scheduling, and load-shedding behavior across tenant/session/turn scopes. It specifies authoritative admit/reject/defer outcomes and overload actions that feed ControlLane signals. At minimum, the contract MUST define: (a) the fairness key(s) used for scheduling (tenant/session/turn), (b) overload precedence rules across lanes (ControlLane protected, TelemetryLane best-effort), and (c) the scheduling points where admission and shedding decisions may be applied (edge enqueue, edge dequeue, node dispatch). Control plane publishes the authoritative policy/snapshot; runtime enforces locally at the scheduling points. Direct control-plane admit/defer/reject decisions, when used, are explicit boundary-time outcomes (for example session bootstrap) rather than required hot-path checks. The runtime MUST also define deterministic outcomes for stale/missing/incompatible turn-start snapshots (`defer` or `reject`) and record those outcomes.
 
 36) **Security & Tenant Isolation Contract**  
-Defines tenant isolation and security responsibilities across runtime, control plane, and external-node execution: identity/authentication/authorization context propagation, secret handling, data-access constraints, and per-tenant execution plus telemetry isolation. This complements (not replaces) the External Node Boundary Contract and transport non-goals.
+Defines tenant isolation and security responsibilities across runtime, control plane, and external-node execution: identity/authentication/authorization context propagation, secret handling, data-access constraints, and per-tenant execution plus telemetry isolation. Control plane defines security policy and tenancy constraints; runtime, transport-boundary adapters, external-node gateways, and observability paths enforce those constraints inline. This complements (not replaces) the External Node Boundary Contract and transport non-goals.
 
 ---
 
@@ -408,17 +419,22 @@ All signals are Events that follow the Event ABI, but are classified by lane for
 **Rule:** DataLane events may be dropped/merged under pressure only if BufferSpec declares a deterministic strategy (e.g., “latest-only” for interim ASR).
 
 #### 4.2.2 ControlLane signals (preemptive)
+- turn intent (non-authoritative, runtime-internal): turn_open_proposed  
 - turn boundaries: turn_open, commit/abort(reason), close  
 - interruption/cancellation: barge-in, stop, cancel(scope)  
 - pressure/budget: watermark crossing, budget warnings/exhaustion, runtime-selected degrade/fallback outcomes  
 - discontinuity(sync_domain, discontinuity_id, reason): indicates a break in continuity; downstream MUST reset stateful decoding/presentation pipelines for that domain
+- drop_notice(edge_id, lane, reason, seq_range, sync_domain?, discontinuity_id?): deterministic drop/merge lineage marker for replay and diagnostics
 - flow control: flow_xoff(edge_id, lane, reason), flow_xon(edge_id, lane), credit_grant(edge_id, lane, amount) (credit mode only)
 - provider outcomes: normalized errors, circuit-break events, provider switch decisions (as allowed by plan)  
 - routing/migration: placement lease issued/rotated, migration start/finish, session handoff markers  
 - admission/capacity: admit/reject/defer outcomes, load-shedding decisions  
+- authority validation outcomes: stale_epoch_reject, deauthorized_drain  
 - connection lifecycle: connected/reconnecting/disconnected/ended, transport silence/stall  
 - replay-critical markers (plan hash, determinism seed, ordering markers)
 - output delivery signals: output_accepted, playback_started, playback_completed, playback_cancelled
+After `cancel(scope)` acceptance, runtime and transport egress queues for that scope MUST be fenced/cleared; new `output_accepted` or `playback_started` signals for that scope are invalid.
+`turn_open_proposed` MAY be recorded for replay/debug but is not guaranteed to be surfaced outside runtime boundaries.
 
 **Rule:** ControlLane events have preemptive priority over DataLane and TelemetryLane; runtime must deliver them with minimal buffering and must not allow telemetry/data backpressure to block control delivery.
 
@@ -439,10 +455,46 @@ All signals are Events that follow the Event ABI, but are classified by lane for
 - **Lane priority:** ControlLane preempts everything; DataLane is latency-protected; TelemetryLane is best-effort.  
 - **Bounded buffering:** Every Edge must have BufferSpec and watermarks (explicit or via profile defaults) so latency accumulation is always observable and controllable.  
 - **No hidden blocking:** In low-latency profiles, DataLane edges MUST NOT block indefinitely. If blocking is permitted, BufferSpec MUST declare a bounded `max_block_time` after which deterministic shedding (drop/merge/degrade) occurs.  
-- **Cancellation scope:** cancel propagation is explicit and must cancel provider invocations and buffered output generation where applicable.  
+- **Cancellation scope:** cancel propagation is explicit and must cancel provider invocations and buffered output generation where applicable. This guarantee includes transport-bound egress buffers (output fencing/flush).  
 - **Failover safety:** PlacementLease epochs prevent split-brain outputs; HotState may reset; DurableState survives with declared consistency.  
 - **Replayability:** EventTimeline + plan + determinism context define what can be replayed; provider determinism is not assumed unless recorded outputs are used.
 
 ---
 
-## 5) Modular Design: What Modules the Framework Needs
+## 5) Documentation Dependency Graph
+
+Edge semantics: `A -> B` means "A depends on B".
+
+```mermaid
+graph TD
+  SD["docs/rspp_SystemDesign.md"]
+  MD["docs/ModularDesign.md"]
+  SCHEMA["docs/ContractArtifacts.schema.json"]
+  CTP["docs/ConformanceTestPlan.md"]
+  CIV["docs/CIValidationGates.md"]
+  FIM["docs/FailureInjectionMatrix.md"]
+  MVP["docs/MVP_ImplementationSlice.md"]
+  REPO["docs/RepositoryScaffoldAndOwnership.md"]
+  SEC["docs/SecurityDataHandlingBaseline.md"]
+  TLT["docs/DeterministicLifecycleTruthTable.md"]
+  CHAL["docs/challange.md"]
+
+  MD --> SD
+  SCHEMA --> SD
+  SCHEMA --> MD
+  CTP --> SCHEMA
+  CIV --> SCHEMA
+  CIV --> CTP
+  CIV --> FIM
+  FIM --> SD
+  FIM --> MD
+  MVP --> SD
+  MVP --> MD
+  REPO --> MD
+  REPO --> CIV
+  SEC --> SD
+  SEC --> MD
+  TLT -. implied lifecycle alignment .-> SD
+  TLT -. implied lifecycle alignment .-> MD
+  CHAL -. conceptual alignment .-> SD
+```
