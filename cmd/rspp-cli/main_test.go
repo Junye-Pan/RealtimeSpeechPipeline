@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -36,5 +37,13 @@ func TestWriteReplaySmokeReport(t *testing.T) {
 	}
 	if report.TotalDivergences != 0 {
 		t.Fatalf("expected zero divergences, got %d", report.TotalDivergences)
+	}
+	if len(report.FailingDivergences) != 0 {
+		t.Fatalf("expected no failing divergences, got %+v", report.FailingDivergences)
+	}
+
+	mdPath := strings.TrimSuffix(out, filepath.Ext(out)) + ".md"
+	if _, err := os.Stat(mdPath); err != nil {
+		t.Fatalf("expected markdown summary at %s: %v", mdPath, err)
 	}
 }

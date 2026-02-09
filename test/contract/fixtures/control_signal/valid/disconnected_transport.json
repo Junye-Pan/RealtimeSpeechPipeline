@@ -1,0 +1,19 @@
+{
+  "schema_version": "v1.0",
+  "event_scope": "turn",
+  "session_id": "sess-f6-1",
+  "turn_id": "turn-f6-1",
+  "pipeline_version": "pipeline-v1",
+  "event_id": "evt-disconnect-1",
+  "lane": "ControlLane",
+  "transport_sequence": 24,
+  "runtime_sequence": 24,
+  "authority_epoch": 9,
+  "runtime_timestamp_ms": 450,
+  "wall_clock_timestamp_ms": 450,
+  "payload_class": "metadata",
+  "signal": "disconnected",
+  "emitted_by": "RK-23",
+  "reason": "transport_disconnect_or_stall",
+  "scope": "turn"
+}

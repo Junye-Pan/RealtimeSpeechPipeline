@@ -1,0 +1,20 @@
+{
+  "schema_version": "v1.0",
+  "event_scope": "turn",
+  "session_id": "sess-f4-2",
+  "turn_id": "turn-f4-2",
+  "pipeline_version": "pipeline-v1",
+  "event_id": "evt-watermark-2",
+  "lane": "ControlLane",
+  "target_lane": "DataLane",
+  "transport_sequence": 26,
+  "runtime_sequence": 26,
+  "authority_epoch": 9,
+  "runtime_timestamp_ms": 470,
+  "wall_clock_timestamp_ms": 470,
+  "payload_class": "metadata",
+  "signal": "watermark",
+  "emitted_by": "RK-13",
+  "reason": "edge_watermark_high",
+  "scope": "turn"
+}

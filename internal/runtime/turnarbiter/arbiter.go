@@ -8,6 +8,7 @@ import (
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/guard"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/localadmission"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/planresolver"
+	runtimetransport "github.com/tiger/realtime-speech-pipeline/internal/runtime/transport"
 )
 
 // LifecycleEvent is a compact, ordered event emitted by the arbiter.
@@ -58,6 +59,8 @@ type ActiveInput struct {
 	AuthorityRevoked             bool
 	CancelAccepted               bool
 	ProviderFailure              bool
+	NodeTimeoutOrFailure         bool
+	TransportDisconnectOrStall   bool
 	BaselineEvidenceAppendFailed bool
 	NoLegalContinueOrFallback    bool
 	TerminalSuccessReady         bool
@@ -338,6 +341,62 @@ func (a Arbiter) HandleActive(in ActiveInput) (ActiveResult, error) {
 		return result, validateActiveResult(result)
 	}
 
+	if in.NodeTimeoutOrFailure {
+		result.Events = append(result.Events,
+			LifecycleEvent{Name: "abort", Reason: "node_timeout_or_failure"},
+			LifecycleEvent{Name: "close"},
+		)
+		result.State = controlplane.TurnClosed
+		appendTerminalTransitions(&result, controlplane.TriggerAbort)
+		return result, validateActiveResult(result)
+	}
+
+	if in.TransportDisconnectOrStall {
+		disconnected, err := runtimetransport.BuildConnectionSignal(runtimetransport.ConnectionSignalInput{
+			SessionID:            in.SessionID,
+			TurnID:               in.TurnID,
+			PipelineVersion:      defaultPipelineVersion(in.PipelineVersion),
+			EventID:              in.EventID + "-disconnected",
+			Signal:               "disconnected",
+			TransportSequence:    in.TransportSequence,
+			RuntimeSequence:      in.RuntimeSequence,
+			AuthorityEpoch:       in.AuthorityEpoch,
+			RuntimeTimestampMS:   in.RuntimeTimestampMS,
+			WallClockTimestampMS: in.WallClockTimestampMS,
+			Reason:               "transport_disconnect_or_stall",
+		})
+		if err != nil {
+			return ActiveResult{}, err
+		}
+		stall, err := runtimetransport.BuildConnectionSignal(runtimetransport.ConnectionSignalInput{
+			SessionID:            in.SessionID,
+			TurnID:               in.TurnID,
+			PipelineVersion:      defaultPipelineVersion(in.PipelineVersion),
+			EventID:              in.EventID + "-stall",
+			Signal:               "stall",
+			TransportSequence:    in.TransportSequence + 1,
+			RuntimeSequence:      in.RuntimeSequence + 1,
+			AuthorityEpoch:       in.AuthorityEpoch,
+			RuntimeTimestampMS:   in.RuntimeTimestampMS + 1,
+			WallClockTimestampMS: in.WallClockTimestampMS + 1,
+			Reason:               "transport_disconnect_or_stall",
+		})
+		if err != nil {
+			return ActiveResult{}, err
+		}
+
+		result.ControlLane = append(result.ControlLane, disconnected, stall)
+		result.Events = append(result.Events,
+			LifecycleEvent{Name: "disconnected", Reason: "transport_disconnect_or_stall"},
+			LifecycleEvent{Name: "stall", Reason: "transport_disconnect_or_stall"},
+			LifecycleEvent{Name: "abort", Reason: "transport_disconnect_or_stall"},
+			LifecycleEvent{Name: "close"},
+		)
+		result.State = controlplane.TurnClosed
+		appendTerminalTransitions(&result, controlplane.TriggerAbort)
+		return result, validateActiveResult(result)
+	}
+
 	if in.BaselineEvidenceAppendFailed {
 		result.Events = append(result.Events,
 			LifecycleEvent{Name: "abort", Reason: "recording_evidence_unavailable"},
@@ -414,4 +473,11 @@ func triggerFromOutcome(kind controlplane.OutcomeKind) (controlplane.TransitionT
 	default:
 		return "", fmt.Errorf("outcome %s is not a pre-turn transition trigger", kind)
 	}
+}
+
+func defaultPipelineVersion(version string) string {
+	if version == "" {
+		return "pipeline-v1"
+	}
+	return version
 }

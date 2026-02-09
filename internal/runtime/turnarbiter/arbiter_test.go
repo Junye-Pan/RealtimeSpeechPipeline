@@ -251,6 +251,63 @@ func TestHandleActiveProviderFailurePath(t *testing.T) {
 	}
 }
 
+func TestHandleActiveNodeTimeoutOrFailurePath(t *testing.T) {
+	t.Parallel()
+
+	arbiter := New()
+	result, err := arbiter.HandleActive(ActiveInput{
+		SessionID:            "sess-1",
+		TurnID:               "turn-node-fail-1",
+		EventID:              "evt-node-fail-1",
+		RuntimeTimestampMS:   7,
+		WallClockTimestampMS: 7,
+		AuthorityEpoch:       8,
+		NodeTimeoutOrFailure: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Events) != 2 {
+		t.Fatalf("expected abort+close, got %d events", len(result.Events))
+	}
+	if result.Events[0].Name != "abort" || result.Events[0].Reason != "node_timeout_or_failure" {
+		t.Fatalf("expected abort(node_timeout_or_failure), got %+v", result.Events[0])
+	}
+	if result.Events[1].Name != "close" {
+		t.Fatalf("expected close, got %+v", result.Events[1])
+	}
+}
+
+func TestHandleActiveTransportDisconnectOrStallPath(t *testing.T) {
+	t.Parallel()
+
+	arbiter := New()
+	result, err := arbiter.HandleActive(ActiveInput{
+		SessionID:                  "sess-1",
+		TurnID:                     "turn-transport-fail-1",
+		EventID:                    "evt-transport-fail-1",
+		PipelineVersion:            "pipeline-v1",
+		TransportSequence:          9,
+		RuntimeSequence:            10,
+		RuntimeTimestampMS:         8,
+		WallClockTimestampMS:       8,
+		AuthorityEpoch:             11,
+		TransportDisconnectOrStall: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.ControlLane) != 2 {
+		t.Fatalf("expected disconnected+stall control signals, got %d", len(result.ControlLane))
+	}
+	if result.ControlLane[0].Signal != "disconnected" || result.ControlLane[1].Signal != "stall" {
+		t.Fatalf("unexpected transport control signals: %+v", result.ControlLane)
+	}
+	if len(result.Events) != 4 || result.Events[2].Name != "abort" || result.Events[2].Reason != "transport_disconnect_or_stall" || result.Events[3].Name != "close" {
+		t.Fatalf("expected disconnected/stall + abort(transport_disconnect_or_stall)->close, got %+v", result.Events)
+	}
+}
+
 func TestApplyDispatchOpen(t *testing.T) {
 	t.Parallel()
 

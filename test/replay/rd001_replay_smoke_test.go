@@ -84,3 +84,59 @@ func TestReplayComparatorReportsOutcomeDivergence(t *testing.T) {
 		t.Fatalf("expected OUTCOME_DIVERGENCE, got %s", divergences[0].Class)
 	}
 }
+
+func TestReplayComparatorReportsAllDivergenceClasses(t *testing.T) {
+	t.Parallel()
+
+	epoch := int64(9)
+	baselineDecision := controlplane.DecisionOutcome{
+		OutcomeKind:        controlplane.OutcomeAdmit,
+		Phase:              controlplane.PhasePreTurn,
+		Scope:              controlplane.ScopeSession,
+		SessionID:          "sess-rd-3",
+		EventID:            "evt-rd-4",
+		RuntimeTimestampMS: 100,
+		WallClockMS:        100,
+		EmittedBy:          controlplane.EmitterRK25,
+		Reason:             "admission_capacity_allow",
+		AuthorityEpoch:     &epoch,
+	}
+	replayDecision := baselineDecision
+	replayDecision.Reason = "admission_capacity_reject"
+
+	baseline := []replaycmp.TraceArtifact{
+		{
+			PlanHash:           "plan-a",
+			Decision:           baselineDecision,
+			OrderingMarker:     "runtime_sequence:10",
+			AuthorityEpoch:     9,
+			RuntimeTimestampMS: 100,
+		},
+	}
+	replayed := []replaycmp.TraceArtifact{
+		{
+			PlanHash:           "plan-b",
+			Decision:           replayDecision,
+			OrderingMarker:     "runtime_sequence:11",
+			AuthorityEpoch:     10,
+			RuntimeTimestampMS: 130,
+		},
+	}
+
+	divergences := replaycmp.CompareTraceArtifacts(baseline, replayed, replaycmp.CompareConfig{TimingToleranceMS: 5})
+	classes := map[obs.DivergenceClass]bool{}
+	for _, d := range divergences {
+		classes[d.Class] = true
+	}
+	for _, required := range []obs.DivergenceClass{
+		obs.PlanDivergence,
+		obs.OutcomeDivergence,
+		obs.OrderingDivergence,
+		obs.AuthorityDivergence,
+		obs.TimingDivergence,
+	} {
+		if !classes[required] {
+			t.Fatalf("expected divergence class %s in %+v", required, divergences)
+		}
+	}
+}

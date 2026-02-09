@@ -1,0 +1,19 @@
+{
+  "schema_version": "v1.0",
+  "event_scope": "turn",
+  "session_id": "sess-f8-1",
+  "turn_id": "turn-f8-1",
+  "pipeline_version": "pipeline-v1",
+  "event_id": "evt-lease-rotated-1",
+  "lane": "ControlLane",
+  "transport_sequence": 25,
+  "runtime_sequence": 25,
+  "authority_epoch": 10,
+  "runtime_timestamp_ms": 460,
+  "wall_clock_timestamp_ms": 460,
+  "payload_class": "metadata",
+  "signal": "lease_rotated",
+  "emitted_by": "CP-07",
+  "reason": "authority_epoch_rotation",
+  "scope": "turn"
+}

@@ -95,6 +95,8 @@ type ControlSignal struct {
 	TurnID             string       `json:"turn_id,omitempty"`
 	PipelineVersion    string       `json:"pipeline_version"`
 	EdgeID             string       `json:"edge_id,omitempty"`
+	SyncDomain         string       `json:"sync_domain,omitempty"`
+	DiscontinuityID    string       `json:"discontinuity_id,omitempty"`
 	EventID            string       `json:"event_id"`
 	Lane               Lane         `json:"lane"`
 	TargetLane         Lane         `json:"target_lane,omitempty"`
@@ -108,6 +110,7 @@ type ControlSignal struct {
 	EmittedBy          string       `json:"emitted_by"`
 	Reason             string       `json:"reason,omitempty"`
 	SeqRange           *SeqRange    `json:"seq_range,omitempty"`
+	Amount             *int64       `json:"amount,omitempty"`
 	Scope              string       `json:"scope,omitempty"`
 }
 
@@ -188,6 +191,9 @@ func (c ControlSignal) Validate() error {
 	if c.RuntimeSequence < 0 || c.RuntimeTimestampMS < 0 || c.WallClockMS < 0 {
 		return fmt.Errorf("runtime sequence and timestamps must be >=0")
 	}
+	if c.Amount != nil && *c.Amount < 1 {
+		return fmt.Errorf("amount must be >=1 when present")
+	}
 	if c.Signal == "" {
 		return fmt.Errorf("signal is required")
 	}
@@ -223,6 +229,30 @@ func (c ControlSignal) Validate() error {
 		}
 	}
 
+	if c.Signal == "watermark" {
+		if c.EmittedBy != "RK-13" || c.EdgeID == "" || c.TargetLane == "" || c.Reason == "" {
+			return fmt.Errorf("watermark requires emitted_by=RK-13, edge_id, target_lane, and reason")
+		}
+	}
+
+	if c.Signal == "flow_xoff" {
+		if c.EmittedBy != "RK-14" || c.EdgeID == "" || c.TargetLane == "" || c.Reason == "" {
+			return fmt.Errorf("flow_xoff requires emitted_by=RK-14, edge_id, target_lane, and reason")
+		}
+	}
+
+	if c.Signal == "flow_xon" {
+		if c.EmittedBy != "RK-14" || c.EdgeID == "" || c.TargetLane == "" {
+			return fmt.Errorf("flow_xon requires emitted_by=RK-14, edge_id, and target_lane")
+		}
+	}
+
+	if c.Signal == "credit_grant" {
+		if c.EmittedBy != "RK-14" || c.EdgeID == "" || c.TargetLane == "" || c.Amount == nil || *c.Amount < 1 {
+			return fmt.Errorf("credit_grant requires emitted_by=RK-14, edge_id, target_lane, and amount>=1")
+		}
+	}
+
 	if c.SeqRange != nil {
 		if err := c.SeqRange.Validate(); err != nil {
 			return err
@@ -238,9 +268,45 @@ func (c ControlSignal) Validate() error {
 		}
 	}
 
+	if c.Signal == "discontinuity" {
+		if c.EmittedBy != "RK-15" || c.SyncDomain == "" || c.DiscontinuityID == "" || c.Reason == "" {
+			return fmt.Errorf("discontinuity requires emitted_by=RK-15, sync_domain, discontinuity_id, and reason")
+		}
+	}
+
+	if inStringSet(c.Signal, []string{"provider_error", "circuit_event", "provider_switch"}) {
+		if c.EmittedBy != "RK-11" || c.Reason == "" {
+			return fmt.Errorf("%s requires emitted_by=RK-11 and reason", c.Signal)
+		}
+	}
+
+	if inStringSet(c.Signal, []string{"lease_issued", "lease_rotated", "migration_start", "migration_finish", "session_handoff"}) {
+		if !inStringSet(c.EmittedBy, []string{"CP-07", "CP-08"}) {
+			return fmt.Errorf("%s requires emitted_by CP-07|CP-08", c.Signal)
+		}
+	}
+
 	if inStringSet(c.Signal, []string{"stale_epoch_reject", "deauthorized_drain"}) {
 		if c.EmittedBy != "RK-24" || c.Reason == "" {
 			return fmt.Errorf("%s requires emitted_by=RK-24 and reason", c.Signal)
+		}
+	}
+
+	if inStringSet(c.Signal, []string{"connected", "reconnecting", "disconnected", "ended", "silence", "stall"}) {
+		if c.EmittedBy != "RK-23" {
+			return fmt.Errorf("%s requires emitted_by=RK-23", c.Signal)
+		}
+	}
+
+	if inStringSet(c.Signal, []string{"output_accepted", "playback_started", "playback_completed", "playback_cancelled"}) {
+		if c.EventScope != ScopeTurn || !inStringSet(c.EmittedBy, []string{"RK-22", "RK-23"}) || c.TurnID == "" {
+			return fmt.Errorf("%s requires event_scope=turn, turn_id, emitted_by RK-22|RK-23", c.Signal)
+		}
+	}
+
+	if c.Signal == "recording_level_downgraded" {
+		if c.EmittedBy != "OR-02" || c.Reason == "" {
+			return fmt.Errorf("recording_level_downgraded requires emitted_by=OR-02 and reason")
 		}
 	}
 

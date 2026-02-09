@@ -1,0 +1,19 @@
+{
+  "schema_version": "v1.0",
+  "event_scope": "turn",
+  "session_id": "sess-f2-1",
+  "turn_id": "turn-f2-1",
+  "pipeline_version": "pipeline-v1",
+  "event_id": "evt-budget-warning-1",
+  "lane": "ControlLane",
+  "transport_sequence": 21,
+  "runtime_sequence": 21,
+  "authority_epoch": 9,
+  "runtime_timestamp_ms": 420,
+  "wall_clock_timestamp_ms": 420,
+  "payload_class": "metadata",
+  "signal": "budget_warning",
+  "emitted_by": "RK-17",
+  "reason": "node_budget_threshold_exceeded",
+  "scope": "node"
+}

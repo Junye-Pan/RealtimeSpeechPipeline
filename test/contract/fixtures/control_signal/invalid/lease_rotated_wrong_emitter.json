@@ -1,0 +1,19 @@
+{
+  "schema_version": "v1.0",
+  "event_scope": "turn",
+  "session_id": "sess-f8-2",
+  "turn_id": "turn-f8-2",
+  "pipeline_version": "pipeline-v1",
+  "event_id": "evt-lease-rotated-2",
+  "lane": "ControlLane",
+  "transport_sequence": 28,
+  "runtime_sequence": 28,
+  "authority_epoch": 10,
+  "runtime_timestamp_ms": 490,
+  "wall_clock_timestamp_ms": 490,
+  "payload_class": "metadata",
+  "signal": "lease_rotated",
+  "emitted_by": "RK-24",
+  "reason": "authority_epoch_rotation",
+  "scope": "turn"
+}

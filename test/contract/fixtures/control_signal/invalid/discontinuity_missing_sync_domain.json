@@ -1,0 +1,20 @@
+{
+  "schema_version": "v1.0",
+  "event_scope": "turn",
+  "session_id": "sess-f5-2",
+  "turn_id": "turn-f5-2",
+  "pipeline_version": "pipeline-v1",
+  "discontinuity_id": "disc-43",
+  "event_id": "evt-disc-2",
+  "lane": "ControlLane",
+  "transport_sequence": 27,
+  "runtime_sequence": 27,
+  "authority_epoch": 9,
+  "runtime_timestamp_ms": 480,
+  "wall_clock_timestamp_ms": 480,
+  "payload_class": "metadata",
+  "signal": "discontinuity",
+  "emitted_by": "RK-15",
+  "reason": "sync_domain_partial_loss",
+  "scope": "turn"
+}
