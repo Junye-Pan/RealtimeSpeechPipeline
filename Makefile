@@ -1,4 +1,4 @@
-.PHONY: test validate-contracts verify-quick verify-full live-provider-smoke a2-runtime-live security-baseline-check
+.PHONY: test validate-contracts verify-quick verify-full live-provider-smoke a2-runtime-live security-baseline-check codex-artifact-policy-check
 
 test:
 	go test ./...
@@ -21,3 +21,6 @@ a2-runtime-live:
 
 security-baseline-check:
 	bash scripts/security-check.sh
+
+codex-artifact-policy-check:
+	bash scripts/check-codex-artifact-policy.sh

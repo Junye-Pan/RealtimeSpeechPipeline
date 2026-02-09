@@ -2,12 +2,13 @@
 
 ## 1. Purpose and status
 
-Define the currently implemented quick/full validation gates for this repository, plus optional non-blocking live-provider smoke checks.
+Define the currently implemented quick/full validation gates for this repository, plus optional non-blocking live-provider smoke checks and `.codex` artifact policy enforcement.
 
 Status snapshot:
 - Baseline reflects repository behavior as of `2026-02-09`.
 - Verification runs through `scripts/verify.sh` and command chains in `Makefile`.
 - Replay divergence and SLO gating behavior are enforced by `cmd/rspp-cli`.
+- `.codex` generated artifact tracking policy is finalized and enforced in CI.
 - This documentation pass closes MVP item `10.2.3` from `docs/MVP_ImplementationSlice.md`.
 
 ## 2. Source of truth files
@@ -15,10 +16,13 @@ Status snapshot:
 1. `Makefile`
 2. `scripts/verify.sh`
 3. `scripts/security-check.sh`
-4. `cmd/rspp-cli/main.go`
-5. `internal/tooling/regression/divergence.go`
-6. `internal/tooling/ops/slo.go`
-7. `test/replay/fixtures/metadata.json`
+4. `scripts/check-codex-artifact-policy.sh`
+5. `.gitignore`
+6. `.github/workflows/verify.yml`
+7. `cmd/rspp-cli/main.go`
+8. `internal/tooling/regression/divergence.go`
+9. `internal/tooling/ops/slo.go`
+10. `test/replay/fixtures/metadata.json`
 
 ## 3. Verify entrypoint behavior (`scripts/verify.sh`)
 
@@ -122,6 +126,24 @@ Execution policy:
    - `.codex/ops/security-baseline-report.json`
    - `.codex/ops/security-baseline-report.md`
 
+## 4.6 `.codex` artifact policy gate (`make codex-artifact-policy-check`)
+
+Implemented command:
+
+```bash
+make codex-artifact-policy-check
+```
+
+Execution policy:
+1. Runs in CI as a blocking job (`codex-artifact-policy`) in `.github/workflows/verify.yml`.
+2. Allows tracked `.codex` files only under:
+   - `.codex/skills/**`
+   - `.codex/rules/**`
+3. Fails when any tracked `.codex` path is outside the allowlist.
+4. Enforces generated artifact policy:
+   - `.codex/replay/**`, `.codex/ops/**`, `.codex/providers/**`, `.codex/checkpoints/**`, `.codex/checkpoints.log`, and `.codex/sessions/**` are CI-only outputs and must remain untracked.
+5. `verify-quick`, `verify-full`, `security-baseline`, `live-provider-smoke`, and `a2-runtime-live` depend on this policy gate.
+
 ## 5. Replay divergence fail policy (normative, implemented)
 
 `replay-smoke-report` and `replay-regression-report` both fail when `FailingCount > 0`.
@@ -150,6 +172,10 @@ Current expected-divergence annotations in metadata:
 
 ## 6. Artifact outputs and paths
 
+Tracked `.codex` policy:
+1. Source-controlled `.codex` paths are limited to `.codex/skills/**` and `.codex/rules/**`.
+2. Other `.codex` paths are generated CI/local outputs and are not tracked in git.
+
 Quick run artifacts:
 1. `.codex/replay/smoke-report.json`
 2. `.codex/replay/smoke-report.md`
@@ -174,15 +200,17 @@ Security baseline artifacts:
 ## 7. CI boundary status and remaining work
 
 Implemented now:
-1. Quick and full command chains return non-zero on validation/test/divergence/SLO failures.
-2. Replay and SLO artifacts are generated locally under `.codex/`.
-3. `.github/workflows/verify.yml` uploads quick/full artifacts with `if-no-files-found: error` so missing expected artifacts fail CI.
-4. `.github/workflows/verify.yml` includes a non-blocking `live-provider-smoke` job for real-provider integration checks.
-5. `.github/workflows/verify.yml` includes a non-blocking `a2-runtime-live` job with per-module A.2 runtime evidence artifacts.
-6. `.github/workflows/verify.yml` includes a blocking `security-baseline` job for security/data-handling baseline enforcement.
+1. `.github/workflows/verify.yml` runs blocking `codex-artifact-policy` before all other verification jobs.
+2. Quick and full command chains return non-zero on validation/test/divergence/SLO failures.
+3. Replay and SLO artifacts are generated locally under `.codex/`.
+4. `.github/workflows/verify.yml` uploads quick/full artifacts with `if-no-files-found: error` so missing expected artifacts fail CI.
+5. `.github/workflows/verify.yml` includes a non-blocking `live-provider-smoke` job for real-provider integration checks.
+6. `.github/workflows/verify.yml` includes a non-blocking `a2-runtime-live` job with per-module A.2 runtime evidence artifacts.
+7. `.github/workflows/verify.yml` includes a blocking `security-baseline` job for security/data-handling baseline enforcement.
 
 Repository policy action (outside repo code):
 1. Configure branch protection required checks:
+   - `codex-artifact-policy` required for PR merge.
    - `verify-quick` required for PR merge.
    - `verify-full` required for protected `main`/release promotion path.
 2. Keep `live-provider-smoke` non-required until flake/security posture is production-hardened.

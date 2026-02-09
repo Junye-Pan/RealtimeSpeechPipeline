@@ -15,9 +15,20 @@ on:
     - cron: '0 4 * * *'
 
 jobs:
+  codex-artifact-policy:
+    name: codex-artifact-policy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate .codex artifact tracking policy
+        run: make codex-artifact-policy-check
+
   quick:
     name: verify-quick
     runs-on: ubuntu-latest
+    needs: codex-artifact-policy
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -46,7 +57,9 @@ jobs:
   full:
     name: verify-full
     runs-on: ubuntu-latest
-    needs: quick
+    needs:
+      - codex-artifact-policy
+      - quick
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     steps:
       - name: Checkout
@@ -78,7 +91,9 @@ jobs:
   security-baseline:
     name: security-baseline
     runs-on: ubuntu-latest
-    needs: quick
+    needs:
+      - codex-artifact-policy
+      - quick
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     steps:
       - name: Checkout
@@ -106,7 +121,9 @@ jobs:
   live-provider-smoke:
     name: live-provider-smoke
     runs-on: ubuntu-latest
-    needs: quick
+    needs:
+      - codex-artifact-policy
+      - quick
     continue-on-error: true
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'run-live-provider-smoke'))
     steps:
@@ -154,7 +171,9 @@ jobs:
   a2-runtime-live:
     name: a2-runtime-live
     runs-on: ubuntu-latest
-    needs: quick
+    needs:
+      - codex-artifact-policy
+      - quick
     continue-on-error: true
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'run-live-provider-smoke'))
     steps:

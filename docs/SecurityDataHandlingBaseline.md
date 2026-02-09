@@ -135,6 +135,28 @@ Any missing attribute => deny.
 3. Delete requests must remove or cryptographically render inaccessible all persisted data for the target scope.
 4. Audit logs for access/deletion events are retained per compliance policy.
 
+### 7.1 Contract shape (implemented scaffold 2026-02-09)
+
+1. Retention policy resolution is tenant-scoped through a runtime-local resolver contract.
+2. Retention policy must declare:
+   - default retention window (`default_retention_ms`)
+   - class retention windows (`max_retention_by_class_ms`)
+   - explicit `PII`/`PHI` policy limits (`pii_retention_limit_ms`, `phi_retention_limit_ms`)
+3. Deletion request contract must include:
+   - tenant scope (`tenant_id`)
+   - exactly one selector (`session_id` or `turn_id`)
+   - deletion mode (`hard_delete` or `crypto_inaccessible`)
+   - requestor + timestamp (`requested_by`, `requested_at_ms`)
+
+### 7.2 Baseline backend path and behavior
+
+1. Retention/deletion scaffold contract and in-memory baseline implementation live in `internal/observability/replay/retention.go`.
+2. Immutable replay-audit sink interface and backend access path wrapper live in `internal/observability/replay/service.go`.
+3. Replay access authorization must fail closed when immutable audit append fails or audit sink is unavailable.
+4. `hard_delete` removes matching replay artifacts for the requested tenant/session-or-turn scope.
+5. `crypto_inaccessible` keeps matching replay artifacts but makes reads fail with an inaccessible outcome.
+6. Deleting replay artifacts does not delete immutable audit log entries.
+
 ## 8. Pre-code acceptance checklist (status: implemented 2026-02-09)
 
 - [x] Classification tags implemented at ingress and enforced at ABI boundary.
