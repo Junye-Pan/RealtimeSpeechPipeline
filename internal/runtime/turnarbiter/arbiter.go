@@ -57,6 +57,7 @@ type ActiveInput struct {
 	AuthorityEpoch               int64
 	AuthorityRevoked             bool
 	CancelAccepted               bool
+	ProviderFailure              bool
 	BaselineEvidenceAppendFailed bool
 	NoLegalContinueOrFallback    bool
 	TerminalSuccessReady         bool
@@ -320,6 +321,16 @@ func (a Arbiter) HandleActive(in ActiveInput) (ActiveResult, error) {
 	if in.CancelAccepted {
 		result.Events = append(result.Events,
 			LifecycleEvent{Name: "abort", Reason: "cancelled"},
+			LifecycleEvent{Name: "close"},
+		)
+		result.State = controlplane.TurnClosed
+		appendTerminalTransitions(&result, controlplane.TriggerAbort)
+		return result, validateActiveResult(result)
+	}
+
+	if in.ProviderFailure {
+		result.Events = append(result.Events,
+			LifecycleEvent{Name: "abort", Reason: "provider_failure"},
 			LifecycleEvent{Name: "close"},
 		)
 		result.State = controlplane.TurnClosed

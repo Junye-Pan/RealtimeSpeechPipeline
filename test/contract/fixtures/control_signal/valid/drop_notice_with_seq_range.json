@@ -1,0 +1,24 @@
+{
+  "schema_version": "v1.0",
+  "event_scope": "turn",
+  "session_id": "sess-ml-1",
+  "turn_id": "turn-ml-1",
+  "pipeline_version": "pipeline-v1",
+  "edge_id": "edge-stt->llm",
+  "event_id": "evt-drop-notice-1",
+  "lane": "ControlLane",
+  "target_lane": "DataLane",
+  "transport_sequence": 12,
+  "runtime_sequence": 13,
+  "authority_epoch": 5,
+  "runtime_timestamp_ms": 300,
+  "wall_clock_timestamp_ms": 300,
+  "payload_class": "metadata",
+  "signal": "drop_notice",
+  "emitted_by": "RK-12",
+  "reason": "queue_pressure_drop",
+  "seq_range": {
+    "start": 100,
+    "end": 120
+  }
+}

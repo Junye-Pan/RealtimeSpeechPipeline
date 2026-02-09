@@ -53,6 +53,22 @@ func (m MediaTime) Validate() error {
 	return nil
 }
 
+// SeqRange identifies an inclusive runtime sequence window.
+type SeqRange struct {
+	Start int64 `json:"start"`
+	End   int64 `json:"end"`
+}
+
+func (r SeqRange) Validate() error {
+	if r.Start < 0 || r.End < 0 {
+		return fmt.Errorf("seq_range start/end must be >=0")
+	}
+	if r.End < r.Start {
+		return fmt.Errorf("seq_range end must be >= start")
+	}
+	return nil
+}
+
 // EventRecord mirrors the event_record artifact shape.
 type EventRecord struct {
 	SchemaVersion      string       `json:"schema_version"`
@@ -78,8 +94,10 @@ type ControlSignal struct {
 	SessionID          string       `json:"session_id"`
 	TurnID             string       `json:"turn_id,omitempty"`
 	PipelineVersion    string       `json:"pipeline_version"`
+	EdgeID             string       `json:"edge_id,omitempty"`
 	EventID            string       `json:"event_id"`
 	Lane               Lane         `json:"lane"`
+	TargetLane         Lane         `json:"target_lane,omitempty"`
 	TransportSequence  *int64       `json:"transport_sequence"`
 	RuntimeSequence    int64        `json:"runtime_sequence"`
 	AuthorityEpoch     int64        `json:"authority_epoch"`
@@ -89,6 +107,7 @@ type ControlSignal struct {
 	Signal             string       `json:"signal"`
 	EmittedBy          string       `json:"emitted_by"`
 	Reason             string       `json:"reason,omitempty"`
+	SeqRange           *SeqRange    `json:"seq_range,omitempty"`
 	Scope              string       `json:"scope,omitempty"`
 }
 
@@ -157,6 +176,9 @@ func (c ControlSignal) Validate() error {
 	if c.Lane != LaneControl {
 		return fmt.Errorf("control_signal lane must be ControlLane")
 	}
+	if c.TargetLane != "" && !isLane(c.TargetLane) {
+		return fmt.Errorf("invalid target_lane: %q", c.TargetLane)
+	}
 	if c.PayloadClass != PayloadMetadata {
 		return fmt.Errorf("control_signal payload_class must be metadata")
 	}
@@ -198,6 +220,21 @@ func (c ControlSignal) Validate() error {
 	if c.Signal == "shed" {
 		if c.EmittedBy != "RK-25" || c.Reason == "" {
 			return fmt.Errorf("shed requires emitted_by=RK-25 and reason")
+		}
+	}
+
+	if c.SeqRange != nil {
+		if err := c.SeqRange.Validate(); err != nil {
+			return err
+		}
+	}
+
+	if c.Signal == "drop_notice" {
+		if !inStringSet(c.EmittedBy, []string{"RK-12", "RK-13"}) {
+			return fmt.Errorf("drop_notice requires emitted_by RK-12|RK-13")
+		}
+		if c.EdgeID == "" || c.TargetLane == "" || c.Reason == "" || c.SeqRange == nil {
+			return fmt.Errorf("drop_notice requires edge_id, target_lane, reason, and seq_range")
 		}
 	}
 

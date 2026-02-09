@@ -224,6 +224,33 @@ func TestHandleActiveCancelPath(t *testing.T) {
 	}
 }
 
+func TestHandleActiveProviderFailurePath(t *testing.T) {
+	t.Parallel()
+
+	arbiter := New()
+	result, err := arbiter.HandleActive(ActiveInput{
+		SessionID:            "sess-1",
+		TurnID:               "turn-provider-fail-1",
+		EventID:              "evt-provider-fail-1",
+		RuntimeTimestampMS:   6,
+		WallClockTimestampMS: 6,
+		AuthorityEpoch:       7,
+		ProviderFailure:      true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Events) != 2 {
+		t.Fatalf("expected abort+close, got %d events", len(result.Events))
+	}
+	if result.Events[0].Name != "abort" || result.Events[0].Reason != "provider_failure" {
+		t.Fatalf("expected abort(provider_failure), got %+v", result.Events[0])
+	}
+	if result.Events[1].Name != "close" {
+		t.Fatalf("expected close, got %+v", result.Events[1])
+	}
+}
+
 func TestApplyDispatchOpen(t *testing.T) {
 	t.Parallel()
 
