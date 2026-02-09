@@ -12,12 +12,15 @@ import (
 var (
 	// ErrBaselineCapacityExhausted indicates Stage-A reserved capacity is depleted.
 	ErrBaselineCapacityExhausted = fmt.Errorf("timeline baseline stage-a capacity exhausted")
+	// ErrProviderAttemptCapacityExhausted indicates Stage-A provider attempt capacity is depleted.
+	ErrProviderAttemptCapacityExhausted = fmt.Errorf("timeline provider attempt stage-a capacity exhausted")
 )
 
 // StageAConfig defines bounded Stage-A append capacities.
 type StageAConfig struct {
 	BaselineCapacity int
 	DetailCapacity   int
+	AttemptCapacity  int
 }
 
 // BaselineEvidence holds replay-critical OR-02 Stage-A evidence.
@@ -78,6 +81,55 @@ func (e InvocationOutcomeEvidence) Validate() error {
 	}
 	if e.AttemptCount < 1 {
 		return fmt.Errorf("invocation attempt_count must be >=1")
+	}
+	return nil
+}
+
+// ProviderAttemptEvidence captures per-attempt RK-11 invocation evidence.
+type ProviderAttemptEvidence struct {
+	SessionID            string
+	TurnID               string
+	PipelineVersion      string
+	EventID              string
+	ProviderInvocationID string
+	Modality             string
+	ProviderID           string
+	Attempt              int
+	OutcomeClass         string
+	Retryable            bool
+	RetryDecision        string
+	TransportSequence    int64
+	RuntimeSequence      int64
+	AuthorityEpoch       int64
+	RuntimeTimestampMS   int64
+	WallClockTimestampMS int64
+}
+
+// Validate enforces per-attempt evidence invariants.
+func (e ProviderAttemptEvidence) Validate() error {
+	if e.SessionID == "" || e.PipelineVersion == "" || e.EventID == "" || e.ProviderInvocationID == "" {
+		return fmt.Errorf("session_id, pipeline_version, event_id, and provider_invocation_id are required")
+	}
+	if e.ProviderID == "" {
+		return fmt.Errorf("provider_id is required")
+	}
+	if !inStringSet(e.Modality, []string{"stt", "llm", "tts", "external"}) {
+		return fmt.Errorf("invalid provider attempt modality: %s", e.Modality)
+	}
+	if !inStringSet(e.OutcomeClass, []string{"success", "timeout", "overload", "blocked", "infrastructure_failure", "cancelled"}) {
+		return fmt.Errorf("invalid provider attempt outcome_class: %s", e.OutcomeClass)
+	}
+	if !inStringSet(e.RetryDecision, []string{"none", "retry", "provider_switch", "fallback"}) {
+		return fmt.Errorf("invalid provider attempt retry_decision: %s", e.RetryDecision)
+	}
+	if e.Attempt < 1 {
+		return fmt.Errorf("provider attempt must be >=1")
+	}
+	if e.TransportSequence < 0 || e.RuntimeSequence < 0 || e.AuthorityEpoch < 0 {
+		return fmt.Errorf("provider attempt sequence fields must be >=0")
+	}
+	if e.RuntimeTimestampMS < 0 || e.WallClockTimestampMS < 0 {
+		return fmt.Errorf("provider attempt timestamps must be >=0")
 	}
 	return nil
 }
@@ -216,6 +268,7 @@ type Recorder struct {
 	mu              sync.Mutex
 	baselineEntries []BaselineEvidence
 	detailEntries   []DetailEvent
+	attemptEntries  []ProviderAttemptEvidence
 	droppedDetails  int
 	downgradeByTurn map[string]bool
 }
@@ -227,6 +280,9 @@ func NewRecorder(cfg StageAConfig) Recorder {
 	}
 	if cfg.DetailCapacity < 1 {
 		cfg.DetailCapacity = 512
+	}
+	if cfg.AttemptCapacity < 1 {
+		cfg.AttemptCapacity = 1024
 	}
 	return Recorder{
 		cfg:             cfg,
@@ -247,6 +303,28 @@ func (r *Recorder) AppendBaseline(evidence BaselineEvidence) error {
 		return ErrBaselineCapacityExhausted
 	}
 	r.baselineEntries = append(r.baselineEntries, evidence)
+	return nil
+}
+
+// AppendProviderInvocationAttempts appends RK-11 per-attempt evidence.
+func (r *Recorder) AppendProviderInvocationAttempts(attempts []ProviderAttemptEvidence) error {
+	if len(attempts) == 0 {
+		return nil
+	}
+
+	for _, attempt := range attempts {
+		if err := attempt.Validate(); err != nil {
+			return err
+		}
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if len(r.attemptEntries)+len(attempts) > r.cfg.AttemptCapacity {
+		return ErrProviderAttemptCapacityExhausted
+	}
+	r.attemptEntries = append(r.attemptEntries, attempts...)
 	return nil
 }
 
@@ -353,6 +431,15 @@ func (r *Recorder) DetailEntries() []DetailEvent {
 	defer r.mu.Unlock()
 	out := make([]DetailEvent, len(r.detailEntries))
 	copy(out, r.detailEntries)
+	return out
+}
+
+// ProviderAttemptEntries returns a stable copy of provider attempt entries.
+func (r *Recorder) ProviderAttemptEntries() []ProviderAttemptEvidence {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]ProviderAttemptEvidence, len(r.attemptEntries))
+	copy(out, r.attemptEntries)
 	return out
 }
 

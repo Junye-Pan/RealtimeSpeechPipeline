@@ -6,6 +6,8 @@ import (
 	"github.com/tiger/realtime-speech-pipeline/api/controlplane"
 	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
 	"github.com/tiger/realtime-speech-pipeline/internal/observability/timeline"
+	runtimeeventabi "github.com/tiger/realtime-speech-pipeline/internal/runtime/eventabi"
+	"github.com/tiger/realtime-speech-pipeline/internal/runtime/lanes"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/localadmission"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/contracts"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/invocation"
@@ -86,14 +88,24 @@ type ProviderInvoker interface {
 	Invoke(in invocation.InvocationInput) (invocation.InvocationResult, error)
 }
 
+// ProviderAttemptAppender is the scheduler-to-observability seam for attempt-level evidence.
+type ProviderAttemptAppender interface {
+	AppendProviderInvocationAttempts([]timeline.ProviderAttemptEvidence) error
+}
+
 // Scheduler is a minimal RK-07 execution-path stub wired to RK-25 local admission.
 type Scheduler struct {
 	admission       localadmission.Evaluator
 	providerInvoker ProviderInvoker
+	attemptAppender ProviderAttemptAppender
+	router          lanes.Router
 }
 
 func NewScheduler(admission localadmission.Evaluator) Scheduler {
-	return Scheduler{admission: admission}
+	return Scheduler{
+		admission: admission,
+		router:    lanes.NewDefaultRouter(),
+	}
 }
 
 // NewSchedulerWithProviderInvoker wires optional RK-11 provider invocation support.
@@ -101,6 +113,40 @@ func NewSchedulerWithProviderInvoker(admission localadmission.Evaluator, provide
 	return Scheduler{
 		admission:       admission,
 		providerInvoker: providerInvoker,
+		router:          lanes.NewDefaultRouter(),
+	}
+}
+
+// NewSchedulerWithProviderInvokerAndAttemptAppender wires RK-11 invocation and OR-02 attempt recording.
+func NewSchedulerWithProviderInvokerAndAttemptAppender(
+	admission localadmission.Evaluator,
+	providerInvoker ProviderInvoker,
+	attemptAppender ProviderAttemptAppender,
+) Scheduler {
+	return Scheduler{
+		admission:       admission,
+		providerInvoker: providerInvoker,
+		attemptAppender: attemptAppender,
+		router:          lanes.NewDefaultRouter(),
+	}
+}
+
+// NewSchedulerWithDependencies wires explicit scheduler dependencies for advanced runtime paths.
+func NewSchedulerWithDependencies(
+	admission localadmission.Evaluator,
+	providerInvoker ProviderInvoker,
+	attemptAppender ProviderAttemptAppender,
+	router lanes.Router,
+) Scheduler {
+	if router == nil {
+		defaultRouter := lanes.NewDefaultRouter()
+		router = defaultRouter
+	}
+	return Scheduler{
+		admission:       admission,
+		providerInvoker: providerInvoker,
+		attemptAppender: attemptAppender,
+		router:          router,
 	}
 }
 
@@ -156,6 +202,18 @@ func (s Scheduler) evaluate(scope controlplane.OutcomeScope, in SchedulingInput)
 			if err != nil {
 				return SchedulingDecision{}, err
 			}
+			normalizedSignals, err := runtimeeventabi.ValidateAndNormalizeControlSignals(invocationResult.Signals)
+			if err != nil {
+				return SchedulingDecision{}, err
+			}
+
+			if s.attemptAppender != nil {
+				if err := s.attemptAppender.AppendProviderInvocationAttempts(
+					buildAttemptEvidence(in, in.ProviderInvocation.Modality, invocationResult),
+				); err != nil {
+					return SchedulingDecision{}, err
+				}
+			}
 
 			decision.Provider = &ProviderDecision{
 				ProviderInvocationID: invocationResult.ProviderInvocationID,
@@ -165,7 +223,7 @@ func (s Scheduler) evaluate(scope controlplane.OutcomeScope, in SchedulingInput)
 				Retryable:            invocationResult.Outcome.Retryable,
 				RetryDecision:        invocationResult.RetryDecision,
 				Attempts:             len(invocationResult.Attempts),
-				Signals:              append([]eventabi.ControlSignal(nil), invocationResult.Signals...),
+				Signals:              append([]eventabi.ControlSignal(nil), normalizedSignals...),
 			}
 			decision.Allowed = invocationResult.Outcome.Class == contracts.OutcomeSuccess
 		}
@@ -239,4 +297,38 @@ func nonNegative(v int64) int64 {
 
 func int64Ptr(v int64) *int64 {
 	return &v
+}
+
+func buildAttemptEvidence(
+	in SchedulingInput,
+	modality contracts.Modality,
+	result invocation.InvocationResult,
+) []timeline.ProviderAttemptEvidence {
+	retryDecision := result.RetryDecision
+	if retryDecision == "" {
+		retryDecision = "none"
+	}
+	attempts := make([]timeline.ProviderAttemptEvidence, 0, len(result.Attempts))
+	for idx, attempt := range result.Attempts {
+		offset := int64(idx)
+		attempts = append(attempts, timeline.ProviderAttemptEvidence{
+			SessionID:            in.SessionID,
+			TurnID:               in.TurnID,
+			PipelineVersion:      defaultPipelineVersion(in.PipelineVersion),
+			EventID:              in.EventID,
+			ProviderInvocationID: result.ProviderInvocationID,
+			Modality:             string(modality),
+			ProviderID:           attempt.ProviderID,
+			Attempt:              attempt.Attempt,
+			OutcomeClass:         string(attempt.Outcome.Class),
+			Retryable:            attempt.Outcome.Retryable,
+			RetryDecision:        retryDecision,
+			TransportSequence:    nonNegative(in.TransportSequence) + offset,
+			RuntimeSequence:      nonNegative(in.RuntimeSequence) + offset,
+			AuthorityEpoch:       nonNegative(in.AuthorityEpoch),
+			RuntimeTimestampMS:   nonNegative(in.RuntimeTimestampMS) + offset,
+			WallClockTimestampMS: nonNegative(in.WallClockTimestampMS) + offset,
+		})
+	}
+	return attempts
 }
