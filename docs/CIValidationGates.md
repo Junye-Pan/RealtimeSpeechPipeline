@@ -83,7 +83,8 @@ Execution policy:
 2. Triggered on `schedule`, `workflow_dispatch`, and pull requests explicitly labeled `run-live-provider-smoke`.
 3. Uses provider secrets/env when present; individual provider checks are skipped when disabled via env flags.
 4. Current CI config enables real TTS smoke only for ElevenLabs (`RSPP_TTS_GOOGLE_ENABLE=0`, `RSPP_TTS_POLLY_ENABLE=0`).
-5. Does not replace required merge gates `verify-quick` and `verify-full`.
+5. Current CI config keeps Gemini disabled (`RSPP_LLM_GEMINI_ENABLE=0`), pins Anthropic to `claude-3-5-haiku-latest`, and uses OpenRouter-compatible Cohere settings.
+6. Does not replace required merge gates `verify-quick` and `verify-full`.
 
 ## 5. Replay divergence fail policy (normative, implemented)
 

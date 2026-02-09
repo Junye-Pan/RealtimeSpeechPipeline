@@ -24,7 +24,7 @@ func ConfigFromEnv() Config {
 	return Config{
 		APIKey:          os.Getenv("RSPP_LLM_ANTHROPIC_API_KEY"),
 		Endpoint:        defaultString(os.Getenv("RSPP_LLM_ANTHROPIC_ENDPOINT"), "https://api.anthropic.com/v1/messages"),
-		Model:           defaultString(os.Getenv("RSPP_LLM_ANTHROPIC_MODEL"), "claude-3-5-sonnet-latest"),
+		Model:           defaultString(os.Getenv("RSPP_LLM_ANTHROPIC_MODEL"), "claude-3-5-haiku-latest"),
 		Prompt:          defaultString(os.Getenv("RSPP_LLM_ANTHROPIC_PROMPT"), "Reply with the word: ok"),
 		AnthropicVerion: defaultString(os.Getenv("RSPP_LLM_ANTHROPIC_VERSION"), "2023-06-01"),
 		MaxTokens:       16,
