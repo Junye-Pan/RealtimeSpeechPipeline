@@ -1,0 +1,49 @@
+---
+## Checkpoint: 2026-02-09 01:34:35 CST mvp-102-closure
+
+### Objective (1-3 bullets)
+- Verify closure status of section 10.2 in docs/MVP_ImplementationSlice.md and move completed items into 10.1.
+- Enforce repository required checks so CI gates are blocking at merge/release boundaries.
+- Record a resumable checkpoint with command evidence and current repo state.
+
+### What changed (verified)
+- Repo state at capture: local_time='2026-02-09 01:34:35 CST'; repo_root='/Users/tiger/Documents/projects/RealtimeSpeechPipeline'; cwd='/Users/tiger/Documents/projects/RealtimeSpeechPipeline'; branch='main'; head='90f2d76'; uncommitted_changes='yes (2 entries)'.
+- Confirmed branch-protection enforcement is active after repository visibility switch to public:
+  - main requires 'verify-quick' and 'verify-full' with strict status checks and admin enforcement.
+  - 'release/*' rule requires 'verify-full' with strict status checks and admin enforcement.
+- Updated docs/MVP_ImplementationSlice.md section 10 so completed 10.2 work is listed in 10.1 and 10.2 now indicates no open items.
+- Executed key commands: 'gh auth status'; 'gh api repos/Junye-Pan/RealtimeSpeechPipeline/branches/main/protection'; GraphQL branch protection query/mutation; 'nl -ba docs/MVP_ImplementationSlice.md | sed -n 170,230p'.
+
+### What worked (with evidence)
+- Required checks are enforced on main.
+  - Evidence: '{"contexts":["verify-quick","verify-full"],"enforce_admins":true,"strict":true}' from branch protection API.
+- Release rule was created and is visible.
+  - Evidence: GraphQL response includes patterns 'main' and 'release/*' with required check contexts.
+- Section 10 was normalized to reflect closure.
+  - Evidence: docs/MVP_ImplementationSlice.md:195-211 records items 8-10 in 10.1 and 10.2 states no open remaining items.
+
+### What didn’t work (with evidence)
+- Initial branch-protection setup attempts failed while repo was private.
+  - Evidence: GitHub API returned '403: Upgrade to GitHub Pro or make this repository public to enable this feature.'
+- Early device-login sessions expired before auth completed.
+  - Evidence: follow-up polling returned 'Unknown process id' for expired interactive login sessions.
+
+### Decisions & rationale
+- Decision: Treat 10.2 CI/replay tasks as completed and move them into 10.1.
+- Why: Implementation and enforcement are present in both repository files and live GitHub settings.
+- Trade-offs: Branch-protection behavior for release checks applies only to branches matching 'release/*'.
+- Follow-ups: Validate required-check behavior on the next PR and first release branch push.
+
+### Open questions / unknowns
+- Should additional release branch patterns (for example 'release-*') be protected in addition to 'release/*'?
+
+### Next steps (ordered, smallest-to-largest)
+1. Open or update a PR and verify merge is blocked until 'verify-quick' and 'verify-full' succeed.
+2. Create a test branch matching 'release/*' and verify 'verify-full' enforcement triggers as expected.
+3. If needed, add additional branch-protection patterns and update docs accordingly.
+
+### Quick resume prompt
+Paste this into a new Codex session:
+> Read and follow the session log at: .codex/sessions/2026-02-09-mvp-102-closure-20260209.tmp
+> First, restate current status, then execute the Next steps in order.
+---
