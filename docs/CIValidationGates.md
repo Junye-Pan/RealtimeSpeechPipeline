@@ -2,10 +2,10 @@
 
 ## 1. Purpose and status
 
-Define the currently implemented quick/full validation gates for this repository.
+Define the currently implemented quick/full validation gates for this repository, plus optional non-blocking live-provider smoke checks.
 
 Status snapshot:
-- Baseline reflects repository behavior as of `2026-02-08`.
+- Baseline reflects repository behavior as of `2026-02-09`.
 - Verification runs through `scripts/verify.sh` and command chains in `Makefile`.
 - Replay divergence and SLO gating behavior are enforced by `cmd/rspp-cli`.
 - This documentation pass closes MVP item `10.2.3` from `docs/MVP_ImplementationSlice.md`.
@@ -70,6 +70,22 @@ Coverage summary:
 2. Replay regression artifact generation and divergence enforcement for fixtures enabled for gate `full`.
 3. Runtime baseline + SLO gate evaluation.
 
+## 4.3 Live provider smoke (`make live-provider-smoke`)
+
+Implemented command:
+
+```bash
+go test -tags=liveproviders ./test/integration -run TestLiveProviderSmoke -v
+```
+
+Execution policy:
+1. Runs in CI as a non-blocking job (`live-provider-smoke`) in `.github/workflows/verify.yml`.
+2. Triggered on `schedule`, `workflow_dispatch`, and pull requests explicitly labeled `run-live-provider-smoke`.
+3. Uses provider secrets/env when present; individual provider checks are skipped when disabled via env flags.
+4. Current CI config enables real TTS smoke only for ElevenLabs (`RSPP_TTS_GOOGLE_ENABLE=0`, `RSPP_TTS_POLLY_ENABLE=0`).
+5. Current CI config keeps Gemini disabled (`RSPP_LLM_GEMINI_ENABLE=0`), pins Anthropic to `claude-3-5-haiku-latest`, and uses OpenRouter-compatible Cohere settings.
+6. Does not replace required merge gates `verify-quick` and `verify-full`.
+
 ## 5. Replay divergence fail policy (normative, implemented)
 
 `replay-smoke-report` and `replay-regression-report` both fail when `FailingCount > 0`.
@@ -120,11 +136,13 @@ Implemented now:
 1. Quick and full command chains return non-zero on validation/test/divergence/SLO failures.
 2. Replay and SLO artifacts are generated locally under `.codex/`.
 3. `.github/workflows/verify.yml` uploads quick/full artifacts with `if-no-files-found: error` so missing expected artifacts fail CI.
+4. `.github/workflows/verify.yml` includes a non-blocking `live-provider-smoke` job for real-provider integration checks.
 
 Repository policy action (outside repo code):
 1. Configure branch protection required checks:
    - `verify-quick` required for PR merge.
    - `verify-full` required for protected `main`/release promotion path.
+2. Keep `live-provider-smoke` non-required until flake/security posture is production-hardened.
 
 ## 8. Consistency references
 

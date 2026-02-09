@@ -60,6 +60,7 @@ type ActiveInput struct {
 	AuthorityRevoked             bool
 	CancelAccepted               bool
 	ProviderFailure              bool
+	ProviderInvocationOutcomes   []timeline.InvocationOutcomeEvidence
 	NodeTimeoutOrFailure         bool
 	TransportDisconnectOrStall   bool
 	BaselineEvidenceAppendFailed bool
@@ -494,8 +495,9 @@ func buildBaselineEvidence(in ActiveInput, terminalOutcome string, terminalReaso
 			PolicyResolutionSnapshot:  "policy-resolution/v1",
 			ProviderHealthSnapshot:    "provider-health/v1",
 		},
-		DecisionOutcomes: []controlplane.DecisionOutcome{decision},
-		DeterminismSeed:  nonNegative(in.RuntimeSequence),
+		DecisionOutcomes:   []controlplane.DecisionOutcome{decision},
+		InvocationOutcomes: append([]timeline.InvocationOutcomeEvidence(nil), in.ProviderInvocationOutcomes...),
+		DeterminismSeed:    nonNegative(in.RuntimeSequence),
 		OrderingMarkers: []string{
 			fmt.Sprintf("runtime_sequence:%d", nonNegative(in.RuntimeSequence)),
 		},
@@ -507,6 +509,24 @@ func buildBaselineEvidence(in ActiveInput, terminalOutcome string, terminalReaso
 
 	if in.BaselineEvidence != nil {
 		evidence = *in.BaselineEvidence
+	}
+
+	if len(evidence.InvocationOutcomes) == 0 && len(in.ProviderInvocationOutcomes) > 0 {
+		evidence.InvocationOutcomes = append([]timeline.InvocationOutcomeEvidence(nil), in.ProviderInvocationOutcomes...)
+	}
+
+	if in.ProviderFailure && len(evidence.InvocationOutcomes) == 0 {
+		evidence.InvocationOutcomes = []timeline.InvocationOutcomeEvidence{
+			{
+				ProviderInvocationID: "pvi/" + fallback(in.TurnID, "unknown"),
+				Modality:             "external",
+				ProviderID:           "provider-unknown",
+				OutcomeClass:         "infrastructure_failure",
+				Retryable:            false,
+				RetryDecision:        "none",
+				AttemptCount:         1,
+			},
+		}
 	}
 
 	normalizeBaselineEvidence(&evidence, in, terminalOutcome, terminalReason)

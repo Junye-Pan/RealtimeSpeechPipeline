@@ -133,6 +133,42 @@ func TestValidateCompletenessCancelMarkers(t *testing.T) {
 	}
 }
 
+func TestValidateCompletenessInvocationOutcomeEvidence(t *testing.T) {
+	t.Parallel()
+
+	baseline := minimalBaseline("turn-provider-evidence")
+	baseline.InvocationOutcomes = []InvocationOutcomeEvidence{
+		{
+			ProviderInvocationID: "pvi-1",
+			Modality:             "stt",
+			ProviderID:           "stt-a",
+			OutcomeClass:         "success",
+			Retryable:            false,
+			RetryDecision:        "none",
+			AttemptCount:         1,
+		},
+	}
+
+	if err := baseline.ValidateCompleteness(); err != nil {
+		t.Fatalf("expected valid invocation evidence, got %v", err)
+	}
+
+	invalid := baseline
+	invalid.InvocationOutcomes = []InvocationOutcomeEvidence{
+		{
+			ProviderInvocationID: "pvi-2",
+			Modality:             "stt",
+			ProviderID:           "stt-a",
+			OutcomeClass:         "unknown",
+			RetryDecision:        "none",
+			AttemptCount:         1,
+		},
+	}
+	if err := invalid.ValidateCompleteness(); err == nil {
+		t.Fatalf("expected invalid invocation outcome class to fail completeness")
+	}
+}
+
 func minimalBaseline(turnID string) BaselineEvidence {
 	decision := controlplane.DecisionOutcome{
 		OutcomeKind:        controlplane.OutcomeAdmit,

@@ -23,7 +23,10 @@ This MVP is intentionally narrow: it proves runtime correctness contracts, deter
 
 - Implementation language: Go.
 - Transport path: LiveKit only (through RK-22/RK-23 boundaries).
-- Provider set: one STT, one LLM, one TTS adapter path.
+- Provider set: deterministic multi-provider catalog per modality (3-5 STT, 3-5 LLM, 3-5 TTS) with pre-authorized retry/switch behavior.
+  - STT: Deepgram, Google Speech-to-Text, AssemblyAI
+  - LLM: Anthropic, Google Gemini, Cohere
+  - TTS: ElevenLabs, Google Cloud Text-to-Speech, Amazon Polly
 - Mode: Simple mode only (ExecutionProfile defaults required; advanced overrides deferred).
 - Authority model: single-region execution authority with lease/epoch checks.
 - Replay scope: OR-02 baseline replay evidence (L0 baseline contract) is mandatory.
@@ -60,7 +63,7 @@ This MVP is intentionally narrow: it proves runtime correctness contracts, deter
 
 - Multi-region active-active runtime routing.
 - Advanced mode per-edge overrides and profile customizations.
-- Multiple providers per modality with in-turn adaptive switching logic beyond pre-authorized defaults.
+- Dynamic provider-routing policies beyond pre-authorized deterministic retry/switch/fallback actions.
 - Full L1/L2 recording fidelity as production requirement.
 - External node execution isolation hardening (sandbox/WASM depth).
 - Transport implementations beyond LiveKit.
@@ -204,6 +207,19 @@ Status note:
    - `main` branch protection requires `verify-quick` and `verify-full` (strict mode, admins enforced).
    - `release/*` branch-protection rule requires `verify-full` (strict mode, admins enforced).
 
+11. Implement RK-10/RK-11 provider manager + invocation slice:
+   - `internal/runtime/provider/contracts/contracts.go`, `internal/runtime/provider/contracts/contracts_test.go`
+   - `internal/runtime/provider/registry/registry.go`, `internal/runtime/provider/registry/registry_test.go`
+   - `internal/runtime/provider/invocation/controller.go`, `internal/runtime/provider/invocation/controller_test.go`
+   - `internal/runtime/executor/scheduler.go`, `internal/runtime/executor/scheduler_test.go` (scheduler/provider integration)
+
+12. Add real-provider adapter bootstrap and non-blocking live smoke checks:
+   - `providers/stt/*`, `providers/llm/*`, `providers/tts/*` (3 providers per modality)
+   - `internal/runtime/provider/bootstrap/bootstrap.go`, `internal/runtime/provider/bootstrap/bootstrap_test.go`
+   - `test/integration/provider_live_smoke_test.go` (build tag `liveproviders`)
+   - `Makefile` target `live-provider-smoke`
+   - `.github/workflows/verify.yml` non-blocking `live-provider-smoke` job
+
 ### 10.2 Remaining (ordered, post doc-sync 2026-02-09)
 
 Status update:
@@ -243,8 +259,8 @@ Status values:
 | RK-06 | scaffold-only | `internal/runtime/lanes/.gitkeep` | Lane router remains scaffold. |
 | RK-07 | partial | `internal/runtime/executor/scheduler.go`, `internal/runtime/executor/scheduler_test.go` | Execution scheduler subset exists; full graph runtime execution path remains incomplete. |
 | RK-08 | partial | `internal/runtime/nodehost/failure.go`, `internal/runtime/nodehost/failure_test.go` | Failure handling present; broader node host surface remains limited. |
-| RK-10 | scaffold-only | `internal/runtime/provider/registry/.gitkeep`, `internal/runtime/provider/contracts/.gitkeep` | Provider manager/contracts remain scaffold. |
-| RK-11 | scaffold-only | `internal/runtime/provider/invocation/.gitkeep` | Invocation controller not yet implemented. |
+| RK-10 | partial | `internal/runtime/provider/contracts/contracts.go`, `internal/runtime/provider/registry/registry.go`, `internal/runtime/provider/bootstrap/bootstrap.go`, `providers/stt/*`, `providers/llm/*`, `providers/tts/*`, tests | Deterministic provider contracts + registry + concrete adapter bootstrap are implemented; adapter request payload hardening and production auth/runtime policy depth remain limited. |
+| RK-11 | partial | `internal/runtime/provider/invocation/controller.go`, `internal/runtime/executor/scheduler.go`, `test/integration/provider_live_smoke_test.go`, tests | Invocation attempt/retry/switch control-signal path is implemented with optional live smoke coverage; full graph-runtime orchestration and rich invocation telemetry persistence are still incomplete. |
 | RK-12 | implemented | `internal/runtime/buffering/drop_notice.go`, `internal/runtime/buffering/merge.go`, tests | Deterministic buffering/lineage behavior present. |
 | RK-13 | implemented | `internal/runtime/buffering/pressure.go`, tests | Watermark/pressure behavior covered. |
 | RK-14 | scaffold-only | `internal/runtime/flowcontrol/.gitkeep` | Dedicated flow-control engine not implemented beyond signal contracts. |
