@@ -75,6 +75,34 @@ jobs:
             .codex/ops/slo-gates-report.md
           if-no-files-found: error
 
+  security-baseline:
+    name: security-baseline
+    runs-on: ubuntu-latest
+    needs: quick
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run security baseline checks
+        run: make security-baseline-check
+
+      - name: Upload security baseline artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-baseline-artifacts
+          path: |
+            .codex/ops/security-baseline-check.log
+            .codex/ops/security-baseline-report.json
+            .codex/ops/security-baseline-report.md
+          if-no-files-found: error
+
   live-provider-smoke:
     name: live-provider-smoke
     runs-on: ubuntu-latest

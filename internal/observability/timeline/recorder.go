@@ -31,6 +31,7 @@ type BaselineEvidence struct {
 	EventID                  string
 	EnvelopeSnapshot         string
 	PayloadTags              []eventabi.PayloadClass
+	RedactionDecisions       []eventabi.RedactionDecision
 	PlanHash                 string
 	SnapshotProvenance       controlplane.SnapshotProvenance
 	DecisionOutcomes         []controlplane.DecisionOutcome
@@ -148,6 +149,24 @@ func (b BaselineEvidence) ValidateCompleteness() error {
 	for _, tag := range b.PayloadTags {
 		if !isPayloadTag(tag) {
 			return fmt.Errorf("invalid payload classification tag: %s", tag)
+		}
+	}
+	if len(b.RedactionDecisions) < 1 {
+		return fmt.Errorf("at least one redaction decision is required")
+	}
+	decisionClasses := map[eventabi.PayloadClass]struct{}{}
+	for _, decision := range b.RedactionDecisions {
+		if err := decision.Validate(); err != nil {
+			return err
+		}
+		if _, exists := decisionClasses[decision.PayloadClass]; exists {
+			return fmt.Errorf("duplicate redaction decision for payload class: %s", decision.PayloadClass)
+		}
+		decisionClasses[decision.PayloadClass] = struct{}{}
+	}
+	for _, tag := range b.PayloadTags {
+		if _, ok := decisionClasses[tag]; !ok {
+			return fmt.Errorf("missing redaction decision for payload class: %s", tag)
 		}
 	}
 	if b.PlanHash == "" {

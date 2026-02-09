@@ -135,10 +135,15 @@ Any missing attribute => deny.
 3. Delete requests must remove or cryptographically render inaccessible all persisted data for the target scope.
 4. Audit logs for access/deletion events are retained per compliance policy.
 
-## 8. Pre-code acceptance checklist
+## 8. Pre-code acceptance checklist (status: implemented 2026-02-09)
 
-- [ ] Classification tags implemented at ingress and enforced at ABI boundary.
-- [ ] Redaction matrix encoded into runtime policy config.
-- [ ] Replay auth attributes and deny-by-default checks defined.
-- [ ] L0/L1/L2 defaults and transition controls approved.
-- [ ] Security audit event schema agreed before OR-03 implementation.
+- [x] Classification tags implemented at ingress and enforced at ABI boundary.
+  - Evidence: `internal/runtime/transport/classification.go`, `internal/runtime/transport/classification_test.go`, `internal/runtime/eventabi/gateway_test.go`
+- [x] Redaction matrix encoded into runtime policy config.
+  - Evidence: `internal/security/policy/policy.go`, `internal/security/policy/policy_test.go`, `internal/observability/timeline/redaction.go`, `internal/observability/timeline/redaction_test.go`
+- [x] Replay auth attributes and deny-by-default checks defined.
+  - Evidence: `api/observability/types.go`, `api/observability/types_test.go`, `internal/observability/replay/access.go`, `internal/observability/replay/access_test.go`
+- [x] L0/L1/L2 defaults and transition controls approved.
+  - Evidence: `internal/security/policy/policy.go` (`ValidateAutomatedRecordingLevelTransition`), `internal/observability/timeline/recorder.go` (`recording_level_downgraded`)
+- [x] Security audit event schema agreed before OR-03 implementation.
+  - Evidence: `api/observability/types.go` (`ReplayAuditEvent`), `internal/observability/replay/access.go` (`BuildReplayAuditEvent`)

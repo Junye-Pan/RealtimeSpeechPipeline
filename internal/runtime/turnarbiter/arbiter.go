@@ -529,14 +529,16 @@ func buildBaselineEvidence(in ActiveInput, terminalOutcome string, terminalReaso
 		}
 	}
 
-	normalizeBaselineEvidence(&evidence, in, terminalOutcome, terminalReason)
+	if err := normalizeBaselineEvidence(&evidence, in, terminalOutcome, terminalReason); err != nil {
+		return timeline.BaselineEvidence{}, err
+	}
 	if err := evidence.ValidateCompleteness(); err != nil {
 		return timeline.BaselineEvidence{}, err
 	}
 	return evidence, nil
 }
 
-func normalizeBaselineEvidence(evidence *timeline.BaselineEvidence, in ActiveInput, terminalOutcome string, terminalReason string) {
+func normalizeBaselineEvidence(evidence *timeline.BaselineEvidence, in ActiveInput, terminalOutcome string, terminalReason string) error {
 	evidence.SessionID = fallback(evidence.SessionID, in.SessionID)
 	evidence.TurnID = fallback(evidence.TurnID, in.TurnID)
 	evidence.PipelineVersion = fallback(evidence.PipelineVersion, defaultPipelineVersion(in.PipelineVersion))
@@ -545,6 +547,11 @@ func normalizeBaselineEvidence(evidence *timeline.BaselineEvidence, in ActiveInp
 	if len(evidence.PayloadTags) == 0 {
 		evidence.PayloadTags = []eventabi.PayloadClass{eventabi.PayloadMetadata}
 	}
+	decisions, err := timeline.EnsureOR02RedactionDecisions("L0", evidence.PayloadTags, evidence.RedactionDecisions)
+	if err != nil {
+		return err
+	}
+	evidence.RedactionDecisions = decisions
 	evidence.PlanHash = fallback(evidence.PlanHash, "plan/"+fallback(in.TurnID, "unknown"))
 
 	evidence.SnapshotProvenance.RoutingViewSnapshot = fallback(evidence.SnapshotProvenance.RoutingViewSnapshot, "routing-view/v1")
@@ -615,6 +622,7 @@ func normalizeBaselineEvidence(evidence *timeline.BaselineEvidence, in ActiveInp
 	evidence.TerminalOutcome = terminalOutcome
 	evidence.TerminalReason = terminalReason
 	evidence.CloseEmitted = true
+	return nil
 }
 
 func sanitizeOrderingMarkers(markers []string) []string {

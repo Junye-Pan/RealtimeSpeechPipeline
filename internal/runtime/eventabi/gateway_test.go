@@ -220,3 +220,26 @@ func TestValidateAndNormalizeEventRecordsTurnScopeRequiresTurnID(t *testing.T) {
 		t.Fatalf("expected turn_id-related error, got %v", err)
 	}
 }
+
+func TestValidateAndNormalizeEventRecordsRejectMissingPayloadClass(t *testing.T) {
+	t.Parallel()
+
+	_, err := ValidateAndNormalizeEventRecords([]apieventabi.EventRecord{
+		{
+			EventScope:         apieventabi.ScopeSession,
+			SessionID:          "sess-ev-4",
+			PipelineVersion:    "pipeline-v1",
+			EventID:            "evt-ev-4",
+			Lane:               apieventabi.LaneData,
+			RuntimeSequence:    1,
+			RuntimeTimestampMS: 100,
+			WallClockMS:        100,
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected missing payload class validation error")
+	}
+	if !strings.Contains(err.Error(), "payload_class") {
+		t.Fatalf("expected payload_class-related error, got %v", err)
+	}
+}

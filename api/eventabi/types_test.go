@@ -113,3 +113,18 @@ func TestCT002ControlSignalEmitterMappingAndUnknownSignal(t *testing.T) {
 		})
 	}
 }
+
+func TestRedactionDecisionValidate(t *testing.T) {
+	t.Parallel()
+
+	valid := RedactionDecision{PayloadClass: PayloadPII, Action: RedactionHash}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("expected valid redaction decision, got %v", err)
+	}
+
+	invalidAction := valid
+	invalidAction.Action = "noop"
+	if err := invalidAction.Validate(); err == nil {
+		t.Fatalf("expected invalid redaction action to fail validation")
+	}
+}

@@ -138,7 +138,10 @@ func baselineEvidence(turnID string) timeline.BaselineEvidence {
 		EventID:          "evt-rd3",
 		EnvelopeSnapshot: "event:turn_open",
 		PayloadTags:      []eventabi.PayloadClass{eventabi.PayloadMetadata},
-		PlanHash:         "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		RedactionDecisions: []eventabi.RedactionDecision{
+			{PayloadClass: eventabi.PayloadMetadata, Action: eventabi.RedactionAllow},
+		},
+		PlanHash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		SnapshotProvenance: controlplane.SnapshotProvenance{
 			RoutingViewSnapshot:       "routing-view/v1",
 			AdmissionPolicySnapshot:   "admission-policy/v1",
