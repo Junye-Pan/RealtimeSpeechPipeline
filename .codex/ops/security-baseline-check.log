@@ -1,0 +1,8 @@
+security-baseline-check started_at=2026-02-09T22:17:39Z
+running focused security baseline test suites
+ok  	github.com/tiger/realtime-speech-pipeline/api/eventabi	(cached)
+ok  	github.com/tiger/realtime-speech-pipeline/api/observability	(cached)
+ok  	github.com/tiger/realtime-speech-pipeline/internal/security/policy	(cached)
+ok  	github.com/tiger/realtime-speech-pipeline/internal/runtime/transport	(cached)
+ok  	github.com/tiger/realtime-speech-pipeline/internal/observability/replay	(cached)
+ok  	github.com/tiger/realtime-speech-pipeline/internal/observability/timeline	(cached)

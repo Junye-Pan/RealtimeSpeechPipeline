@@ -1,7 +1,8 @@
-# Replay Smoke Divergence Report
+# Replay Fixture Report
 
-Generated at (UTC): 2026-02-09T22:18:58Z
-Fixture: rd-001-smoke
+Generated at (UTC): 2026-02-09T22:19:06Z
+Fixture: ae-005-preturn-deauthorization
+Gate: full
 Metadata path: test/replay/fixtures/metadata.json
 Timing tolerance (ms): 15
 Total divergences: 0

@@ -1,6 +1,7 @@
 # MVP SLO Gates Report
 
-Generated at (UTC): 2026-02-09T04:55:06Z
+Generated at (UTC): 2026-02-09T22:19:06Z
+Baseline artifact: .codex/replay/runtime-baseline.json
 Samples: 3
 Accepted turns: 3
 Happy-path turns: 3
