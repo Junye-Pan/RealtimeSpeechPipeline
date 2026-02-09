@@ -220,6 +220,20 @@ Status note:
    - `Makefile` target `live-provider-smoke`
    - `.github/workflows/verify.yml` non-blocking `live-provider-smoke` job
 
+13. Add A.2 runtime real-provider validation matrix:
+   - `test/integration/a2_runtime_live_test.go` (build tag `liveproviders`)
+   - `Makefile` target `a2-runtime-live`
+   - `.github/workflows/verify.yml` non-blocking `a2-runtime-live` job
+   - artifacts: `.codex/providers/a2-runtime-live-report.json|.md`
+
+14. Close security/data-handling baseline checklist:
+   - `internal/runtime/transport/classification.go`, `internal/runtime/transport/classification_test.go`
+   - `internal/security/policy/policy.go`, `internal/security/policy/policy_test.go`
+   - `api/observability/types.go`, `internal/observability/replay/access.go`
+   - `internal/observability/timeline/redaction.go`, `internal/observability/timeline/recorder.go`
+   - `scripts/security-check.sh`, `Makefile` target `security-baseline-check`
+   - `.github/workflows/verify.yml` blocking `security-baseline` job with artifacts
+
 ### 10.2 Remaining (ordered, post doc-sync 2026-02-09)
 
 Status update:
@@ -250,37 +264,41 @@ Status values:
 
 ### A.2 Runtime
 
+Real-provider validation coverage:
+- `make a2-runtime-live` executes `TestLiveProviderSmoke` plus `TestA2RuntimeLiveScenarios`.
+- `TestA2RuntimeLiveScenarios` maps all A.2 runtime modules (`RK-02` through `RK-26`) to explicit scenario assertions and emits `.codex/providers/a2-runtime-live-report.json|.md`.
+
 | Module | Status | Evidence | Notes/Gap |
 | --- | --- | --- | --- |
-| RK-02 | scaffold-only | `internal/runtime/prelude/.gitkeep` | Session prelude engine remains scaffold. |
+| RK-02 | implemented | `internal/runtime/prelude/engine.go`, `internal/runtime/prelude/engine_test.go`, `test/integration/runtime_chain_test.go` | Session prelude emits deterministic non-authoritative `turn_open_proposed` intents for arbiter turn-open gating. |
 | RK-03 | implemented | `internal/runtime/turnarbiter/arbiter.go`, `internal/runtime/turnarbiter/arbiter_test.go` | Deterministic lifecycle path is present. |
 | RK-04 | implemented | `internal/runtime/planresolver/resolver.go`, `internal/runtime/planresolver/resolver_test.go` | Turn-plan materialization checks present. |
-| RK-05 | partial | `api/eventabi/types.go`, `api/eventabi/types_test.go`, `internal/runtime/eventabi/gateway.go`, `internal/runtime/eventabi/gateway_test.go` | ABI contracts plus runtime-side control-signal normalization/validation gateway are implemented; broader runtime gateway surface is still incomplete. |
+| RK-05 | implemented | `api/eventabi/types.go`, `api/eventabi/types_test.go`, `internal/runtime/eventabi/gateway.go`, `internal/runtime/eventabi/gateway_test.go`, `internal/runtime/transport/fence.go`, `internal/runtime/nodehost/failure.go` | Runtime-side EventRecord/ControlSignal normalization and sequencing validation gateway is implemented and enforces payload-class presence at ABI boundary. |
 | RK-06 | implemented | `internal/runtime/lanes/router.go`, `internal/runtime/lanes/router_test.go` | Deterministic lane router and route validation are implemented. |
-| RK-07 | partial | `internal/runtime/executor/scheduler.go`, `internal/runtime/executor/plan.go`, `internal/runtime/executor/scheduler_test.go`, `test/integration/runtime_chain_test.go` | Scheduler now includes deterministic multi-node execution-plan ordering and lane dispatch; full graph-runtime orchestration remains incomplete. |
-| RK-08 | partial | `internal/runtime/nodehost/failure.go`, `internal/runtime/nodehost/failure_test.go` | Failure handling present; broader node host surface remains limited. |
-| RK-10 | partial | `internal/runtime/provider/contracts/contracts.go`, `internal/runtime/provider/registry/registry.go`, `internal/runtime/provider/bootstrap/bootstrap.go`, `providers/stt/*`, `providers/llm/*`, `providers/tts/*`, tests | Deterministic provider contracts + registry + concrete adapter bootstrap are implemented; adapter request payload hardening and production auth/runtime policy depth remain limited. |
-| RK-11 | partial | `internal/runtime/provider/invocation/controller.go`, `internal/runtime/executor/scheduler.go`, `internal/observability/timeline/recorder.go`, `test/integration/provider_live_smoke_test.go`, `test/integration/runtime_chain_test.go`, tests | Invocation attempt/retry/switch control-signal path is implemented with optional live smoke coverage and attempt-level timeline persistence; full graph-runtime orchestration remains incomplete. |
-| RK-12 | implemented | `internal/runtime/buffering/drop_notice.go`, `internal/runtime/buffering/merge.go`, tests | Deterministic buffering/lineage behavior present. |
-| RK-13 | implemented | `internal/runtime/buffering/pressure.go`, tests | Watermark/pressure behavior covered. |
-| RK-14 | scaffold-only | `internal/runtime/flowcontrol/.gitkeep` | Dedicated flow-control engine not implemented beyond signal contracts. |
-| RK-16 | partial | `internal/runtime/transport/fence.go`, `internal/runtime/transport/fence_test.go`, `internal/runtime/cancellation/.gitkeep` | Cancellation fencing exists at transport boundary; standalone cancellation module remains scaffold. |
-| RK-17 | scaffold-only | `internal/runtime/budget/.gitkeep` | Budget manager remains scaffold. |
-| RK-19 | scaffold-only | `internal/runtime/determinism/.gitkeep` | Determinism service remains scaffold; replay tooling exists separately (OR-03/DX-03). |
-| RK-21 | scaffold-only | `internal/runtime/identity/.gitkeep` | Identity/correlation service remains scaffold. |
-| RK-22 | implemented | `internal/runtime/transport/fence.go`, tests | Transport output fencing and contract-safe boundary behavior present. |
-| RK-23 | implemented | `internal/runtime/transport/signals.go`, tests | Connection and transport signal handling present. |
-| RK-24 | implemented | `internal/runtime/guard/guard.go`, `internal/runtime/guard/migration.go`, tests | Authority checks and migration guard behavior present. |
-| RK-25 | implemented | `internal/runtime/localadmission/localadmission.go`, tests | Deterministic local admission outcomes are implemented. |
-| RK-26 | scaffold-only | `internal/runtime/executionpool/.gitkeep` | Execution pool manager remains scaffold. |
+| RK-07 | implemented | `internal/runtime/executor/scheduler.go`, `internal/runtime/executor/plan.go`, `internal/runtime/executor/scheduler_test.go`, `test/integration/runtime_chain_test.go` | Deterministic multi-node execution-plan ordering, lane dispatch, terminal reasoning, and failure-shaped continuation/stop behavior are implemented. |
+| RK-08 | implemented | `internal/runtime/nodehost/failure.go`, `internal/runtime/nodehost/failure_test.go`, `internal/runtime/executor/plan.go`, `internal/runtime/executor/scheduler_test.go` | Node failure shaping is implemented and integrated into execution-plan flow with deterministic degrade/fallback/terminal control-signal outcomes. |
+| RK-10 | implemented | `internal/runtime/provider/contracts/contracts.go`, `internal/runtime/provider/contracts/contracts_test.go`, `internal/runtime/provider/registry/registry.go`, `internal/runtime/provider/registry/registry_test.go`, `internal/runtime/provider/bootstrap/bootstrap.go`, `internal/runtime/provider/bootstrap/bootstrap_test.go`, `providers/stt/*`, `providers/llm/*`, `providers/tts/*`, `test/integration/provider_live_smoke_test.go` | Deterministic provider contracts, registry/bootstrap, and request-policy envelope validation (adaptive actions/retry budget/candidate count) are implemented. |
+| RK-11 | implemented | `internal/runtime/provider/invocation/controller.go`, `internal/runtime/provider/invocation/controller_test.go`, `internal/runtime/executor/scheduler.go`, `internal/runtime/executor/scheduler_test.go`, `internal/observability/timeline/recorder.go`, `internal/observability/timeline/recorder_test.go`, `test/integration/provider_live_smoke_test.go`, `test/integration/runtime_chain_test.go` | Invocation attempt/retry/switch/fallback policy gating and deterministic signal emission are implemented with attempt-level timeline persistence and integration coverage. |
+| RK-12 | implemented | `internal/runtime/buffering/drop_notice.go`, `internal/runtime/buffering/drop_notice_test.go`, `internal/runtime/buffering/merge.go`, `internal/runtime/buffering/merge_test.go`, `test/failover/failure_full_test.go` | Deterministic buffering/lineage behavior present. |
+| RK-13 | implemented | `internal/runtime/buffering/pressure.go`, `internal/runtime/buffering/pressure_test.go`, `test/failover/failure_full_test.go` | Watermark/pressure behavior covered. |
+| RK-14 | implemented | `internal/runtime/flowcontrol/controller.go`, `internal/runtime/flowcontrol/controller_test.go`, `internal/runtime/buffering/pressure.go`, `internal/runtime/buffering/pressure_test.go` | Dedicated RK-14 flow-control controller emits deterministic `flow_xoff`/`flow_xon`/`credit_grant` signals and is integrated with pressure handling. |
+| RK-16 | implemented | `internal/runtime/transport/fence.go`, `internal/runtime/transport/fence_test.go`, `internal/runtime/cancellation/fence.go`, `internal/runtime/cancellation/fence_test.go`, `test/integration/runtime_chain_test.go` | Cancellation module and transport fence integration are implemented with deterministic post-cancel output suppression coverage. |
+| RK-17 | implemented | `internal/runtime/budget/manager.go`, `internal/runtime/budget/manager_test.go`, `internal/runtime/nodehost/failure.go`, `internal/runtime/nodehost/failure_test.go` | Budget manager provides deterministic continue/degrade/fallback/terminate decisions and is integrated into node-failure shaping. |
+| RK-19 | implemented | `internal/runtime/determinism/service.go`, `internal/runtime/determinism/service_test.go`, `internal/runtime/planresolver/resolver.go`, `internal/runtime/planresolver/resolver_test.go` | Determinism service issues and validates deterministic context (seed/order markers/merge rule) for resolved turn plans. |
+| RK-21 | implemented | `internal/runtime/identity/context.go`, `internal/runtime/identity/context_test.go`, `internal/runtime/executor/scheduler.go`, `internal/runtime/executor/scheduler_test.go` | Identity/correlation/idempotency context service is implemented and used for deterministic event-id generation in scheduler paths. |
+| RK-22 | implemented | `internal/runtime/transport/fence.go`, `internal/runtime/transport/fence_test.go`, `internal/runtime/transport/classification.go`, `internal/runtime/transport/classification_test.go`, `test/integration/cf_full_conformance_test.go`, `test/integration/runtime_chain_test.go` | Transport boundary behavior includes deterministic ingress payload classification tagging plus output fencing guarantees. |
+| RK-23 | implemented | `internal/runtime/transport/signals.go`, `internal/runtime/transport/signals_test.go`, `test/integration/cf_full_conformance_test.go`, `test/integration/ml_conformance_test.go` | Connection and transport signal handling present. |
+| RK-24 | implemented | `internal/runtime/guard/guard.go`, `internal/runtime/guard/enrichment.go`, `internal/runtime/guard/enrichment_test.go`, `internal/runtime/guard/migration.go`, `internal/runtime/guard/migration_test.go`, `test/integration/runtime_chain_test.go` | Authority checks and migration guard behavior present. |
+| RK-25 | implemented | `internal/runtime/localadmission/localadmission.go`, `internal/runtime/localadmission/localadmission_test.go`, `internal/runtime/executor/scheduler_test.go`, `test/integration/runtime_chain_test.go` | Deterministic local admission outcomes are implemented. |
+| RK-26 | implemented | `internal/runtime/executionpool/pool.go`, `internal/runtime/executionpool/pool_test.go`, `internal/runtime/executor/plan.go`, `internal/runtime/executor/scheduler_test.go` | Deterministic bounded FIFO execution pool manager is implemented with optional executor dispatch integration. |
 
 ### A.3 Observability and replay
 
 | Module | Status | Evidence | Notes/Gap |
 | --- | --- | --- | --- |
 | OR-01 | scaffold-only | `internal/observability/telemetry/.gitkeep` | Telemetry pipeline module is not implemented in this slice. |
-| OR-02 | implemented | `internal/observability/timeline/recorder.go`, `internal/observability/timeline/artifact.go`, tests | Baseline timeline recording and artifact modeling are present. |
-| OR-03 | implemented | `internal/observability/replay/comparator.go`, `test/replay/*`, `cmd/rspp-cli/main.go` | Replay divergence comparison and report generation are implemented. |
+| OR-02 | implemented | `internal/observability/timeline/recorder.go`, `internal/observability/timeline/redaction.go`, `internal/observability/timeline/artifact.go`, tests | Baseline timeline recording includes payload classification tags plus persisted redaction decisions per recorded class. |
+| OR-03 | implemented | `internal/observability/replay/comparator.go`, `internal/observability/replay/access.go`, `api/observability/types.go`, `test/replay/*`, `cmd/rspp-cli/main.go` | Replay divergence comparison/reporting is implemented, with deny-by-default replay access schema and audit-event typing for secure read paths. |
 
 ### A.4 Tooling and DevEx
 
@@ -295,4 +313,4 @@ Status values:
 ## Appendix B. Known follow-ups outside this pass
 
 1. `docs/CIValidationGates.md` and `docs/ConformanceTestPlan.md` were synchronized in the 2026-02-09 doc pass; keep them aligned with command/test changes in future slices.
-2. `docs/SecurityDataHandlingBaseline.md` checklist items remain open and should be planned as a separate security-focused slice.
+2. Retention/deletion enforcement and immutable audit-log backend wiring from `docs/SecurityDataHandlingBaseline.md` section 7 remain follow-up implementation work.

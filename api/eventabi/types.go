@@ -34,6 +34,34 @@ const (
 	PayloadMetadata       PayloadClass = "metadata"
 )
 
+// RedactionAction mirrors docs/SecurityDataHandlingBaseline.md action matrix.
+type RedactionAction string
+
+const (
+	RedactionAllow    RedactionAction = "allow"
+	RedactionMask     RedactionAction = "mask"
+	RedactionHash     RedactionAction = "hash"
+	RedactionDrop     RedactionAction = "drop"
+	RedactionTokenize RedactionAction = "tokenize"
+)
+
+// RedactionDecision captures the persisted class->action decision.
+type RedactionDecision struct {
+	PayloadClass PayloadClass    `json:"payload_class"`
+	Action       RedactionAction `json:"action"`
+}
+
+// Validate enforces normalized redaction-decision invariants.
+func (d RedactionDecision) Validate() error {
+	if !isPayloadClass(d.PayloadClass) {
+		return fmt.Errorf("invalid payload_class in redaction_decision: %q", d.PayloadClass)
+	}
+	if !isRedactionAction(d.Action) {
+		return fmt.Errorf("invalid redaction action: %q", d.Action)
+	}
+	return nil
+}
+
 // MediaTime captures event media-time coordinates for audio payloads.
 type MediaTime struct {
 	SampleIndex *int64 `json:"sample_index,omitempty"`
@@ -325,6 +353,15 @@ func isLane(l Lane) bool {
 func isPayloadClass(c PayloadClass) bool {
 	switch c {
 	case PayloadPII, PayloadPHI, PayloadAudioRaw, PayloadTextRaw, PayloadDerivedSummary, PayloadMetadata:
+		return true
+	default:
+		return false
+	}
+}
+
+func isRedactionAction(a RedactionAction) bool {
+	switch a {
+	case RedactionAllow, RedactionMask, RedactionHash, RedactionDrop, RedactionTokenize:
 		return true
 	default:
 		return false

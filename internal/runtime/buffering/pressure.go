@@ -5,6 +5,7 @@ import (
 
 	"github.com/tiger/realtime-speech-pipeline/api/controlplane"
 	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
+	runtimeflowcontrol "github.com/tiger/realtime-speech-pipeline/internal/runtime/flowcontrol"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/localadmission"
 )
 
@@ -44,14 +45,32 @@ func HandleEdgePressure(admission localadmission.Evaluator, in PressureInput) (P
 	}
 
 	result := PressureResult{}
+	flowController := runtimeflowcontrol.NewController()
 	if in.HighWatermark {
 		watermark, err := buildEdgeSignal(in, "watermark", "RK-13", "edge_watermark_high")
 		if err != nil {
 			return PressureResult{}, err
 		}
-		xoff, err := buildEdgeSignal(in, "flow_xoff", "RK-14", "backpressure_asserted")
+		flowSignals, err := flowController.Evaluate(runtimeflowcontrol.Input{
+			SessionID:            in.SessionID,
+			TurnID:               in.TurnID,
+			PipelineVersion:      in.PipelineVersion,
+			EdgeID:               in.EdgeID,
+			EventID:              in.EventID + "-flow",
+			TargetLane:           in.TargetLane,
+			TransportSequence:    in.TransportSequence,
+			RuntimeSequence:      in.RuntimeSequence,
+			AuthorityEpoch:       in.AuthorityEpoch,
+			RuntimeTimestampMS:   in.RuntimeTimestampMS,
+			WallClockTimestampMS: in.WallClockTimestampMS,
+			HighWatermark:        true,
+			Mode:                 runtimeflowcontrol.ModeSignal,
+		})
 		if err != nil {
 			return PressureResult{}, err
+		}
+		if len(flowSignals) == 0 {
+			return PressureResult{}, fmt.Errorf("flow controller did not emit expected xoff signal")
 		}
 		drop, err := BuildDropNotice(DropNoticeInput{
 			SessionID:            in.SessionID,
@@ -73,15 +92,31 @@ func HandleEdgePressure(admission localadmission.Evaluator, in PressureInput) (P
 		if err != nil {
 			return PressureResult{}, err
 		}
-		result.Signals = append(result.Signals, watermark, xoff, drop)
+		result.Signals = append(result.Signals, watermark)
+		result.Signals = append(result.Signals, flowSignals...)
+		result.Signals = append(result.Signals, drop)
 	}
 
 	if in.EmitRecovery {
-		xon, err := buildEdgeSignal(in, "flow_xon", "RK-14", "")
+		flowSignals, err := flowController.Evaluate(runtimeflowcontrol.Input{
+			SessionID:            in.SessionID,
+			TurnID:               in.TurnID,
+			PipelineVersion:      in.PipelineVersion,
+			EdgeID:               in.EdgeID,
+			EventID:              in.EventID + "-flow-recovery",
+			TargetLane:           in.TargetLane,
+			TransportSequence:    in.TransportSequence,
+			RuntimeSequence:      in.RuntimeSequence,
+			AuthorityEpoch:       in.AuthorityEpoch,
+			RuntimeTimestampMS:   in.RuntimeTimestampMS,
+			WallClockTimestampMS: in.WallClockTimestampMS,
+			EmitRecovery:         true,
+			Mode:                 runtimeflowcontrol.ModeSignal,
+		})
 		if err != nil {
 			return PressureResult{}, err
 		}
-		result.Signals = append(result.Signals, xon)
+		result.Signals = append(result.Signals, flowSignals...)
 	}
 
 	if in.Shed {

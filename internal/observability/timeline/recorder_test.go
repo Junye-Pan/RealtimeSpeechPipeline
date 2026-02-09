@@ -283,7 +283,10 @@ func minimalBaseline(turnID string) BaselineEvidence {
 		EventID:          "evt-1",
 		EnvelopeSnapshot: "event:turn_open",
 		PayloadTags:      []eventabi.PayloadClass{eventabi.PayloadMetadata},
-		PlanHash:         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		RedactionDecisions: []eventabi.RedactionDecision{
+			{PayloadClass: eventabi.PayloadMetadata, Action: eventabi.RedactionAllow},
+		},
+		PlanHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		SnapshotProvenance: controlplane.SnapshotProvenance{
 			RoutingViewSnapshot:       "routing-view/v1",
 			AdmissionPolicySnapshot:   "admission-policy/v1",

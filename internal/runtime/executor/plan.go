@@ -5,17 +5,22 @@ import (
 
 	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
 	runtimeeventabi "github.com/tiger/realtime-speech-pipeline/internal/runtime/eventabi"
+	runtimeexecutionpool "github.com/tiger/realtime-speech-pipeline/internal/runtime/executionpool"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/lanes"
+	"github.com/tiger/realtime-speech-pipeline/internal/runtime/nodehost"
+	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/contracts"
 )
 
 // NodeSpec defines one deterministic runtime execution node.
 type NodeSpec struct {
-	NodeID   string
-	NodeType string
-	Lane     eventabi.Lane
-	Provider *ProviderInvocationInput
-	Shed     bool
-	Reason   string
+	NodeID        string
+	NodeType      string
+	Lane          eventabi.Lane
+	Provider      *ProviderInvocationInput
+	Shed          bool
+	Reason        string
+	AllowDegrade  bool
+	AllowFallback bool
 }
 
 // EdgeSpec defines one directed edge between execution nodes.
@@ -35,6 +40,7 @@ type NodeExecutionResult struct {
 	NodeID         string
 	DispatchTarget lanes.DispatchTarget
 	Decision       SchedulingDecision
+	Failure        *nodehost.NodeFailureResult
 }
 
 // ExecutionTrace summarizes deterministic plan execution.
@@ -43,6 +49,7 @@ type ExecutionTrace struct {
 	Nodes          []NodeExecutionResult
 	ControlSignals []eventabi.ControlSignal
 	Completed      bool
+	TerminalReason string
 }
 
 // ExecutePlan runs a deterministic execution plan in topological order.
@@ -94,7 +101,7 @@ func (s Scheduler) ExecutePlan(in SchedulingInput, plan ExecutionPlan) (Executio
 		nodeInput.WallClockTimestampMS = nonNegative(in.WallClockTimestampMS) + offset
 		nodeInput.ProviderInvocation = node.Provider
 
-		decision, err := s.NodeDispatch(nodeInput)
+		decision, err := s.dispatchNode(node.NodeID, nodeInput)
 		if err != nil {
 			return ExecutionTrace{}, err
 		}
@@ -111,8 +118,38 @@ func (s Scheduler) ExecutePlan(in SchedulingInput, plan ExecutionPlan) (Executio
 			trace.ControlSignals = append(trace.ControlSignals, decision.Provider.Signals...)
 		}
 
-		if !decision.Allowed {
+		allowContinue := decision.Allowed
+		if shouldShapeNodeFailure(decision) {
+			failureResult, err := nodehost.HandleFailure(nodehost.NodeFailureInput{
+				SessionID:            nodeInput.SessionID,
+				TurnID:               nodeInput.TurnID,
+				PipelineVersion:      defaultPipelineVersion(nodeInput.PipelineVersion),
+				EventID:              nodeInput.EventID + "-node-failure",
+				TransportSequence:    nodeInput.TransportSequence,
+				RuntimeSequence:      nodeInput.RuntimeSequence,
+				AuthorityEpoch:       nodeInput.AuthorityEpoch,
+				RuntimeTimestampMS:   nodeInput.RuntimeTimestampMS,
+				WallClockTimestampMS: nodeInput.WallClockTimestampMS,
+				AllowDegrade:         node.AllowDegrade,
+				AllowFallback:        node.AllowFallback,
+			})
+			if err != nil {
+				return ExecutionTrace{}, err
+			}
+			trace.ControlSignals = append(trace.ControlSignals, failureResult.Signals...)
+			last := len(trace.Nodes) - 1
+			trace.Nodes[last].Failure = &failureResult
+			allowContinue = !failureResult.Terminal
+			if failureResult.Terminal && trace.TerminalReason == "" {
+				trace.TerminalReason = failureResult.TerminalReason
+			}
+		}
+
+		if !allowContinue {
 			trace.Completed = false
+			if trace.TerminalReason == "" {
+				trace.TerminalReason = "execution_plan_denied"
+			}
 			break
 		}
 	}
@@ -122,6 +159,44 @@ func (s Scheduler) ExecutePlan(in SchedulingInput, plan ExecutionPlan) (Executio
 		return ExecutionTrace{}, err
 	}
 	return trace, nil
+}
+
+func shouldShapeNodeFailure(decision SchedulingDecision) bool {
+	if decision.Provider == nil {
+		return false
+	}
+	if decision.Provider.OutcomeClass == contracts.OutcomeSuccess || decision.Provider.OutcomeClass == contracts.OutcomeCancelled {
+		return false
+	}
+	return true
+}
+
+func (s Scheduler) dispatchNode(nodeID string, in SchedulingInput) (SchedulingDecision, error) {
+	if s.executionPool == nil {
+		return s.NodeDispatch(in)
+	}
+	resultCh := make(chan struct {
+		decision SchedulingDecision
+		err      error
+	}, 1)
+	if err := s.executionPool.Submit(runtimeexecutionpool.Task{
+		ID: nodeID,
+		Run: func() error {
+			decision, dispatchErr := s.NodeDispatch(in)
+			resultCh <- struct {
+				decision SchedulingDecision
+				err      error
+			}{
+				decision: decision,
+				err:      dispatchErr,
+			}
+			return dispatchErr
+		},
+	}); err != nil {
+		return SchedulingDecision{}, err
+	}
+	result := <-resultCh
+	return result.decision, result.err
 }
 
 func (p ExecutionPlan) validate() (map[string]NodeSpec, error) {

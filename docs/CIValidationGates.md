@@ -14,10 +14,11 @@ Status snapshot:
 
 1. `Makefile`
 2. `scripts/verify.sh`
-3. `cmd/rspp-cli/main.go`
-4. `internal/tooling/regression/divergence.go`
-5. `internal/tooling/ops/slo.go`
-6. `test/replay/fixtures/metadata.json`
+3. `scripts/security-check.sh`
+4. `cmd/rspp-cli/main.go`
+5. `internal/tooling/regression/divergence.go`
+6. `internal/tooling/ops/slo.go`
+7. `test/replay/fixtures/metadata.json`
 
 ## 3. Verify entrypoint behavior (`scripts/verify.sh`)
 
@@ -86,6 +87,41 @@ Execution policy:
 5. Current CI config keeps Gemini disabled (`RSPP_LLM_GEMINI_ENABLE=0`), pins Anthropic to `claude-3-5-haiku-latest`, and uses OpenRouter-compatible Cohere settings.
 6. Does not replace required merge gates `verify-quick` and `verify-full`.
 
+## 4.4 A.2 runtime live matrix (`make a2-runtime-live`)
+
+Implemented command chain:
+
+```bash
+RSPP_LIVE_PROVIDER_SMOKE=1 go test -tags=liveproviders ./test/integration -run TestLiveProviderSmoke -v &&
+RSPP_A2_RUNTIME_LIVE=1 RSPP_A2_RUNTIME_LIVE_STRICT=1 go test -tags=liveproviders ./test/integration -run TestA2RuntimeLiveScenarios -v
+```
+
+Execution policy:
+1. Runs in CI as a non-blocking job (`a2-runtime-live`) in `.github/workflows/verify.yml`.
+2. Triggered on `schedule`, `workflow_dispatch`, and pull requests explicitly labeled `run-live-provider-smoke`.
+3. Produces real-provider runtime matrix artifacts:
+   - `.codex/providers/a2-runtime-live-report.json`
+   - `.codex/providers/a2-runtime-live-report.md`
+   - `.codex/providers/a2-runtime-live.log`
+4. Uses strict mode in CI (`RSPP_A2_RUNTIME_LIVE_STRICT=1`) so skipped A.2 scenarios are treated as failures for that non-blocking job.
+
+## 4.5 Security baseline gate (`make security-baseline-check`)
+
+Implemented command:
+
+```bash
+make security-baseline-check
+```
+
+Execution policy:
+1. Runs in CI as a blocking job (`security-baseline`) in `.github/workflows/verify.yml`.
+2. Triggered on pull requests, scheduled runs, manual dispatch, and `main` pushes.
+3. Executes focused security suites for classification enforcement, redaction policy, replay access authorization, and OR-02 redaction evidence validation.
+4. Publishes machine/human-readable artifacts:
+   - `.codex/ops/security-baseline-check.log`
+   - `.codex/ops/security-baseline-report.json`
+   - `.codex/ops/security-baseline-report.md`
+
 ## 5. Replay divergence fail policy (normative, implemented)
 
 `replay-smoke-report` and `replay-regression-report` both fail when `FailingCount > 0`.
@@ -130,6 +166,11 @@ Full run artifacts:
 6. `.codex/ops/slo-gates-report.json`
 7. `.codex/ops/slo-gates-report.md`
 
+Security baseline artifacts:
+1. `.codex/ops/security-baseline-check.log`
+2. `.codex/ops/security-baseline-report.json`
+3. `.codex/ops/security-baseline-report.md`
+
 ## 7. CI boundary status and remaining work
 
 Implemented now:
@@ -137,6 +178,8 @@ Implemented now:
 2. Replay and SLO artifacts are generated locally under `.codex/`.
 3. `.github/workflows/verify.yml` uploads quick/full artifacts with `if-no-files-found: error` so missing expected artifacts fail CI.
 4. `.github/workflows/verify.yml` includes a non-blocking `live-provider-smoke` job for real-provider integration checks.
+5. `.github/workflows/verify.yml` includes a non-blocking `a2-runtime-live` job with per-module A.2 runtime evidence artifacts.
+6. `.github/workflows/verify.yml` includes a blocking `security-baseline` job for security/data-handling baseline enforcement.
 
 Repository policy action (outside repo code):
 1. Configure branch protection required checks:

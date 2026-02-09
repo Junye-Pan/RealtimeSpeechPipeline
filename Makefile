@@ -1,4 +1,4 @@
-.PHONY: test validate-contracts verify-quick verify-full live-provider-smoke
+.PHONY: test validate-contracts verify-quick verify-full live-provider-smoke a2-runtime-live security-baseline-check
 
 test:
 	go test ./...
@@ -14,3 +14,10 @@ verify-full:
 
 live-provider-smoke:
 	go test -tags=liveproviders ./test/integration -run TestLiveProviderSmoke -v
+
+a2-runtime-live:
+	RSPP_LIVE_PROVIDER_SMOKE=1 go test -tags=liveproviders ./test/integration -run TestLiveProviderSmoke -v
+	RSPP_A2_RUNTIME_LIVE=1 RSPP_A2_RUNTIME_LIVE_STRICT=1 go test -tags=liveproviders ./test/integration -run TestA2RuntimeLiveScenarios -v
+
+security-baseline-check:
+	bash scripts/security-check.sh

@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/tiger/realtime-speech-pipeline/api/controlplane"
+	runtimedeterminism "github.com/tiger/realtime-speech-pipeline/internal/runtime/determinism"
 )
 
 var ErrMaterializationFailed = errors.New("resolved turn plan materialization failed")
@@ -44,6 +45,14 @@ func (Resolver) Resolve(in Input) (controlplane.ResolvedTurnPlan, error) {
 
 	if in.AllowedAdaptiveActions == nil {
 		in.AllowedAdaptiveActions = []string{}
+	}
+
+	determinismCtx, err := runtimedeterminism.NewService().IssueContext(
+		hashPlanIdentity(in.TurnID, in.PipelineVersion, in.GraphDefinitionRef, in.ExecutionProfile, in.AuthorityEpoch),
+		in.AuthorityEpoch,
+	)
+	if err != nil {
+		return controlplane.ResolvedTurnPlan{}, err
 	}
 
 	plan := controlplane.ResolvedTurnPlan{
@@ -101,13 +110,7 @@ func (Resolver) Resolve(in Input) (controlplane.ResolvedTurnPlan, error) {
 			RecordingLevel:     "L0",
 			AllowedReplayModes: []string{"replay_decisions"},
 		},
-		Determinism: controlplane.Determinism{
-			Seed:                   42,
-			OrderingMarkers:        []string{"runtime_sequence", "event_id"},
-			MergeRuleID:            "default-merge-rule",
-			MergeRuleVersion:       "v1.0.0",
-			NondeterministicInputs: []controlplane.NondeterministicInput{},
-		},
+		Determinism: determinismCtx,
 	}
 
 	if err := plan.Validate(); err != nil {

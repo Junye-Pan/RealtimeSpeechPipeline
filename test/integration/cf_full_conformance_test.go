@@ -91,7 +91,10 @@ func TestCF004CancelObservabilityMarkersInOR02(t *testing.T) {
 		EventID:          "evt-cf-004",
 		EnvelopeSnapshot: "event:cancelled",
 		PayloadTags:      []eventabi.PayloadClass{eventabi.PayloadMetadata},
-		PlanHash:         "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+		RedactionDecisions: []eventabi.RedactionDecision{
+			{PayloadClass: eventabi.PayloadMetadata, Action: eventabi.RedactionAllow},
+		},
+		PlanHash: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
 		SnapshotProvenance: controlplane.SnapshotProvenance{
 			RoutingViewSnapshot:       "routing-view/v1",
 			AdmissionPolicySnapshot:   "admission-policy/v1",

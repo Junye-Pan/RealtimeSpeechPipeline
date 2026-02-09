@@ -6,6 +6,43 @@ import (
 	apieventabi "github.com/tiger/realtime-speech-pipeline/api/eventabi"
 )
 
+// ValidateAndNormalizeEventRecords performs runtime-side normalization and validation
+// for event records before persistence or egress.
+func ValidateAndNormalizeEventRecords(in []apieventabi.EventRecord) ([]apieventabi.EventRecord, error) {
+	out := make([]apieventabi.EventRecord, len(in))
+	for i, rec := range in {
+		normalized, err := normalizeEventRecord(rec)
+		if err != nil {
+			return nil, fmt.Errorf("normalize event record[%d]: %w", i, err)
+		}
+		if err := normalized.Validate(); err != nil {
+			return nil, fmt.Errorf("validate event record[%d]: %w", i, err)
+		}
+		if i > 0 {
+			prev := out[i-1]
+			if normalized.RuntimeSequence < prev.RuntimeSequence {
+				return nil, fmt.Errorf(
+					"event record runtime_sequence regression at index %d: %d < %d",
+					i,
+					normalized.RuntimeSequence,
+					prev.RuntimeSequence,
+				)
+			}
+			if normalized.TransportSequence != nil && prev.TransportSequence != nil &&
+				*normalized.TransportSequence < *prev.TransportSequence {
+				return nil, fmt.Errorf(
+					"event record transport_sequence regression at index %d: %d < %d",
+					i,
+					*normalized.TransportSequence,
+					*prev.TransportSequence,
+				)
+			}
+		}
+		out[i] = normalized
+	}
+	return out, nil
+}
+
 // ValidateAndNormalizeControlSignals performs runtime-side normalization and validation
 // for control signals before persistence or egress.
 func ValidateAndNormalizeControlSignals(in []apieventabi.ControlSignal) ([]apieventabi.ControlSignal, error) {
@@ -74,4 +111,35 @@ func normalizeSignal(sig apieventabi.ControlSignal) (apieventabi.ControlSignal, 
 		return apieventabi.ControlSignal{}, fmt.Errorf("turn scope signal requires turn_id")
 	}
 	return sig, nil
+}
+
+func normalizeEventRecord(record apieventabi.EventRecord) (apieventabi.EventRecord, error) {
+	if record.SchemaVersion == "" {
+		record.SchemaVersion = "v1.0"
+	}
+	if record.TransportSequence == nil {
+		zero := int64(0)
+		record.TransportSequence = &zero
+	}
+	if record.AuthorityEpoch == nil {
+		zero := int64(0)
+		record.AuthorityEpoch = &zero
+	}
+	if record.RuntimeSequence < 0 {
+		record.RuntimeSequence = 0
+	}
+	if record.AuthorityEpoch != nil && *record.AuthorityEpoch < 0 {
+		zero := int64(0)
+		record.AuthorityEpoch = &zero
+	}
+	if record.RuntimeTimestampMS < 0 {
+		record.RuntimeTimestampMS = 0
+	}
+	if record.WallClockMS < 0 {
+		record.WallClockMS = 0
+	}
+	if record.EventScope == apieventabi.ScopeTurn && record.TurnID == "" {
+		return apieventabi.EventRecord{}, fmt.Errorf("turn scope event record requires turn_id")
+	}
+	return record, nil
 }

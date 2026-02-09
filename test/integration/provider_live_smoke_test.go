@@ -41,7 +41,7 @@ func TestLiveProviderSmoke(t *testing.T) {
 		{providerID: "llm-cohere", modality: contracts.ModalityLLM, enableEnv: "RSPP_LLM_COHERE_ENABLE", required: []string{"RSPP_LLM_COHERE_API_KEY"}},
 		{providerID: "tts-elevenlabs", modality: contracts.ModalityTTS, enableEnv: "RSPP_TTS_ELEVENLABS_ENABLE", required: []string{"RSPP_TTS_ELEVENLABS_API_KEY"}},
 		{providerID: "tts-google", modality: contracts.ModalityTTS, enableEnv: "RSPP_TTS_GOOGLE_ENABLE", required: []string{"RSPP_TTS_GOOGLE_API_KEY"}},
-		{providerID: "tts-amazon-polly", modality: contracts.ModalityTTS, enableEnv: "RSPP_TTS_POLLY_ENABLE", required: []string{"RSPP_TTS_POLLY_REGION"}},
+		{providerID: "tts-amazon-polly", modality: contracts.ModalityTTS, enableEnv: "RSPP_TTS_POLLY_ENABLE", required: []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"}},
 	}
 
 	for _, tc := range cases {

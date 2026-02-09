@@ -248,6 +248,7 @@ func TestToTurnMetricsComputesCompleteness(t *testing.T) {
 			EventID:              "evt-1",
 			EnvelopeSnapshot:     "eventabi/v1",
 			PayloadTags:          []eventabi.PayloadClass{eventabi.PayloadMetadata},
+			RedactionDecisions:   []eventabi.RedactionDecision{{PayloadClass: eventabi.PayloadMetadata, Action: eventabi.RedactionAllow}},
 			PlanHash:             "plan/turn-1",
 			SnapshotProvenance:   defaultSnapshotProvenance(),
 			DecisionOutcomes:     []controlplane.DecisionOutcome{sloAdmitDecision("sess-1", "turn-1", "evt-1-admit", 100)},

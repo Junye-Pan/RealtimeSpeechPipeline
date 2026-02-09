@@ -1,0 +1,20 @@
+{
+  "generated_at_utc": "2026-02-09T22:19:06Z",
+  "metadata_path": "test/replay/fixtures/metadata.json",
+  "fixture_id": "f5-sync-coupled-loss",
+  "gate": "full",
+  "timing_tolerance_ms": 15,
+  "total_divergences": 0,
+  "failing_count": 0,
+  "unexplained_count": 0,
+  "missing_expected": 0,
+  "expected_configured": 0,
+  "by_class": {
+    "AUTHORITY_DIVERGENCE": 0,
+    "ORDERING_DIVERGENCE": 0,
+    "OUTCOME_DIVERGENCE": 0,
+    "PLAN_DIVERGENCE": 0,
+    "TIMING_DIVERGENCE": 0
+  },
+  "status": "PASS"
+}

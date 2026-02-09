@@ -6,19 +6,22 @@ func TestInvocationRequestValidate(t *testing.T) {
 	t.Parallel()
 
 	req := InvocationRequest{
-		SessionID:            "sess-1",
-		TurnID:               "turn-1",
-		PipelineVersion:      "pipeline-v1",
-		EventID:              "evt-1",
-		ProviderInvocationID: "pvi-1",
-		ProviderID:           "stt-a",
-		Modality:             ModalitySTT,
-		Attempt:              1,
-		TransportSequence:    1,
-		RuntimeSequence:      2,
-		AuthorityEpoch:       3,
-		RuntimeTimestampMS:   100,
-		WallClockTimestampMS: 100,
+		SessionID:              "sess-1",
+		TurnID:                 "turn-1",
+		PipelineVersion:        "pipeline-v1",
+		EventID:                "evt-1",
+		ProviderInvocationID:   "pvi-1",
+		ProviderID:             "stt-a",
+		Modality:               ModalitySTT,
+		Attempt:                1,
+		TransportSequence:      1,
+		RuntimeSequence:        2,
+		AuthorityEpoch:         3,
+		RuntimeTimestampMS:     100,
+		WallClockTimestampMS:   100,
+		AllowedAdaptiveActions: []string{"retry", "provider_switch"},
+		RetryBudgetRemaining:   1,
+		CandidateProviderCount: 3,
 	}
 	if err := req.Validate(); err != nil {
 		t.Fatalf("expected valid request, got %v", err)
@@ -27,6 +30,29 @@ func TestInvocationRequestValidate(t *testing.T) {
 	req.Attempt = 0
 	if err := req.Validate(); err == nil {
 		t.Fatalf("expected invalid attempt to fail validation")
+	}
+
+	req.Attempt = 1
+	req.AllowedAdaptiveActions = []string{"retry", "retry"}
+	if err := req.Validate(); err == nil {
+		t.Fatalf("expected duplicate adaptive action to fail validation")
+	}
+
+	req.AllowedAdaptiveActions = []string{"unsupported_action"}
+	if err := req.Validate(); err == nil {
+		t.Fatalf("expected unsupported adaptive action to fail validation")
+	}
+
+	req.AllowedAdaptiveActions = []string{"retry"}
+	req.RetryBudgetRemaining = -1
+	if err := req.Validate(); err == nil {
+		t.Fatalf("expected negative retry budget to fail validation")
+	}
+
+	req.RetryBudgetRemaining = 0
+	req.CandidateProviderCount = -1
+	if err := req.Validate(); err == nil {
+		t.Fatalf("expected negative candidate provider count to fail validation")
 	}
 }
 
@@ -63,23 +89,41 @@ func TestStaticAdapterDefaultInvoke(t *testing.T) {
 		Mode: ModalityTTS,
 	}
 	outcome, err := adapter.Invoke(InvocationRequest{
-		SessionID:            "sess-2",
-		PipelineVersion:      "pipeline-v1",
-		EventID:              "evt-2",
-		ProviderInvocationID: "pvi-2",
-		ProviderID:           "tts-a",
-		Modality:             ModalityTTS,
-		Attempt:              1,
-		TransportSequence:    1,
-		RuntimeSequence:      1,
-		AuthorityEpoch:       1,
-		RuntimeTimestampMS:   10,
-		WallClockTimestampMS: 10,
+		SessionID:              "sess-2",
+		PipelineVersion:        "pipeline-v1",
+		EventID:                "evt-2",
+		ProviderInvocationID:   "pvi-2",
+		ProviderID:             "tts-a",
+		Modality:               ModalityTTS,
+		Attempt:                1,
+		TransportSequence:      1,
+		RuntimeSequence:        1,
+		AuthorityEpoch:         1,
+		RuntimeTimestampMS:     10,
+		WallClockTimestampMS:   10,
+		AllowedAdaptiveActions: []string{"retry"},
+		RetryBudgetRemaining:   0,
+		CandidateProviderCount: 1,
 	})
 	if err != nil {
 		t.Fatalf("unexpected invoke error: %v", err)
 	}
 	if outcome.Class != OutcomeSuccess {
 		t.Fatalf("expected default static adapter success, got %s", outcome.Class)
+	}
+}
+
+func TestNormalizeAdaptiveActions(t *testing.T) {
+	t.Parallel()
+
+	normalized, err := NormalizeAdaptiveActions([]string{"provider_switch", "retry", "fallback"})
+	if err != nil {
+		t.Fatalf("expected normalize success, got %v", err)
+	}
+	if len(normalized) != 3 {
+		t.Fatalf("expected 3 normalized actions, got %d", len(normalized))
+	}
+	if normalized[0] != "fallback" || normalized[1] != "provider_switch" || normalized[2] != "retry" {
+		t.Fatalf("expected sorted actions, got %+v", normalized)
 	}
 }

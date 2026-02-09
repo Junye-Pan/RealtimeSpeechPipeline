@@ -1,12 +1,14 @@
 package executor
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/tiger/realtime-speech-pipeline/api/controlplane"
 	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
 	"github.com/tiger/realtime-speech-pipeline/internal/observability/timeline"
+	runtimeexecutionpool "github.com/tiger/realtime-speech-pipeline/internal/runtime/executionpool"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/localadmission"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/contracts"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/invocation"
@@ -480,5 +482,232 @@ func TestExecutePlanCycleValidation(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "cycle") {
 		t.Fatalf("expected cycle error, got %v", err)
+	}
+}
+
+func TestExecutePlanProviderFailureDegradeContinues(t *testing.T) {
+	t.Parallel()
+
+	catalog, err := registry.NewCatalog([]contracts.Adapter{
+		contracts.StaticAdapter{
+			ID:   "llm-a",
+			Mode: contracts.ModalityLLM,
+			InvokeFn: func(req contracts.InvocationRequest) (contracts.Outcome, error) {
+				return contracts.Outcome{
+					Class:     contracts.OutcomeTimeout,
+					Retryable: false,
+					Reason:    "provider_timeout",
+				}, nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected catalog error: %v", err)
+	}
+
+	scheduler := NewSchedulerWithProviderInvoker(localadmission.Evaluator{}, invocation.NewController(catalog))
+	trace, err := scheduler.ExecutePlan(
+		SchedulingInput{
+			SessionID:            "sess-plan-failure-degrade-1",
+			TurnID:               "turn-plan-failure-degrade-1",
+			EventID:              "evt-plan-failure-degrade-1",
+			PipelineVersion:      "pipeline-v1",
+			TransportSequence:    1,
+			RuntimeSequence:      1,
+			AuthorityEpoch:       1,
+			RuntimeTimestampMS:   10,
+			WallClockTimestampMS: 10,
+		},
+		ExecutionPlan{
+			Nodes: []NodeSpec{
+				{
+					NodeID:       "llm-node",
+					NodeType:     "provider",
+					Lane:         eventabi.LaneData,
+					AllowDegrade: true,
+					Provider: &ProviderInvocationInput{
+						Modality:          contracts.ModalityLLM,
+						PreferredProvider: "llm-a",
+					},
+				},
+				{
+					NodeID:   "follow-up",
+					NodeType: "admission",
+					Lane:     eventabi.LaneControl,
+				},
+			},
+			Edges: []EdgeSpec{{From: "llm-node", To: "follow-up"}},
+		},
+	)
+	if err != nil {
+		t.Fatalf("unexpected execute plan error: %v", err)
+	}
+	if !trace.Completed {
+		t.Fatalf("expected degraded execution to continue, got %+v", trace)
+	}
+	if len(trace.Nodes) != 2 {
+		t.Fatalf("expected follow-up node execution, got %d nodes", len(trace.Nodes))
+	}
+	if trace.Nodes[0].Failure == nil || trace.Nodes[0].Failure.Terminal {
+		t.Fatalf("expected non-terminal failure shaping on first node, got %+v", trace.Nodes[0].Failure)
+	}
+
+	foundDegrade := false
+	for _, signal := range trace.ControlSignals {
+		if signal.Signal == "degrade" {
+			foundDegrade = true
+			break
+		}
+	}
+	if !foundDegrade {
+		t.Fatalf("expected degrade signal in trace controls, got %+v", trace.ControlSignals)
+	}
+}
+
+func TestExecutePlanProviderFailureTerminalStopsWithReason(t *testing.T) {
+	t.Parallel()
+
+	catalog, err := registry.NewCatalog([]contracts.Adapter{
+		contracts.StaticAdapter{
+			ID:   "tts-a",
+			Mode: contracts.ModalityTTS,
+			InvokeFn: func(req contracts.InvocationRequest) (contracts.Outcome, error) {
+				return contracts.Outcome{
+					Class:     contracts.OutcomeInfrastructureFailure,
+					Retryable: false,
+					Reason:    "provider_unreachable",
+				}, nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected catalog error: %v", err)
+	}
+
+	scheduler := NewSchedulerWithProviderInvoker(localadmission.Evaluator{}, invocation.NewController(catalog))
+	trace, err := scheduler.ExecutePlan(
+		SchedulingInput{
+			SessionID:            "sess-plan-failure-terminal-1",
+			TurnID:               "turn-plan-failure-terminal-1",
+			EventID:              "evt-plan-failure-terminal-1",
+			PipelineVersion:      "pipeline-v1",
+			TransportSequence:    5,
+			RuntimeSequence:      5,
+			AuthorityEpoch:       1,
+			RuntimeTimestampMS:   50,
+			WallClockTimestampMS: 50,
+		},
+		ExecutionPlan{
+			Nodes: []NodeSpec{
+				{
+					NodeID:   "tts-node",
+					NodeType: "provider",
+					Lane:     eventabi.LaneData,
+					Provider: &ProviderInvocationInput{
+						Modality:          contracts.ModalityTTS,
+						PreferredProvider: "tts-a",
+					},
+				},
+				{
+					NodeID:   "should-not-run",
+					NodeType: "admission",
+					Lane:     eventabi.LaneControl,
+				},
+			},
+			Edges: []EdgeSpec{{From: "tts-node", To: "should-not-run"}},
+		},
+	)
+	if err != nil {
+		t.Fatalf("unexpected execute plan error: %v", err)
+	}
+	if trace.Completed {
+		t.Fatalf("expected terminal failure to stop execution")
+	}
+	if trace.TerminalReason != "node_timeout_or_failure" {
+		t.Fatalf("expected terminal reason node_timeout_or_failure, got %q", trace.TerminalReason)
+	}
+	if len(trace.Nodes) != 1 {
+		t.Fatalf("expected execution to stop after first node, got %d nodes", len(trace.Nodes))
+	}
+	if trace.Nodes[0].Failure == nil || !trace.Nodes[0].Failure.Terminal {
+		t.Fatalf("expected terminal node failure shape, got %+v", trace.Nodes[0].Failure)
+	}
+}
+
+func TestExecutePlanWithExecutionPool(t *testing.T) {
+	t.Parallel()
+
+	pool := runtimeexecutionpool.NewManager(4)
+	scheduler := NewSchedulerWithExecutionPool(localadmission.Evaluator{}, pool)
+	trace, err := scheduler.ExecutePlan(
+		SchedulingInput{
+			SessionID:            "sess-plan-pool-1",
+			TurnID:               "turn-plan-pool-1",
+			EventID:              "evt-plan-pool-1",
+			PipelineVersion:      "pipeline-v1",
+			TransportSequence:    10,
+			RuntimeSequence:      11,
+			AuthorityEpoch:       1,
+			RuntimeTimestampMS:   100,
+			WallClockTimestampMS: 100,
+		},
+		ExecutionPlan{
+			Nodes: []NodeSpec{
+				{NodeID: "a", NodeType: "admission", Lane: eventabi.LaneControl},
+				{NodeID: "b", NodeType: "admission", Lane: eventabi.LaneControl},
+			},
+			Edges: []EdgeSpec{{From: "a", To: "b"}},
+		},
+	)
+	if err != nil {
+		t.Fatalf("unexpected pooled execute plan error: %v", err)
+	}
+	if !trace.Completed || len(trace.Nodes) != 2 {
+		t.Fatalf("expected pooled execution completion, got %+v", trace)
+	}
+	if err := pool.Drain(context.Background()); err != nil {
+		t.Fatalf("unexpected pool drain error: %v", err)
+	}
+	stats := pool.Stats()
+	if stats.Submitted < 2 || stats.Completed < 2 {
+		t.Fatalf("expected pool submissions/completions, got %+v", stats)
+	}
+}
+
+func TestSchedulerGeneratesEventIDFromIdentity(t *testing.T) {
+	t.Parallel()
+
+	catalog, err := registry.NewCatalog([]contracts.Adapter{
+		contracts.StaticAdapter{
+			ID:   "stt-a",
+			Mode: contracts.ModalitySTT,
+			InvokeFn: func(req contracts.InvocationRequest) (contracts.Outcome, error) {
+				return contracts.Outcome{Class: contracts.OutcomeSuccess}, nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected catalog error: %v", err)
+	}
+	scheduler := NewSchedulerWithProviderInvoker(localadmission.Evaluator{}, invocation.NewController(catalog))
+	decision, err := scheduler.NodeDispatch(SchedulingInput{
+		SessionID:            "sess-identity-scheduler-1",
+		TurnID:               "turn-identity-scheduler-1",
+		PipelineVersion:      "pipeline-v1",
+		TransportSequence:    1,
+		RuntimeSequence:      1,
+		AuthorityEpoch:       1,
+		RuntimeTimestampMS:   100,
+		WallClockTimestampMS: 100,
+		ProviderInvocation: &ProviderInvocationInput{
+			Modality:          contracts.ModalitySTT,
+			PreferredProvider: "stt-a",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected scheduler invoke error: %v", err)
+	}
+	if decision.Provider == nil || decision.Provider.ProviderInvocationID == "" {
+		t.Fatalf("expected generated provider invocation id, got %+v", decision.Provider)
 	}
 }
