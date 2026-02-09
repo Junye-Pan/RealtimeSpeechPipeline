@@ -4,77 +4,243 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
+
+	"github.com/tiger/realtime-speech-pipeline/api/controlplane"
+	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
+	obs "github.com/tiger/realtime-speech-pipeline/api/observability"
+	"github.com/tiger/realtime-speech-pipeline/internal/observability/timeline"
+	"github.com/tiger/realtime-speech-pipeline/internal/tooling/ops"
+	"github.com/tiger/realtime-speech-pipeline/internal/tooling/regression"
 )
 
-func TestBuildReplaySmokeDivergencesIsZero(t *testing.T) {
+func TestLoadReplayFixturePolicy(t *testing.T) {
 	t.Parallel()
 
-	divergences := buildReplaySmokeDivergences()
-	if len(divergences) != 0 {
-		t.Fatalf("expected zero replay smoke divergences, got %+v", divergences)
+	metadataPath := filepath.Join(t.TempDir(), "metadata.json")
+	metadata := replayFixtureMetadata{
+		Fixtures: map[string]replayFixturePolicy{
+			"fixture-a": {
+				Gate:              "full",
+				TimingToleranceMS: int64Ptr(27),
+				ExpectedDivergences: []regression.ExpectedDivergence{{
+					Class:    obs.OrderingDivergence,
+					Scope:    "turn:turn-a",
+					Approved: true,
+				}},
+			},
+		},
+	}
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatalf("unexpected marshal error: %v", err)
+	}
+	if err := osWriteFile(metadataPath, data); err != nil {
+		t.Fatalf("unexpected write error: %v", err)
+	}
+
+	policy, toleranceMS, err := loadReplayFixturePolicy(metadataPath, "fixture-a", 15)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if toleranceMS != 27 {
+		t.Fatalf("expected tolerance 27, got %d", toleranceMS)
+	}
+	if policy.TimingToleranceMS != 27 {
+		t.Fatalf("expected policy tolerance 27, got %d", policy.TimingToleranceMS)
+	}
+	if len(policy.Expected) != 1 {
+		t.Fatalf("expected one expected divergence, got %+v", policy.Expected)
+	}
+	if policy.Expected[0].Class != obs.OrderingDivergence || !policy.Expected[0].Approved {
+		t.Fatalf("unexpected expected divergence policy: %+v", policy.Expected[0])
 	}
 }
 
-func TestWriteReplaySmokeReport(t *testing.T) {
+func TestLoadReplayFixturePolicyMissingFixture(t *testing.T) {
 	t.Parallel()
 
-	tmpDir := t.TempDir()
-	out := filepath.Join(tmpDir, "replay", "smoke-report.json")
-	if err := writeReplaySmokeReport(out); err != nil {
-		t.Fatalf("unexpected report write error: %v", err)
+	metadataPath := filepath.Join(t.TempDir(), "metadata.json")
+	data := []byte(`{"fixtures":{"fixture-a":{"timing_tolerance_ms":10}}}`)
+	if err := osWriteFile(metadataPath, data); err != nil {
+		t.Fatalf("unexpected write error: %v", err)
 	}
 
-	data, err := os.ReadFile(out)
-	if err != nil {
-		t.Fatalf("unexpected read error: %v", err)
-	}
-
-	var report replaySmokeReport
-	if err := json.Unmarshal(data, &report); err != nil {
-		t.Fatalf("unexpected json error: %v", err)
-	}
-	if report.TotalDivergences != 0 {
-		t.Fatalf("expected zero divergences, got %d", report.TotalDivergences)
-	}
-	if len(report.FailingDivergences) != 0 {
-		t.Fatalf("expected no failing divergences, got %+v", report.FailingDivergences)
-	}
-
-	mdPath := strings.TrimSuffix(out, filepath.Ext(out)) + ".md"
-	if _, err := os.Stat(mdPath); err != nil {
-		t.Fatalf("expected markdown summary at %s: %v", mdPath, err)
+	_, _, err := loadReplayFixturePolicy(metadataPath, "fixture-missing", 15)
+	if err == nil {
+		t.Fatalf("expected missing fixture error")
 	}
 }
 
-func TestWriteSLOGatesReport(t *testing.T) {
+func TestGenerateRuntimeBaselineArtifactFeedsSLOGates(t *testing.T) {
 	t.Parallel()
 
-	tmpDir := t.TempDir()
-	out := filepath.Join(tmpDir, "ops", "slo-gates-report.json")
-	if err := writeSLOGatesReport(out); err != nil {
-		t.Fatalf("unexpected slo report write error: %v", err)
-	}
-
-	data, err := os.ReadFile(out)
+	artifactPath := filepath.Join(t.TempDir(), "runtime-baseline.json")
+	entries, err := generateRuntimeBaselineArtifact(artifactPath)
 	if err != nil {
-		t.Fatalf("unexpected read error: %v", err)
+		t.Fatalf("unexpected generation error: %v", err)
+	}
+	if len(entries) < 3 {
+		t.Fatalf("expected at least 3 runtime baseline entries, got %d", len(entries))
 	}
 
-	var report sloGateArtifact
-	if err := json.Unmarshal(data, &report); err != nil {
-		t.Fatalf("unexpected json error: %v", err)
+	artifact, err := timeline.ReadBaselineArtifact(artifactPath)
+	if err != nil {
+		t.Fatalf("unexpected artifact read error: %v", err)
 	}
-	if !report.Report.Passed {
-		t.Fatalf("expected SLO report to pass, got %+v", report.Report.Violations)
-	}
-	if report.Report.BaselineCompletenessRatio != 1.0 {
-		t.Fatalf("expected OR-02 completeness ratio 1.0, got %.2f", report.Report.BaselineCompletenessRatio)
+	if len(artifact.Entries) != len(entries) {
+		t.Fatalf("artifact entries mismatch: got=%d want=%d", len(artifact.Entries), len(entries))
 	}
 
-	mdPath := strings.TrimSuffix(out, filepath.Ext(out)) + ".md"
-	if _, err := os.Stat(mdPath); err != nil {
-		t.Fatalf("expected markdown summary at %s: %v", mdPath, err)
+	report := ops.EvaluateMVPSLOGates(toTurnMetrics(entries), ops.DefaultMVPSLOThresholds())
+	if !report.Passed {
+		t.Fatalf("expected generated runtime baseline metrics to pass SLO gates, got %+v", report.Violations)
 	}
+}
+
+func TestSelectReplayFixtureIDsByGate(t *testing.T) {
+	t.Parallel()
+
+	metadata := replayFixtureMetadata{
+		Fixtures: map[string]replayFixturePolicy{
+			"quick-a": {Gate: "quick"},
+			"full-a":  {Gate: "full"},
+			"both-a":  {Gate: "both"},
+		},
+	}
+
+	quick, err := selectReplayFixtureIDs(metadata, "quick")
+	if err != nil {
+		t.Fatalf("unexpected quick gate error: %v", err)
+	}
+	if len(quick) != 2 || quick[0] != "both-a" || quick[1] != "quick-a" {
+		t.Fatalf("unexpected quick fixture selection: %+v", quick)
+	}
+
+	full, err := selectReplayFixtureIDs(metadata, "full")
+	if err != nil {
+		t.Fatalf("unexpected full gate error: %v", err)
+	}
+	if len(full) != 2 || full[0] != "both-a" || full[1] != "full-a" {
+		t.Fatalf("unexpected full fixture selection: %+v", full)
+	}
+}
+
+func TestWriteReplayRegressionReport(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	metadataPath := filepath.Join(tmp, "metadata.json")
+	outputPath := filepath.Join(tmp, "regression.json")
+	metadata := replayFixtureMetadata{
+		Fixtures: map[string]replayFixturePolicy{
+			"rd-ordering-approved-1": {
+				Gate:              "full",
+				TimingToleranceMS: int64Ptr(15),
+				ExpectedDivergences: []regression.ExpectedDivergence{{
+					Class:    obs.OrderingDivergence,
+					Scope:    "turn:turn-ordering-approved-1",
+					Approved: true,
+				}},
+			},
+		},
+	}
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatalf("unexpected marshal error: %v", err)
+	}
+	if err := osWriteFile(metadataPath, data); err != nil {
+		t.Fatalf("unexpected write error: %v", err)
+	}
+
+	if err := writeReplayRegressionReport(outputPath, metadataPath, "full"); err != nil {
+		t.Fatalf("expected replay regression report to pass, got %v", err)
+	}
+
+	raw, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("unexpected report read error: %v", err)
+	}
+	var report replayRegressionReport
+	if err := json.Unmarshal(raw, &report); err != nil {
+		t.Fatalf("unexpected report decode error: %v", err)
+	}
+	if report.FixtureCount != 1 || report.FailingCount != 0 {
+		t.Fatalf("unexpected replay regression report contents: %+v", report)
+	}
+}
+
+func TestToTurnMetricsComputesCompleteness(t *testing.T) {
+	t.Parallel()
+
+	open0 := int64(0)
+	open100 := int64(100)
+	first500 := int64(500)
+	entries := []timeline.BaselineEvidence{
+		{
+			SessionID:            "sess-1",
+			TurnID:               "turn-1",
+			PipelineVersion:      "pipeline-v1",
+			EventID:              "evt-1",
+			EnvelopeSnapshot:     "eventabi/v1",
+			PayloadTags:          []eventabi.PayloadClass{eventabi.PayloadMetadata},
+			PlanHash:             "plan/turn-1",
+			SnapshotProvenance:   defaultSnapshotProvenance(),
+			DecisionOutcomes:     []controlplane.DecisionOutcome{sloAdmitDecision("sess-1", "turn-1", "evt-1-admit", 100)},
+			DeterminismSeed:      1,
+			OrderingMarkers:      []string{"runtime_sequence:1"},
+			MergeRuleID:          "merge/default",
+			MergeRuleVersion:     "v1.0",
+			AuthorityEpoch:       1,
+			TerminalOutcome:      "commit",
+			CloseEmitted:         true,
+			TurnOpenProposedAtMS: &open0,
+			TurnOpenAtMS:         &open100,
+			FirstOutputAtMS:      &first500,
+		},
+	}
+
+	samples := toTurnMetrics(entries)
+	if len(samples) != 1 {
+		t.Fatalf("expected one sample, got %d", len(samples))
+	}
+	if !samples[0].BaselineComplete {
+		t.Fatalf("expected baseline to be complete, got %+v", samples[0])
+	}
+	if !samples[0].HappyPath {
+		t.Fatalf("expected happy path sample to be true")
+	}
+}
+
+func TestWriteSLOGatesReportRequiresBaselineArtifact(t *testing.T) {
+	t.Parallel()
+
+	outputPath := filepath.Join(t.TempDir(), "slo.json")
+	missingArtifactPath := filepath.Join(t.TempDir(), "missing-runtime-baseline.json")
+	if err := writeSLOGatesReport(outputPath, missingArtifactPath); err == nil {
+		t.Fatalf("expected missing baseline artifact to fail slo-gates-report")
+	}
+}
+
+func TestWriteSLOGatesReportFromRuntimeArtifact(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	artifactPath := filepath.Join(tmp, "runtime-baseline.json")
+	outputPath := filepath.Join(tmp, "slo.json")
+
+	if err := writeRuntimeBaselineArtifact(artifactPath); err != nil {
+		t.Fatalf("unexpected runtime baseline generation error: %v", err)
+	}
+	if err := writeSLOGatesReport(outputPath, artifactPath); err != nil {
+		t.Fatalf("expected slo report generation from runtime artifact to pass, got %v", err)
+	}
+}
+
+func int64Ptr(v int64) *int64 {
+	return &v
+}
+
+func osWriteFile(path string, data []byte) error {
+	return os.WriteFile(path, data, 0o644)
 }

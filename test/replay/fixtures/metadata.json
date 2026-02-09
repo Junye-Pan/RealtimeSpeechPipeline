@@ -1,0 +1,154 @@
+{
+  "fixtures": {
+    "rd-001-smoke": {
+      "gate": "quick",
+      "timing_tolerance_ms": 15,
+      "expected_divergences": []
+    },
+    "rd-002-recompute-within-tolerance": {
+      "gate": "full",
+      "timing_tolerance_ms": 15,
+      "expected_divergences": []
+    },
+    "rd-003-baseline-completeness": {
+      "gate": "full",
+      "timing_tolerance_ms": 15,
+      "expected_divergences": []
+    },
+    "rd-004-snapshot-provenance-plan": {
+      "gate": "full",
+      "timing_tolerance_ms": 15,
+      "expected_divergences": [
+        {
+          "class": "PLAN_DIVERGENCE",
+          "scope": "turn:turn-rd-004"
+        }
+      ]
+    },
+    "rd-ordering-approved-1": {
+      "gate": "full",
+      "timing_tolerance_ms": 15,
+      "expected_divergences": [
+        {
+          "class": "ORDERING_DIVERGENCE",
+          "scope": "turn:turn-ordering-approved-1",
+          "approved": true
+        }
+      ]
+    },
+
+    "cf-001-cancel-fence": {
+      "gate": "full",
+      "timing_tolerance_ms": 15,
+      "expected_divergences": []
+    },
+    "cf-002-provider-late-output": {
+      "gate": "full",
+      "timing_tolerance_ms": 15,
+      "expected_divergences": []
+    },
+    "cf-003-cancel-terminalization": {
+      "gate": "full",
+      "timing_tolerance_ms": 15,
+      "expected_divergences": []
+    },
+    "cf-004-cancel-observability": {
+      "gate": "full",
+      "timing_tolerance_ms": 15,
+      "expected_divergences": []
+    },
+
+    "ae-001-preturn-stale-epoch": {
+      "gate": "full",
+      "timing_tolerance_ms": 15,
+      "expected_divergences": []
+    },
+    "ae-002-inturn-authority-revoke": {
+      "gate": "full",
+      "timing_tolerance_ms": 15,
+      "expected_divergences": []
+    },
+    "ae-003-old-placement-stale-output": {
+      "gate": "full",
+      "timing_tolerance_ms": 15,
+      "expected_divergences": []
+    },
+    "ae-004-ingress-authority-enrichment": {
+      "gate": "full",
+      "timing_tolerance_ms": 15,
+      "expected_divergences": []
+    },
+    "ae-005-preturn-deauthorization": {
+      "gate": "full",
+      "timing_tolerance_ms": 15,
+      "expected_divergences": []
+    },
+
+    "ml-001-drop-under-pressure": {
+      "gate": "full",
+      "timing_tolerance_ms": 15,
+      "expected_divergences": []
+    },
+    "ml-002-deterministic-merge": {
+      "gate": "full",
+      "timing_tolerance_ms": 15,
+      "expected_divergences": []
+    },
+    "ml-003-replay-absence-classification": {
+      "gate": "full",
+      "timing_tolerance_ms": 15,
+      "expected_divergences": [
+        {
+          "class": "OUTCOME_DIVERGENCE",
+          "scope": "event:evt-ml003-merge"
+        }
+      ]
+    },
+    "ml-004-sync-discontinuity": {
+      "gate": "full",
+      "timing_tolerance_ms": 15,
+      "expected_divergences": []
+    },
+
+    "f1-admission-overload": {
+      "gate": "full",
+      "timing_tolerance_ms": 15,
+      "expected_divergences": []
+    },
+    "f2-node-timeout-failure": {
+      "gate": "full",
+      "timing_tolerance_ms": 15,
+      "expected_divergences": []
+    },
+    "f3-provider-failure": {
+      "gate": "full",
+      "timing_tolerance_ms": 15,
+      "expected_divergences": []
+    },
+    "f4-edge-pressure-overflow": {
+      "gate": "full",
+      "timing_tolerance_ms": 15,
+      "expected_divergences": []
+    },
+    "f5-sync-coupled-loss": {
+      "gate": "full",
+      "timing_tolerance_ms": 15,
+      "expected_divergences": []
+    },
+    "f6-transport-disconnect-stall": {
+      "gate": "full",
+      "timing_tolerance_ms": 15,
+      "expected_divergences": []
+    },
+    "f7-authority-conflict": {
+      "gate": "full",
+      "timing_tolerance_ms": 15,
+      "expected_divergences": []
+    },
+    "f8-region-failover": {
+      "gate": "full",
+      "timing_tolerance_ms": 15,
+      "expected_divergences": []
+    }
+  }
+}

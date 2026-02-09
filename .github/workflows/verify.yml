@@ -33,6 +33,9 @@ jobs:
           path: |
             .codex/replay/smoke-report.json
             .codex/replay/smoke-report.md
+            .codex/replay/regression-report.json
+            .codex/replay/regression-report.md
+            .codex/replay/runtime-baseline.json
             .codex/ops/slo-gates-report.json
             .codex/ops/slo-gates-report.md
           if-no-files-found: warn
@@ -62,6 +65,9 @@ jobs:
           path: |
             .codex/replay/smoke-report.json
             .codex/replay/smoke-report.md
+            .codex/replay/regression-report.json
+            .codex/replay/regression-report.md
+            .codex/replay/runtime-baseline.json
             .codex/ops/slo-gates-report.json
             .codex/ops/slo-gates-report.md
           if-no-files-found: warn

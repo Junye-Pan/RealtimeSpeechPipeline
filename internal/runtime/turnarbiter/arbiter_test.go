@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/tiger/realtime-speech-pipeline/api/controlplane"
+	"github.com/tiger/realtime-speech-pipeline/internal/observability/timeline"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/localadmission"
 )
 
@@ -341,6 +342,83 @@ func TestApplyRejectsInvalidInput(t *testing.T) {
 	_, err := arbiter.Apply(ApplyInput{})
 	if err == nil {
 		t.Fatalf("expected error for empty apply input")
+	}
+}
+
+func TestHandleActiveAppendsBaselineEvidenceOnTerminalPath(t *testing.T) {
+	t.Parallel()
+
+	recorder := timeline.NewRecorder(timeline.StageAConfig{BaselineCapacity: 2, DetailCapacity: 2})
+	arbiter := NewWithRecorder(&recorder)
+
+	_, err := arbiter.HandleActive(ActiveInput{
+		SessionID:            "sess-or02-1",
+		TurnID:               "turn-or02-1",
+		EventID:              "evt-or02-1",
+		PipelineVersion:      "pipeline-v1",
+		RuntimeSequence:      10,
+		RuntimeTimestampMS:   100,
+		WallClockTimestampMS: 100,
+		AuthorityEpoch:       1,
+		TerminalSuccessReady: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	entries := recorder.BaselineEntries()
+	if len(entries) != 1 {
+		t.Fatalf("expected one OR-02 baseline entry, got %d", len(entries))
+	}
+	if entries[0].TerminalOutcome != "commit" {
+		t.Fatalf("expected terminal outcome commit in OR-02 baseline, got %+v", entries[0])
+	}
+}
+
+func TestHandleActiveBaselineAppendFailureFallsBackDeterministically(t *testing.T) {
+	t.Parallel()
+
+	recorder := timeline.NewRecorder(timeline.StageAConfig{BaselineCapacity: 1, DetailCapacity: 2})
+	arbiter := NewWithRecorder(&recorder)
+
+	_, err := arbiter.HandleActive(ActiveInput{
+		SessionID:            "sess-or02-2",
+		TurnID:               "turn-or02-2a",
+		EventID:              "evt-or02-2a",
+		PipelineVersion:      "pipeline-v1",
+		RuntimeSequence:      20,
+		RuntimeTimestampMS:   200,
+		WallClockTimestampMS: 200,
+		AuthorityEpoch:       1,
+		TerminalSuccessReady: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected setup error: %v", err)
+	}
+
+	result, err := arbiter.HandleActive(ActiveInput{
+		SessionID:            "sess-or02-2",
+		TurnID:               "turn-or02-2b",
+		EventID:              "evt-or02-2b",
+		PipelineVersion:      "pipeline-v1",
+		RuntimeSequence:      21,
+		RuntimeTimestampMS:   210,
+		WallClockTimestampMS: 210,
+		AuthorityEpoch:       1,
+		TerminalSuccessReady: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Events) != 2 {
+		t.Fatalf("expected fallback abort+close, got %+v", result.Events)
+	}
+	if result.Events[0].Name != "abort" || result.Events[0].Reason != "recording_evidence_unavailable" {
+		t.Fatalf("expected fallback abort(recording_evidence_unavailable), got %+v", result.Events[0])
+	}
+	if result.Events[1].Name != "close" {
+		t.Fatalf("expected close after fallback abort, got %+v", result.Events[1])
 	}
 }
 

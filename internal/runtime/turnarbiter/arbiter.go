@@ -5,6 +5,7 @@ import (
 
 	"github.com/tiger/realtime-speech-pipeline/api/controlplane"
 	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
+	"github.com/tiger/realtime-speech-pipeline/internal/observability/timeline"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/guard"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/localadmission"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/planresolver"
@@ -62,6 +63,7 @@ type ActiveInput struct {
 	NodeTimeoutOrFailure         bool
 	TransportDisconnectOrStall   bool
 	BaselineEvidenceAppendFailed bool
+	BaselineEvidence             *timeline.BaselineEvidence
 	NoLegalContinueOrFallback    bool
 	TerminalSuccessReady         bool
 }
@@ -89,16 +91,27 @@ type ApplyResult struct {
 
 // Arbiter composes RK-24/RK-25 guard checks and RK-04 plan resolution.
 type Arbiter struct {
-	admission localadmission.Evaluator
-	guard     guard.Evaluator
-	resolver  planresolver.Resolver
+	admission        localadmission.Evaluator
+	guard            guard.Evaluator
+	resolver         planresolver.Resolver
+	baselineRecorder *timeline.Recorder
 }
 
 func New() Arbiter {
+	recorder := timeline.NewRecorder(timeline.StageAConfig{
+		BaselineCapacity: 512,
+		DetailCapacity:   1024,
+	})
+	return NewWithRecorder(&recorder)
+}
+
+// NewWithRecorder wires a runtime baseline recorder used for OR-02 append semantics.
+func NewWithRecorder(recorder *timeline.Recorder) Arbiter {
 	return Arbiter{
-		admission: localadmission.Evaluator{},
-		guard:     guard.Evaluator{},
-		resolver:  planresolver.Resolver{},
+		admission:        localadmission.Evaluator{},
+		guard:            guard.Evaluator{},
+		resolver:         planresolver.Resolver{},
+		baselineRecorder: recorder,
 	}
 }
 
@@ -316,9 +329,7 @@ func (a Arbiter) HandleActive(in ActiveInput) (ActiveResult, error) {
 			LifecycleEvent{Name: "abort", Reason: "authority_loss"},
 			LifecycleEvent{Name: "close"},
 		)
-		result.State = controlplane.TurnClosed
-		appendTerminalTransitions(&result, controlplane.TriggerAbort)
-		return result, validateActiveResult(result)
+		return a.finalizeTerminal(in, result, "abort", "authority_loss", controlplane.TriggerAbort)
 	}
 
 	if in.CancelAccepted {
@@ -326,9 +337,7 @@ func (a Arbiter) HandleActive(in ActiveInput) (ActiveResult, error) {
 			LifecycleEvent{Name: "abort", Reason: "cancelled"},
 			LifecycleEvent{Name: "close"},
 		)
-		result.State = controlplane.TurnClosed
-		appendTerminalTransitions(&result, controlplane.TriggerAbort)
-		return result, validateActiveResult(result)
+		return a.finalizeTerminal(in, result, "abort", "cancelled", controlplane.TriggerAbort)
 	}
 
 	if in.ProviderFailure {
@@ -336,9 +345,7 @@ func (a Arbiter) HandleActive(in ActiveInput) (ActiveResult, error) {
 			LifecycleEvent{Name: "abort", Reason: "provider_failure"},
 			LifecycleEvent{Name: "close"},
 		)
-		result.State = controlplane.TurnClosed
-		appendTerminalTransitions(&result, controlplane.TriggerAbort)
-		return result, validateActiveResult(result)
+		return a.finalizeTerminal(in, result, "abort", "provider_failure", controlplane.TriggerAbort)
 	}
 
 	if in.NodeTimeoutOrFailure {
@@ -346,9 +353,7 @@ func (a Arbiter) HandleActive(in ActiveInput) (ActiveResult, error) {
 			LifecycleEvent{Name: "abort", Reason: "node_timeout_or_failure"},
 			LifecycleEvent{Name: "close"},
 		)
-		result.State = controlplane.TurnClosed
-		appendTerminalTransitions(&result, controlplane.TriggerAbort)
-		return result, validateActiveResult(result)
+		return a.finalizeTerminal(in, result, "abort", "node_timeout_or_failure", controlplane.TriggerAbort)
 	}
 
 	if in.TransportDisconnectOrStall {
@@ -392,9 +397,7 @@ func (a Arbiter) HandleActive(in ActiveInput) (ActiveResult, error) {
 			LifecycleEvent{Name: "abort", Reason: "transport_disconnect_or_stall"},
 			LifecycleEvent{Name: "close"},
 		)
-		result.State = controlplane.TurnClosed
-		appendTerminalTransitions(&result, controlplane.TriggerAbort)
-		return result, validateActiveResult(result)
+		return a.finalizeTerminal(in, result, "abort", "transport_disconnect_or_stall", controlplane.TriggerAbort)
 	}
 
 	if in.BaselineEvidenceAppendFailed {
@@ -402,9 +405,7 @@ func (a Arbiter) HandleActive(in ActiveInput) (ActiveResult, error) {
 			LifecycleEvent{Name: "abort", Reason: "recording_evidence_unavailable"},
 			LifecycleEvent{Name: "close"},
 		)
-		result.State = controlplane.TurnClosed
-		appendTerminalTransitions(&result, controlplane.TriggerAbort)
-		return result, validateActiveResult(result)
+		return a.finalizeTerminal(in, result, "abort", "recording_evidence_unavailable", controlplane.TriggerAbort)
 	}
 
 	if in.NoLegalContinueOrFallback {
@@ -412,9 +413,7 @@ func (a Arbiter) HandleActive(in ActiveInput) (ActiveResult, error) {
 			LifecycleEvent{Name: "abort", Reason: "deterministic_reason"},
 			LifecycleEvent{Name: "close"},
 		)
-		result.State = controlplane.TurnClosed
-		appendTerminalTransitions(&result, controlplane.TriggerAbort)
-		return result, validateActiveResult(result)
+		return a.finalizeTerminal(in, result, "abort", "deterministic_reason", controlplane.TriggerAbort)
 	}
 
 	if in.TerminalSuccessReady {
@@ -422,12 +421,213 @@ func (a Arbiter) HandleActive(in ActiveInput) (ActiveResult, error) {
 			LifecycleEvent{Name: "commit"},
 			LifecycleEvent{Name: "close"},
 		)
-		result.State = controlplane.TurnClosed
-		appendTerminalTransitions(&result, controlplane.TriggerCommit)
-		return result, validateActiveResult(result)
+		return a.finalizeTerminal(in, result, "commit", "", controlplane.TriggerCommit)
 	}
 
 	return result, nil
+}
+
+func (a Arbiter) finalizeTerminal(in ActiveInput, result ActiveResult, terminalOutcome string, terminalReason string, trigger controlplane.TransitionTrigger) (ActiveResult, error) {
+	result.State = controlplane.TurnClosed
+	appendTerminalTransitions(&result, trigger)
+
+	if err := a.appendBaselineEvidence(in, terminalOutcome, terminalReason); err != nil {
+		result.Decision = nil
+		result.Events = []LifecycleEvent{
+			{Name: "abort", Reason: "recording_evidence_unavailable"},
+			{Name: "close"},
+		}
+		result.Transitions = nil
+		appendTerminalTransitions(&result, controlplane.TriggerAbort)
+	}
+
+	return result, validateActiveResult(result)
+}
+
+func (a Arbiter) appendBaselineEvidence(in ActiveInput, terminalOutcome string, terminalReason string) error {
+	if in.BaselineEvidenceAppendFailed {
+		return timeline.ErrBaselineCapacityExhausted
+	}
+	if a.baselineRecorder == nil {
+		return fmt.Errorf("timeline recorder unavailable")
+	}
+
+	evidence, err := buildBaselineEvidence(in, terminalOutcome, terminalReason)
+	if err != nil {
+		return err
+	}
+	return a.baselineRecorder.AppendBaseline(evidence)
+}
+
+func buildBaselineEvidence(in ActiveInput, terminalOutcome string, terminalReason string) (timeline.BaselineEvidence, error) {
+	eventID := in.EventID
+	if eventID == "" {
+		eventID = "evt-runtime-terminal"
+	}
+	pipelineVersion := defaultPipelineVersion(in.PipelineVersion)
+
+	decision := controlplane.DecisionOutcome{
+		OutcomeKind:        controlplane.OutcomeAdmit,
+		Phase:              controlplane.PhasePreTurn,
+		Scope:              controlplane.ScopeTurn,
+		SessionID:          in.SessionID,
+		TurnID:             in.TurnID,
+		EventID:            eventID + "-admit",
+		RuntimeTimestampMS: nonNegative(in.RuntimeTimestampMS),
+		WallClockMS:        nonNegative(in.WallClockTimestampMS),
+		EmittedBy:          controlplane.EmitterRK25,
+		Reason:             "admission_capacity_allow",
+	}
+	evidence := timeline.BaselineEvidence{
+		SessionID:        in.SessionID,
+		TurnID:           in.TurnID,
+		PipelineVersion:  pipelineVersion,
+		EventID:          eventID,
+		EnvelopeSnapshot: "eventabi/v1",
+		PayloadTags:      []eventabi.PayloadClass{eventabi.PayloadMetadata},
+		PlanHash:         "plan/" + fallback(in.TurnID, "unknown"),
+		SnapshotProvenance: controlplane.SnapshotProvenance{
+			RoutingViewSnapshot:       "routing-view/v1",
+			AdmissionPolicySnapshot:   "admission-policy/v1",
+			ABICompatibilitySnapshot:  "abi-compat/v1",
+			VersionResolutionSnapshot: "version-resolution/v1",
+			PolicyResolutionSnapshot:  "policy-resolution/v1",
+			ProviderHealthSnapshot:    "provider-health/v1",
+		},
+		DecisionOutcomes: []controlplane.DecisionOutcome{decision},
+		DeterminismSeed:  nonNegative(in.RuntimeSequence),
+		OrderingMarkers: []string{
+			fmt.Sprintf("runtime_sequence:%d", nonNegative(in.RuntimeSequence)),
+		},
+		MergeRuleID:      "merge/default",
+		MergeRuleVersion: "v1.0",
+		AuthorityEpoch:   nonNegative(in.AuthorityEpoch),
+		CloseEmitted:     true,
+	}
+
+	if in.BaselineEvidence != nil {
+		evidence = *in.BaselineEvidence
+	}
+
+	normalizeBaselineEvidence(&evidence, in, terminalOutcome, terminalReason)
+	if err := evidence.ValidateCompleteness(); err != nil {
+		return timeline.BaselineEvidence{}, err
+	}
+	return evidence, nil
+}
+
+func normalizeBaselineEvidence(evidence *timeline.BaselineEvidence, in ActiveInput, terminalOutcome string, terminalReason string) {
+	evidence.SessionID = fallback(evidence.SessionID, in.SessionID)
+	evidence.TurnID = fallback(evidence.TurnID, in.TurnID)
+	evidence.PipelineVersion = fallback(evidence.PipelineVersion, defaultPipelineVersion(in.PipelineVersion))
+	evidence.EventID = fallback(evidence.EventID, fallback(in.EventID, "evt-runtime-terminal"))
+	evidence.EnvelopeSnapshot = fallback(evidence.EnvelopeSnapshot, "eventabi/v1")
+	if len(evidence.PayloadTags) == 0 {
+		evidence.PayloadTags = []eventabi.PayloadClass{eventabi.PayloadMetadata}
+	}
+	evidence.PlanHash = fallback(evidence.PlanHash, "plan/"+fallback(in.TurnID, "unknown"))
+
+	evidence.SnapshotProvenance.RoutingViewSnapshot = fallback(evidence.SnapshotProvenance.RoutingViewSnapshot, "routing-view/v1")
+	evidence.SnapshotProvenance.AdmissionPolicySnapshot = fallback(evidence.SnapshotProvenance.AdmissionPolicySnapshot, "admission-policy/v1")
+	evidence.SnapshotProvenance.ABICompatibilitySnapshot = fallback(evidence.SnapshotProvenance.ABICompatibilitySnapshot, "abi-compat/v1")
+	evidence.SnapshotProvenance.VersionResolutionSnapshot = fallback(evidence.SnapshotProvenance.VersionResolutionSnapshot, "version-resolution/v1")
+	evidence.SnapshotProvenance.PolicyResolutionSnapshot = fallback(evidence.SnapshotProvenance.PolicyResolutionSnapshot, "policy-resolution/v1")
+	evidence.SnapshotProvenance.ProviderHealthSnapshot = fallback(evidence.SnapshotProvenance.ProviderHealthSnapshot, "provider-health/v1")
+
+	if len(evidence.DecisionOutcomes) == 0 {
+		decision := controlplane.DecisionOutcome{
+			OutcomeKind:        controlplane.OutcomeAdmit,
+			Phase:              controlplane.PhasePreTurn,
+			Scope:              controlplane.ScopeTurn,
+			SessionID:          evidence.SessionID,
+			TurnID:             evidence.TurnID,
+			EventID:            evidence.EventID + "-admit",
+			RuntimeTimestampMS: nonNegative(in.RuntimeTimestampMS),
+			WallClockMS:        nonNegative(in.WallClockTimestampMS),
+			EmittedBy:          controlplane.EmitterRK25,
+			Reason:             "admission_capacity_allow",
+		}
+		evidence.DecisionOutcomes = []controlplane.DecisionOutcome{decision}
+	}
+
+	evidence.OrderingMarkers = sanitizeOrderingMarkers(evidence.OrderingMarkers)
+	if len(evidence.OrderingMarkers) == 0 {
+		evidence.OrderingMarkers = []string{fmt.Sprintf("runtime_sequence:%d", nonNegative(in.RuntimeSequence))}
+	}
+	evidence.MergeRuleID = fallback(evidence.MergeRuleID, "merge/default")
+	evidence.MergeRuleVersion = fallback(evidence.MergeRuleVersion, "v1.0")
+	if evidence.AuthorityEpoch < 0 {
+		evidence.AuthorityEpoch = 0
+	}
+	if evidence.AuthorityEpoch == 0 && in.AuthorityEpoch > 0 {
+		evidence.AuthorityEpoch = in.AuthorityEpoch
+	}
+
+	proposed := nonNegative(in.RuntimeTimestampMS) - 1
+	if proposed < 0 {
+		proposed = 0
+	}
+	runtimeTs := nonNegative(in.RuntimeTimestampMS)
+	if evidence.TurnOpenProposedAtMS == nil {
+		evidence.TurnOpenProposedAtMS = &proposed
+	}
+	if evidence.TurnOpenAtMS == nil {
+		evidence.TurnOpenAtMS = &runtimeTs
+	}
+
+	if in.CancelAccepted && evidence.CancelAcceptedAtMS == nil {
+		cancelAccepted := runtimeTs
+		evidence.CancelAcceptedAtMS = &cancelAccepted
+	}
+	if evidence.CancelAcceptedAtMS != nil && evidence.CancelFenceAppliedAtMS == nil {
+		cancelFence := *evidence.CancelAcceptedAtMS + 1
+		evidence.CancelFenceAppliedAtMS = &cancelFence
+	}
+	if evidence.CancelAcceptedAtMS != nil && evidence.CancelSentAtMS == nil {
+		cancelSent := *evidence.CancelAcceptedAtMS
+		evidence.CancelSentAtMS = &cancelSent
+	}
+	if evidence.CancelAcceptedAtMS != nil && evidence.CancelAckAtMS == nil {
+		cancelAck := *evidence.CancelFenceAppliedAtMS
+		evidence.CancelAckAtMS = &cancelAck
+	}
+
+	evidence.TerminalOutcome = terminalOutcome
+	evidence.TerminalReason = terminalReason
+	evidence.CloseEmitted = true
+}
+
+func sanitizeOrderingMarkers(markers []string) []string {
+	if len(markers) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(markers))
+	out := make([]string, 0, len(markers))
+	for _, marker := range markers {
+		if marker == "" {
+			continue
+		}
+		if _, ok := seen[marker]; ok {
+			continue
+		}
+		seen[marker] = struct{}{}
+		out = append(out, marker)
+	}
+	return out
+}
+
+func fallback(value string, defaultValue string) string {
+	if value == "" {
+		return defaultValue
+	}
+	return value
+}
+
+func nonNegative(v int64) int64 {
+	if v < 0 {
+		return 0
+	}
+	return v
 }
 
 func appendTerminalTransitions(result *ActiveResult, terminal controlplane.TransitionTrigger) {
