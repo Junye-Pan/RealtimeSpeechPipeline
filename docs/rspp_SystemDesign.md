@@ -487,6 +487,9 @@ graph TD
   CIV --> SCHEMA
   CIV --> CTP
   CIV --> FIM
+  FIM --> SCHEMA
+  FIM --> CTP
+  FIM --> TLT
   FIM --> SD
   FIM --> MD
   MVP --> SD

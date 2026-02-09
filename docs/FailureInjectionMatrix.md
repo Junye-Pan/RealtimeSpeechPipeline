@@ -10,9 +10,9 @@ Map documented failure classes (`F1`-`F8`) to deterministic runtime behavior:
 Source alignment:
 - `docs/ModularDesign.md` sections 8.1 and 10.2
 - `docs/rspp_SystemDesign.md` sections 4.1.2, 4.2.2, and 4.3
-- `docs/DeterministicLifecycleTruthTable.md` sections 4 and 5
+- `docs/DeterministicLifecycleTruthTable.md` sections 3-5 and section 7 assertions
 - `docs/ContractArtifacts.schema.json` (`control_signal`, `decision_outcome`)
-- `docs/ConformanceTestPlan.md` section 3 and `docs/CIValidationGates.md` sections 4 and 5
+- `docs/ConformanceTestPlan.md` section 3
 
 ## 2. Matrix
 
@@ -24,7 +24,7 @@ Source alignment:
 | `F4` Edge pressure overflow | force queue depth/time beyond watermark in RK-12/13/14 | `watermark`, flow control (`flow_xoff`/`flow_xon`), `drop_notice`; optional `shed` when admission layer applies deterministic shedding | non-terminal unless plan forces terminal failure; terminal path, when taken, is `abort` then `close` | edge id, watermark crossings, queue depth/time evidence, buffer policy ref, dropped/merged lineage, resulting action |
 | `F5` Sync-coupled partial loss | drop one stream in a sync domain under pressure | `discontinuity` (with `sync_domain`, `discontinuity_id`, `reason`) or deterministic atomic drop markers (`drop_notice`) | continue with deterministic sync recovery; if unrecoverable, emit `abort` then `close` | `sync_id`/`sync_domain`, discontinuity marker, affected sequence range, reason, `drop_notice` evidence (`edge_id`, `target_lane`, `seq_range`) when drop markers are used, recovery decision |
 | `F6` Transport disconnect/stall | force transport disconnect/stall and silence/stall edge behavior | connection lifecycle signals (`disconnected`/`stall`, optionally `silence`, `reconnecting`, `ended`) | for accepted turns requiring teardown: `abort(reason=transport_disconnect_or_stall)` then `close` | transport state markers, cancellation fencing evidence, deterministic cleanup evidence, terminal markers |
-| `F7` Placement authority conflict | inject stale epoch event/output or revoke active authority | `stale_epoch_reject` for pre-turn/scheduling-point stale authority; `deauthorized_drain` for pre-turn deauthorization before open or in-turn authority revoke | `stale_epoch_reject` does not force terminalization by itself; pre-turn authority outcomes MUST NOT emit `abort`/`close`; in-turn authority loss emits `abort(reason=authority_loss)` then `close` | lease epoch markers, authority outcome signal, ingress/egress mismatch evidence, migration/handoff markers, terminal markers |
+| `F7` Placement authority conflict | inject stale epoch event/output or revoke active authority | `stale_epoch_reject` for pre-turn/scheduling-point stale authority; `deauthorized_drain` for pre-turn deauthorization before open or in-turn authority revoke | `stale_epoch_reject` does not force terminalization by itself; pre-turn authority outcomes MUST NOT emit `abort`/`close`; in-turn authority loss emits `abort(reason=authority_loss)` then `close`; if cancel and revoke are simultaneous at the same arbitration point, authority-loss path wins | lease epoch markers, authority outcome signal, ingress/egress mismatch evidence, migration/handoff markers, terminal markers |
 | `F8` Region failover | emulate authority handoff and runtime migration | `lease_rotated`, `migration_start`/`migration_finish` (and `session_handoff` when used), stale old-writer output rejection (`stale_epoch_reject`) | authoritative continuation on new placement; old placement must not emit authoritative output; active-turn revoke path on old placement is `deauthorized_drain`, `abort(reason=authority_loss)`, `close` | old/new epoch markers, routing snapshot refs, durable reattach marker, migration markers, divergence-safe continuity evidence |
 
 ## 3. Injection sequencing rules
@@ -53,6 +53,7 @@ Source alignment:
    - `deauthorized_drain` with `pre_turn` uses `scope=session|turn`
 10. Any `decision_outcome` with `scope=turn` includes `turn_id` for unambiguous turn correlation.
 11. `shed` outcomes are scheduling-point decisions (`phase=scheduling_point`) emitted by RK-25.
+12. For same-point cancel+authority-revoke tie cases, terminal reason is deterministically `authority_loss` (never `cancelled`).
 
 ## 5. Minimum execution set for CI
 

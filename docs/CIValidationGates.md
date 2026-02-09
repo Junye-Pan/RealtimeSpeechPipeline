@@ -80,6 +80,7 @@ A full run passes only when all are true:
 7. Terminal lifecycle correctness is 100% (`commit` or `abort`, then `close`).
 8. Authority safety invariant holds (zero accepted stale-epoch outputs).
 9. OR-02 baseline evidence completeness is 100% for accepted turns.
+10. Same-point cancel+authority-revoke tie handling is deterministic (`authority_loss` terminal reason).
 
 ## 5. Replay divergence fail conditions (normative)
 
