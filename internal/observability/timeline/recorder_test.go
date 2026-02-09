@@ -169,6 +169,97 @@ func TestValidateCompletenessInvocationOutcomeEvidence(t *testing.T) {
 	}
 }
 
+func TestAppendProviderInvocationAttempts(t *testing.T) {
+	t.Parallel()
+
+	recorder := NewRecorder(StageAConfig{BaselineCapacity: 4, DetailCapacity: 4, AttemptCapacity: 2})
+	attempts := []ProviderAttemptEvidence{
+		{
+			SessionID:            "sess-1",
+			TurnID:               "turn-1",
+			PipelineVersion:      "pipeline-v1",
+			EventID:              "evt-1",
+			ProviderInvocationID: "pvi-1",
+			Modality:             "stt",
+			ProviderID:           "stt-a",
+			Attempt:              1,
+			OutcomeClass:         "overload",
+			Retryable:            true,
+			RetryDecision:        "provider_switch",
+			TransportSequence:    1,
+			RuntimeSequence:      1,
+			AuthorityEpoch:       2,
+			RuntimeTimestampMS:   100,
+			WallClockTimestampMS: 100,
+		},
+		{
+			SessionID:            "sess-1",
+			TurnID:               "turn-1",
+			PipelineVersion:      "pipeline-v1",
+			EventID:              "evt-1",
+			ProviderInvocationID: "pvi-1",
+			Modality:             "stt",
+			ProviderID:           "stt-b",
+			Attempt:              1,
+			OutcomeClass:         "success",
+			Retryable:            false,
+			RetryDecision:        "none",
+			TransportSequence:    2,
+			RuntimeSequence:      2,
+			AuthorityEpoch:       2,
+			RuntimeTimestampMS:   101,
+			WallClockTimestampMS: 101,
+		},
+	}
+
+	if err := recorder.AppendProviderInvocationAttempts(attempts); err != nil {
+		t.Fatalf("unexpected append attempts error: %v", err)
+	}
+
+	stored := recorder.ProviderAttemptEntries()
+	if len(stored) != 2 {
+		t.Fatalf("expected 2 provider attempts, got %d", len(stored))
+	}
+	if stored[0].ProviderID != "stt-a" || stored[1].ProviderID != "stt-b" {
+		t.Fatalf("unexpected stored provider attempt ordering: %+v", stored)
+	}
+
+	if err := recorder.AppendProviderInvocationAttempts([]ProviderAttemptEvidence{attempts[0]}); !errors.Is(err, ErrProviderAttemptCapacityExhausted) {
+		t.Fatalf("expected provider attempt capacity exhaustion, got %v", err)
+	}
+}
+
+func TestProviderAttemptEvidenceValidate(t *testing.T) {
+	t.Parallel()
+
+	valid := ProviderAttemptEvidence{
+		SessionID:            "sess-1",
+		TurnID:               "turn-1",
+		PipelineVersion:      "pipeline-v1",
+		EventID:              "evt-1",
+		ProviderInvocationID: "pvi-1",
+		Modality:             "llm",
+		ProviderID:           "llm-a",
+		Attempt:              1,
+		OutcomeClass:         "success",
+		RetryDecision:        "none",
+		TransportSequence:    1,
+		RuntimeSequence:      1,
+		AuthorityEpoch:       1,
+		RuntimeTimestampMS:   100,
+		WallClockTimestampMS: 100,
+	}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("expected valid provider attempt evidence, got %v", err)
+	}
+
+	invalid := valid
+	invalid.OutcomeClass = "unknown"
+	if err := invalid.Validate(); err == nil {
+		t.Fatalf("expected invalid provider attempt outcome class to fail")
+	}
+}
+
 func minimalBaseline(turnID string) BaselineEvidence {
 	decision := controlplane.DecisionOutcome{
 		OutcomeKind:        controlplane.OutcomeAdmit,

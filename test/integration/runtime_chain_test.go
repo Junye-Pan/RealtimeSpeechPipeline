@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/tiger/realtime-speech-pipeline/api/controlplane"
+	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
 	"github.com/tiger/realtime-speech-pipeline/internal/observability/timeline"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/executor"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/localadmission"
@@ -225,5 +226,102 @@ func TestProviderInvocationEvidenceThreadedIntoTerminalBaseline(t *testing.T) {
 	}
 	if entries[0].InvocationOutcomes[0].OutcomeClass != "success" {
 		t.Fatalf("expected success invocation outcome class, got %+v", entries[0].InvocationOutcomes[0])
+	}
+}
+
+func TestExecutePlanPersistsAttemptEvidenceAndTerminalBaseline(t *testing.T) {
+	t.Parallel()
+
+	catalog, err := registry.NewCatalog([]contracts.Adapter{
+		contracts.StaticAdapter{
+			ID:   "stt-a",
+			Mode: contracts.ModalitySTT,
+			InvokeFn: func(req contracts.InvocationRequest) (contracts.Outcome, error) {
+				return contracts.Outcome{
+					Class:       contracts.OutcomeOverload,
+					Retryable:   false,
+					CircuitOpen: true,
+					Reason:      "provider_overload",
+				}, nil
+			},
+		},
+		contracts.StaticAdapter{
+			ID:   "stt-b",
+			Mode: contracts.ModalitySTT,
+			InvokeFn: func(req contracts.InvocationRequest) (contracts.Outcome, error) {
+				return contracts.Outcome{Class: contracts.OutcomeSuccess}, nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected catalog error: %v", err)
+	}
+
+	recorder := timeline.NewRecorder(timeline.StageAConfig{BaselineCapacity: 8, DetailCapacity: 16, AttemptCapacity: 16})
+	arbiter := turnarbiter.NewWithRecorder(&recorder)
+	scheduler := executor.NewSchedulerWithProviderInvokerAndAttemptAppender(localadmission.Evaluator{}, invocation.NewController(catalog), &recorder)
+
+	trace, err := scheduler.ExecutePlan(
+		executor.SchedulingInput{
+			SessionID:            "sess-integration-provider-plan-1",
+			TurnID:               "turn-integration-provider-plan-1",
+			EventID:              "evt-dispatch-provider-plan-1",
+			PipelineVersion:      "pipeline-v1",
+			TransportSequence:    10,
+			RuntimeSequence:      11,
+			AuthorityEpoch:       3,
+			RuntimeTimestampMS:   100,
+			WallClockTimestampMS: 100,
+		},
+		executor.ExecutionPlan{
+			Nodes: []executor.NodeSpec{
+				{
+					NodeID:   "provider-stt",
+					NodeType: "provider",
+					Lane:     eventabi.LaneData,
+					Provider: &executor.ProviderInvocationInput{
+						Modality:               contracts.ModalitySTT,
+						PreferredProvider:      "stt-a",
+						AllowedAdaptiveActions: []string{"provider_switch"},
+					},
+				},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("unexpected execute plan error: %v", err)
+	}
+	if !trace.Completed {
+		t.Fatalf("expected completed execution trace, got %+v", trace)
+	}
+	if len(trace.Nodes) != 1 || trace.Nodes[0].Decision.Provider == nil {
+		t.Fatalf("expected one provider node decision, got %+v", trace.Nodes)
+	}
+
+	attempts := recorder.ProviderAttemptEntries()
+	if len(attempts) != 2 {
+		t.Fatalf("expected 2 provider attempt entries, got %d", len(attempts))
+	}
+	if attempts[0].ProviderID != "stt-a" || attempts[1].ProviderID != "stt-b" {
+		t.Fatalf("unexpected provider attempt ordering: %+v", attempts)
+	}
+
+	active, err := arbiter.HandleActive(turnarbiter.ActiveInput{
+		SessionID:                  "sess-integration-provider-plan-1",
+		TurnID:                     "turn-integration-provider-plan-1",
+		EventID:                    "evt-active-provider-plan-1",
+		PipelineVersion:            "pipeline-v1",
+		RuntimeTimestampMS:         120,
+		WallClockTimestampMS:       120,
+		AuthorityEpoch:             3,
+		RuntimeSequence:            2,
+		TerminalSuccessReady:       true,
+		ProviderInvocationOutcomes: []timeline.InvocationOutcomeEvidence{trace.Nodes[0].Decision.Provider.ToInvocationOutcomeEvidence()},
+	})
+	if err != nil {
+		t.Fatalf("unexpected active handling error: %v", err)
+	}
+	if active.State != controlplane.TurnClosed {
+		t.Fatalf("expected terminal close state, got %s", active.State)
 	}
 }

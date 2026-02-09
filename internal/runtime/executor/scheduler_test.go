@@ -1,9 +1,12 @@
 package executor
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/tiger/realtime-speech-pipeline/api/controlplane"
+	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
+	"github.com/tiger/realtime-speech-pipeline/internal/observability/timeline"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/localadmission"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/contracts"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/invocation"
@@ -266,5 +269,216 @@ func TestSchedulerProviderInvocationSwitchAfterFailure(t *testing.T) {
 	evidence := decision.Provider.ToInvocationOutcomeEvidence()
 	if evidence.OutcomeClass != "success" || evidence.Modality != "stt" {
 		t.Fatalf("expected invocation evidence success/stt, got %+v", evidence)
+	}
+}
+
+func TestExecutePlanDeterministicOrderAndRoutes(t *testing.T) {
+	t.Parallel()
+
+	scheduler := NewScheduler(localadmission.Evaluator{})
+	trace, err := scheduler.ExecutePlan(
+		SchedulingInput{
+			SessionID:            "sess-plan-1",
+			TurnID:               "turn-plan-1",
+			EventID:              "evt-plan-1",
+			PipelineVersion:      "pipeline-v1",
+			TransportSequence:    10,
+			RuntimeSequence:      11,
+			AuthorityEpoch:       3,
+			RuntimeTimestampMS:   100,
+			WallClockTimestampMS: 100,
+		},
+		ExecutionPlan{
+			Nodes: []NodeSpec{
+				{NodeID: "admission", NodeType: "admission", Lane: eventabi.LaneControl},
+				{NodeID: "provider", NodeType: "provider", Lane: eventabi.LaneData},
+				{NodeID: "telemetry", NodeType: "metrics", Lane: eventabi.LaneTelemetry},
+			},
+			Edges: []EdgeSpec{
+				{From: "admission", To: "provider"},
+				{From: "admission", To: "telemetry"},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("unexpected execute plan error: %v", err)
+	}
+	if !trace.Completed {
+		t.Fatalf("expected completed execution trace")
+	}
+	if len(trace.Nodes) != 3 {
+		t.Fatalf("expected 3 node results, got %d", len(trace.Nodes))
+	}
+	if trace.Nodes[0].NodeID != "admission" || trace.Nodes[1].NodeID != "provider" || trace.Nodes[2].NodeID != "telemetry" {
+		t.Fatalf("unexpected node execution order: %+v", trace.NodeOrder)
+	}
+	if trace.Nodes[0].DispatchTarget.QueueKey != "runtime/control/admission" {
+		t.Fatalf("unexpected dispatch route for admission node: %s", trace.Nodes[0].DispatchTarget.QueueKey)
+	}
+	if trace.Nodes[1].DispatchTarget.QueueKey != "runtime/data/provider" {
+		t.Fatalf("unexpected dispatch route for provider node: %s", trace.Nodes[1].DispatchTarget.QueueKey)
+	}
+	if trace.Nodes[2].DispatchTarget.QueueKey != "runtime/telemetry/metrics" {
+		t.Fatalf("unexpected dispatch route for telemetry node: %s", trace.Nodes[2].DispatchTarget.QueueKey)
+	}
+	if len(trace.ControlSignals) != 0 {
+		t.Fatalf("expected no control signals on allow-only path, got %d", len(trace.ControlSignals))
+	}
+}
+
+func TestExecutePlanStopsOnDeniedNode(t *testing.T) {
+	t.Parallel()
+
+	scheduler := NewScheduler(localadmission.Evaluator{})
+	trace, err := scheduler.ExecutePlan(
+		SchedulingInput{
+			SessionID:            "sess-plan-2",
+			TurnID:               "turn-plan-2",
+			EventID:              "evt-plan-2",
+			PipelineVersion:      "pipeline-v1",
+			TransportSequence:    20,
+			RuntimeSequence:      21,
+			AuthorityEpoch:       4,
+			RuntimeTimestampMS:   200,
+			WallClockTimestampMS: 200,
+		},
+		ExecutionPlan{
+			Nodes: []NodeSpec{
+				{NodeID: "node-a", NodeType: "admission", Lane: eventabi.LaneControl},
+				{NodeID: "node-b", NodeType: "admission", Lane: eventabi.LaneControl, Shed: true},
+				{NodeID: "node-c", NodeType: "provider", Lane: eventabi.LaneData},
+			},
+			Edges: []EdgeSpec{
+				{From: "node-a", To: "node-b"},
+				{From: "node-b", To: "node-c"},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("unexpected execute plan error: %v", err)
+	}
+	if trace.Completed {
+		t.Fatalf("expected trace to stop on denied node")
+	}
+	if len(trace.Nodes) != 2 {
+		t.Fatalf("expected execution to stop at second node, got %d nodes", len(trace.Nodes))
+	}
+	if trace.Nodes[1].NodeID != "node-b" || trace.Nodes[1].Decision.Allowed {
+		t.Fatalf("expected node-b denied decision, got %+v", trace.Nodes[1].Decision)
+	}
+	if len(trace.ControlSignals) != 1 || trace.ControlSignals[0].Signal != "shed" {
+		t.Fatalf("expected one normalized shed signal, got %+v", trace.ControlSignals)
+	}
+}
+
+func TestExecutePlanProviderAttemptsPersisted(t *testing.T) {
+	t.Parallel()
+
+	catalog, err := registry.NewCatalog([]contracts.Adapter{
+		contracts.StaticAdapter{
+			ID:   "stt-a",
+			Mode: contracts.ModalitySTT,
+			InvokeFn: func(req contracts.InvocationRequest) (contracts.Outcome, error) {
+				return contracts.Outcome{
+					Class:       contracts.OutcomeOverload,
+					Retryable:   false,
+					CircuitOpen: true,
+					Reason:      "provider_overload",
+				}, nil
+			},
+		},
+		contracts.StaticAdapter{
+			ID:   "stt-b",
+			Mode: contracts.ModalitySTT,
+			InvokeFn: func(req contracts.InvocationRequest) (contracts.Outcome, error) {
+				return contracts.Outcome{Class: contracts.OutcomeSuccess}, nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected catalog error: %v", err)
+	}
+
+	recorder := timeline.NewRecorder(timeline.StageAConfig{BaselineCapacity: 4, DetailCapacity: 4, AttemptCapacity: 8})
+	scheduler := NewSchedulerWithProviderInvokerAndAttemptAppender(
+		localadmission.Evaluator{},
+		invocation.NewController(catalog),
+		&recorder,
+	)
+
+	trace, err := scheduler.ExecutePlan(
+		SchedulingInput{
+			SessionID:            "sess-plan-provider-1",
+			TurnID:               "turn-plan-provider-1",
+			EventID:              "evt-plan-provider-1",
+			PipelineVersion:      "pipeline-v1",
+			TransportSequence:    50,
+			RuntimeSequence:      51,
+			AuthorityEpoch:       7,
+			RuntimeTimestampMS:   500,
+			WallClockTimestampMS: 500,
+		},
+		ExecutionPlan{
+			Nodes: []NodeSpec{
+				{
+					NodeID:   "provider-node",
+					NodeType: "provider",
+					Lane:     eventabi.LaneData,
+					Provider: &ProviderInvocationInput{
+						Modality:               contracts.ModalitySTT,
+						PreferredProvider:      "stt-a",
+						AllowedAdaptiveActions: []string{"provider_switch"},
+					},
+				},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("unexpected execute plan error: %v", err)
+	}
+	if !trace.Completed {
+		t.Fatalf("expected completed execution trace")
+	}
+	if len(trace.Nodes) != 1 || trace.Nodes[0].Decision.Provider == nil {
+		t.Fatalf("expected provider node decision details, got %+v", trace.Nodes)
+	}
+	attempts := recorder.ProviderAttemptEntries()
+	if len(attempts) != 2 {
+		t.Fatalf("expected 2 persisted provider attempts, got %d", len(attempts))
+	}
+	if attempts[0].ProviderID != "stt-a" || attempts[1].ProviderID != "stt-b" {
+		t.Fatalf("unexpected persisted attempt providers: %+v", attempts)
+	}
+}
+
+func TestExecutePlanCycleValidation(t *testing.T) {
+	t.Parallel()
+
+	scheduler := NewScheduler(localadmission.Evaluator{})
+	_, err := scheduler.ExecutePlan(
+		SchedulingInput{
+			SessionID:            "sess-plan-cycle-1",
+			TurnID:               "turn-plan-cycle-1",
+			EventID:              "evt-plan-cycle-1",
+			PipelineVersion:      "pipeline-v1",
+			RuntimeTimestampMS:   1,
+			WallClockTimestampMS: 1,
+		},
+		ExecutionPlan{
+			Nodes: []NodeSpec{
+				{NodeID: "a", NodeType: "provider", Lane: eventabi.LaneData},
+				{NodeID: "b", NodeType: "provider", Lane: eventabi.LaneData},
+			},
+			Edges: []EdgeSpec{
+				{From: "a", To: "b"},
+				{From: "b", To: "a"},
+			},
+		},
+	)
+	if err == nil {
+		t.Fatalf("expected cycle validation error")
+	}
+	if !strings.Contains(err.Error(), "cycle") {
+		t.Fatalf("expected cycle error, got %v", err)
 	}
 }
