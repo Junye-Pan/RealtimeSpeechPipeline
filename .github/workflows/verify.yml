@@ -33,18 +33,16 @@ jobs:
           path: |
             .codex/replay/smoke-report.json
             .codex/replay/smoke-report.md
-            .codex/replay/regression-report.json
-            .codex/replay/regression-report.md
             .codex/replay/runtime-baseline.json
             .codex/ops/slo-gates-report.json
             .codex/ops/slo-gates-report.md
-          if-no-files-found: warn
+          if-no-files-found: error
 
   full:
     name: verify-full
     runs-on: ubuntu-latest
     needs: quick
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -63,11 +61,11 @@ jobs:
         with:
           name: verify-full-artifacts
           path: |
-            .codex/replay/smoke-report.json
-            .codex/replay/smoke-report.md
             .codex/replay/regression-report.json
             .codex/replay/regression-report.md
+            .codex/replay/fixtures/*.json
+            .codex/replay/fixtures/*.md
             .codex/replay/runtime-baseline.json
             .codex/ops/slo-gates-report.json
             .codex/ops/slo-gates-report.md
-          if-no-files-found: warn
+          if-no-files-found: error

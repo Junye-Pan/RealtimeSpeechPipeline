@@ -26,6 +26,7 @@ const (
 	replayRegressionDefaultGate              = "full"
 	defaultReplayMetadataPath                = "test/replay/fixtures/metadata.json"
 	defaultReplayRegressionReportPath        = ".codex/replay/regression-report.json"
+	replayFixtureReportsDirName              = "fixtures"
 	defaultRuntimeBaselineArtifactPath       = ".codex/replay/runtime-baseline.json"
 )
 
@@ -266,6 +267,13 @@ type replayFixtureExecutionReport struct {
 	FailingClasses     []string       `json:"failing_classes,omitempty"`
 }
 
+type replayFixtureArtifact struct {
+	GeneratedAtUTC string `json:"generated_at_utc"`
+	MetadataPath   string `json:"metadata_path"`
+	replayFixtureExecutionReport
+	Status string `json:"status"`
+}
+
 type replayRegressionReport struct {
 	GeneratedAtUTC     string                         `json:"generated_at_utc"`
 	Gate               string                         `json:"gate"`
@@ -392,10 +400,65 @@ func writeReplayRegressionReport(outputPath string, metadataPath string, gate st
 		return err
 	}
 
+	fixtureOutputDir := filepath.Join(filepath.Dir(outputPath), replayFixtureReportsDirName)
+	if err := writeReplayFixtureArtifacts(fixtureOutputDir, summary.GeneratedAtUTC, metadataPath, fixtureReports); err != nil {
+		return err
+	}
+
 	if summary.FailingCount > 0 {
 		return fmt.Errorf("replay regression gate failed: %v", summary.FailingDivergences)
 	}
 	return nil
+}
+
+func writeReplayFixtureArtifacts(outputDir string, generatedAtUTC string, metadataPath string, reports []replayFixtureExecutionReport) error {
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		return fmt.Errorf("create replay fixture artifact directory %s: %w", outputDir, err)
+	}
+
+	for _, report := range reports {
+		artifact := replayFixtureArtifact{
+			GeneratedAtUTC:               generatedAtUTC,
+			MetadataPath:                 metadataPath,
+			replayFixtureExecutionReport: report,
+			Status:                       replayFixtureStatus(report),
+		}
+		filename := sanitizeFixtureFilename(report.FixtureID)
+		jsonPath := filepath.Join(outputDir, filename+".json")
+		markdownPath := filepath.Join(outputDir, filename+".md")
+
+		data, err := json.MarshalIndent(artifact, "", "  ")
+		if err != nil {
+			return fmt.Errorf("encode replay fixture artifact %s: %w", report.FixtureID, err)
+		}
+		if err := os.WriteFile(jsonPath, data, 0o644); err != nil {
+			return fmt.Errorf("write replay fixture artifact %s: %w", jsonPath, err)
+		}
+		if err := os.WriteFile(markdownPath, []byte(renderReplayFixtureSummary(artifact)), 0o644); err != nil {
+			return fmt.Errorf("write replay fixture summary %s: %w", markdownPath, err)
+		}
+	}
+	return nil
+}
+
+func replayFixtureStatus(report replayFixtureExecutionReport) string {
+	if report.FailingCount == 0 {
+		return "PASS"
+	}
+	return "FAIL"
+}
+
+func sanitizeFixtureFilename(fixtureID string) string {
+	trimmed := strings.TrimSpace(fixtureID)
+	if trimmed == "" {
+		return "fixture"
+	}
+	return strings.NewReplacer(
+		"/", "_",
+		"\\", "_",
+		":", "_",
+		" ", "_",
+	).Replace(trimmed)
 }
 
 func selectReplayFixtureIDs(metadata replayFixtureMetadata, gate string) ([]string, error) {
@@ -594,6 +657,43 @@ func renderReplayRegressionSummary(report replayRegressionReport) string {
 		lines = append(lines, "", "Status: PASS")
 	} else {
 		lines = append(lines, "", "Status: FAIL", "- Forbidden divergences: "+strings.Join(report.FailingDivergences, ", "))
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
+func renderReplayFixtureSummary(report replayFixtureArtifact) string {
+	lines := []string{
+		"# Replay Fixture Report",
+		"",
+		"Generated at (UTC): " + report.GeneratedAtUTC,
+		"Fixture: " + report.FixtureID,
+		"Gate: " + report.Gate,
+		"Metadata path: " + report.MetadataPath,
+		fmt.Sprintf("Timing tolerance (ms): %d", report.TimingToleranceMS),
+		fmt.Sprintf("Total divergences: %d", report.TotalDivergences),
+		fmt.Sprintf("Failing divergences: %d", report.FailingCount),
+		fmt.Sprintf("Unexplained divergences: %d", report.UnexplainedCount),
+		fmt.Sprintf("Missing expected divergences: %d", report.MissingExpected),
+		fmt.Sprintf("Expected divergences configured: %d", report.ExpectedConfigured),
+		"",
+		"## By class",
+	}
+	for _, cls := range []obs.DivergenceClass{
+		obs.PlanDivergence,
+		obs.OutcomeDivergence,
+		obs.OrderingDivergence,
+		obs.AuthorityDivergence,
+		obs.TimingDivergence,
+	} {
+		lines = append(lines, fmt.Sprintf("- %s: %d", cls, report.ByClass[string(cls)]))
+	}
+
+	if report.Status == "PASS" {
+		lines = append(lines, "", "Status: PASS")
+	} else if len(report.FailingClasses) == 0 {
+		lines = append(lines, "", "Status: FAIL")
+	} else {
+		lines = append(lines, "", "Status: FAIL", "- Forbidden divergences: "+strings.Join(report.FailingClasses, ", "))
 	}
 	return strings.Join(lines, "\n") + "\n"
 }
