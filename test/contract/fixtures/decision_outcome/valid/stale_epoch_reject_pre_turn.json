@@ -1,0 +1,12 @@
+{
+  "outcome_kind": "stale_epoch_reject",
+  "phase": "pre_turn",
+  "scope": "session",
+  "session_id": "sess-1",
+  "event_id": "evt-3",
+  "runtime_timestamp_ms": 120,
+  "wall_clock_timestamp_ms": 120,
+  "emitted_by": "RK-24",
+  "authority_epoch": 9,
+  "reason": "authority_epoch_mismatch"
+}

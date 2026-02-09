@@ -1,0 +1,11 @@
+{
+  "outcome_kind": "shed",
+  "phase": "pre_turn",
+  "scope": "session",
+  "session_id": "sess-1",
+  "event_id": "evt-4",
+  "runtime_timestamp_ms": 130,
+  "wall_clock_timestamp_ms": 130,
+  "emitted_by": "RK-25",
+  "reason": "overload"
+}

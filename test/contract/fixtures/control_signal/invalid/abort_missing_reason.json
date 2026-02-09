@@ -1,0 +1,17 @@
+{
+  "schema_version": "v1.0",
+  "event_scope": "turn",
+  "session_id": "sess-4",
+  "turn_id": "turn-4",
+  "pipeline_version": "pipeline-v1",
+  "event_id": "evt-abort-1",
+  "lane": "ControlLane",
+  "transport_sequence": 6,
+  "runtime_sequence": 6,
+  "authority_epoch": 8,
+  "runtime_timestamp_ms": 211,
+  "wall_clock_timestamp_ms": 211,
+  "payload_class": "metadata",
+  "signal": "abort",
+  "emitted_by": "RK-03"
+}

@@ -1,0 +1,15 @@
+{
+  "schema_version": "v1.0",
+  "event_scope": "turn",
+  "session_id": "sess-1",
+  "turn_id": "turn-1",
+  "pipeline_version": "pipeline-v1",
+  "event_id": "evt-1",
+  "lane": "DataLane",
+  "transport_sequence": 1,
+  "runtime_sequence": 1,
+  "authority_epoch": 7,
+  "runtime_timestamp_ms": 100,
+  "wall_clock_timestamp_ms": 100,
+  "payload_class": "text_raw"
+}

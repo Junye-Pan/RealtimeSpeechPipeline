@@ -1,0 +1,17 @@
+{
+  "schema_version": "v1.0",
+  "event_scope": "turn",
+  "session_id": "sess-4",
+  "turn_id": "turn-4",
+  "pipeline_version": "pipeline-v1",
+  "event_id": "evt-turn-open-1",
+  "lane": "ControlLane",
+  "transport_sequence": 5,
+  "runtime_sequence": 5,
+  "authority_epoch": 8,
+  "runtime_timestamp_ms": 210,
+  "wall_clock_timestamp_ms": 210,
+  "payload_class": "metadata",
+  "signal": "turn_open",
+  "emitted_by": "RK-03"
+}

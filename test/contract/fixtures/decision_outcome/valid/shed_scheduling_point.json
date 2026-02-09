@@ -1,0 +1,11 @@
+{
+  "outcome_kind": "shed",
+  "phase": "scheduling_point",
+  "scope": "edge_enqueue",
+  "session_id": "sess-3",
+  "event_id": "evt-shed-1",
+  "runtime_timestamp_ms": 150,
+  "wall_clock_timestamp_ms": 150,
+  "emitted_by": "RK-25",
+  "reason": "scheduling_point_shed"
+}

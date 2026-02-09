@@ -1,0 +1,18 @@
+{
+  "schema_version": "v1.0",
+  "event_scope": "turn",
+  "session_id": "sess-1",
+  "turn_id": "turn-1",
+  "pipeline_version": "pipeline-v1",
+  "event_id": "evt-2",
+  "lane": "ControlLane",
+  "transport_sequence": 2,
+  "runtime_sequence": 2,
+  "authority_epoch": 7,
+  "runtime_timestamp_ms": 110,
+  "wall_clock_timestamp_ms": 110,
+  "payload_class": "metadata",
+  "signal": "deauthorized_drain",
+  "emitted_by": "RK-99",
+  "reason": "authority_revoked_in_turn"
+}

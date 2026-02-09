@@ -17,7 +17,7 @@ detect_cmd() {
     echo "$CMD"; return
   fi
 
-  if [[ -f "Makefile" ]] && make -q "verify-$MODE" >/dev/null 2>&1; then
+  if [[ -f "Makefile" ]] && make -n "verify-$MODE" >/dev/null 2>&1; then
     echo "make verify-$MODE"; return
   fi
 

@@ -1,0 +1,6 @@
+{
+  "from_state": "Opening",
+  "trigger": "turn_open",
+  "to_state": "Active",
+  "deterministic": true
+}

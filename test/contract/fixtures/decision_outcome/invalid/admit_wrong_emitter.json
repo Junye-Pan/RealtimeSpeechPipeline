@@ -1,0 +1,11 @@
+{
+  "outcome_kind": "admit",
+  "phase": "pre_turn",
+  "scope": "session",
+  "session_id": "sess-2",
+  "event_id": "evt-admit-2",
+  "runtime_timestamp_ms": 141,
+  "wall_clock_timestamp_ms": 141,
+  "emitted_by": "RK-24",
+  "reason": "admitted"
+}

@@ -1,0 +1,19 @@
+{
+  "schema_version": "v1.0",
+  "event_scope": "turn",
+  "session_id": "sess-5",
+  "turn_id": "turn-5",
+  "pipeline_version": "pipeline-v1",
+  "event_id": "evt-shed-ctrl-1",
+  "lane": "ControlLane",
+  "transport_sequence": 7,
+  "runtime_sequence": 7,
+  "authority_epoch": 9,
+  "runtime_timestamp_ms": 220,
+  "wall_clock_timestamp_ms": 220,
+  "payload_class": "metadata",
+  "signal": "shed",
+  "emitted_by": "RK-25",
+  "reason": "scheduling_point_shed",
+  "scope": "turn"
+}
