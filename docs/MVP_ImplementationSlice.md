@@ -298,7 +298,7 @@ Real-provider validation coverage:
 | --- | --- | --- | --- |
 | OR-01 | scaffold-only | `internal/observability/telemetry/.gitkeep` | Telemetry pipeline module is not implemented in this slice. |
 | OR-02 | implemented | `internal/observability/timeline/recorder.go`, `internal/observability/timeline/redaction.go`, `internal/observability/timeline/artifact.go`, tests | Baseline timeline recording includes payload classification tags plus persisted redaction decisions per recorded class. |
-| OR-03 | implemented | `internal/observability/replay/comparator.go`, `internal/observability/replay/access.go`, `api/observability/types.go`, `test/replay/*`, `cmd/rspp-cli/main.go` | Replay divergence comparison/reporting is implemented, with deny-by-default replay access schema and audit-event typing for secure read paths. |
+| OR-03 | implemented | `internal/observability/replay/comparator.go`, `internal/observability/replay/access.go`, `internal/observability/replay/retention.go`, `internal/observability/replay/service.go`, `api/observability/types.go`, `test/replay/*`, `cmd/rspp-cli/main.go` | Replay divergence comparison/reporting is implemented, with deny-by-default replay access schema, immutable audit sink backend path scaffold, and baseline retention/deletion contract coverage. |
 
 ### A.4 Tooling and DevEx
 
@@ -313,4 +313,4 @@ Real-provider validation coverage:
 ## Appendix B. Known follow-ups outside this pass
 
 1. `docs/CIValidationGates.md` and `docs/ConformanceTestPlan.md` were synchronized in the 2026-02-09 doc pass; keep them aligned with command/test changes in future slices.
-2. Retention/deletion enforcement and immutable audit-log backend wiring from `docs/SecurityDataHandlingBaseline.md` section 7 remain follow-up implementation work.
+2. Initial retention/deletion contract and immutable replay-audit backend path scaffold from `docs/SecurityDataHandlingBaseline.md` section 7 are implemented (`internal/observability/replay/retention.go`, `internal/observability/replay/service.go` and tests); durable backend integration and control-plane policy distribution remain follow-up work.
