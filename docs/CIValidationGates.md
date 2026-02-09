@@ -1,114 +1,132 @@
-# CI Validation Gates (Immediate Baseline)
+# CI Validation Gates (Implemented Baseline)
 
-## 1. Purpose
+## 1. Purpose and status
 
-Define CI gates that must run through `scripts/verify.sh` with explicit command targets for:
-- quick validation
-- full validation
-- replay divergence fail behavior
+Define the currently implemented quick/full validation gates for this repository.
 
-This file is the source of truth for pre-implementation CI behavior.
+Status snapshot:
+- Baseline reflects repository behavior as of `2026-02-08`.
+- Verification runs through `scripts/verify.sh` and command chains in `Makefile`.
+- Replay divergence and SLO gating behavior are enforced by `cmd/rspp-cli`.
+- This documentation pass closes MVP item `10.2.3` from `docs/MVP_ImplementationSlice.md`.
 
-## 2. `scripts/verify.sh` command targets
+## 2. Source of truth files
 
-`scripts/verify.sh` supports env overrides. Set these in CI now:
+1. `Makefile`
+2. `scripts/verify.sh`
+3. `cmd/rspp-cli/main.go`
+4. `internal/tooling/regression/divergence.go`
+5. `internal/tooling/ops/slo.go`
+6. `test/replay/fixtures/metadata.json`
+
+## 3. Verify entrypoint behavior (`scripts/verify.sh`)
+
+`scripts/verify.sh` executes one command string selected by mode:
+
+1. `quick` mode uses `VERIFY_QUICK_CMD` when set.
+2. `full` mode uses `VERIFY_FULL_CMD` when set.
+3. If unset, the script falls back to `make verify-$MODE` when available.
+
+Repository convention:
+- CI should invoke `make verify-quick` and `make verify-full`.
+- Each Make target sets `VERIFY_*_CMD` explicitly before calling `bash scripts/verify.sh ...`.
+
+## 4. Implemented gate composition
+
+## 4.1 Quick gate (`make verify-quick`)
+
+Implemented command chain:
 
 ```bash
-export VERIFY_QUICK_CMD="make verify-quick"
-export VERIFY_FULL_CMD="make verify-full"
+go run ./cmd/rspp-cli validate-contracts &&
+go run ./cmd/rspp-cli replay-smoke-report &&
+go run ./cmd/rspp-cli generate-runtime-baseline &&
+go run ./cmd/rspp-cli slo-gates-report &&
+go test ./api/controlplane ./api/eventabi ./internal/runtime/planresolver ./internal/runtime/turnarbiter ./internal/runtime/executor ./internal/runtime/buffering ./internal/runtime/guard ./internal/runtime/transport ./internal/observability/replay ./internal/observability/timeline ./internal/tooling/regression ./internal/tooling/ops ./test/contract ./test/integration ./test/replay &&
+go test ./test/failover -run 'TestF[137]'
 ```
 
-Required Make targets (to add/maintain in repo root):
+Coverage summary:
+1. Contract validation and schema-backed fixture checks.
+2. Replay smoke artifact generation and replay divergence enforcement for fixture `rd-001-smoke`.
+3. Runtime baseline artifact generation and MVP SLO gate evaluation.
+4. Conformance package tests in `test/contract`, `test/integration`, and `test/replay`.
+5. Failure smoke subset `F1`, `F3`, `F7`.
 
-- `verify-quick`:
-  1. schema and contract checks
-  2. quick conformance subset (`CT-001..005`, `RD-001`, `CF-001`, `AE-001`, `AE-005`, `ML-001`)
-  3. replay smoke divergence check
+## 4.2 Full gate (`make verify-full`)
 
-- `verify-full`:
-  1. full conformance suites
-  2. integration/failure-injection matrix
-  3. full replay regression with divergence report
+Implemented command chain:
 
-## 3. Expected gate composition
+```bash
+go run ./cmd/rspp-cli validate-contracts &&
+go run ./cmd/rspp-cli replay-regression-report &&
+go run ./cmd/rspp-cli generate-runtime-baseline &&
+go run ./cmd/rspp-cli slo-gates-report &&
+go test ./...
+```
 
-## 3.1 Quick gate (`verify.sh quick`)
+Coverage summary:
+1. Full repository test suite (`go test ./...`), including failure matrix coverage.
+2. Replay regression artifact generation and divergence enforcement for fixtures enabled for gate `full`.
+3. Runtime baseline + SLO gate evaluation.
 
-Minimum required checks:
-1. Validate `docs/ContractArtifacts.schema.json` fixtures.
-2. Run quick conformance subset from `docs/ConformanceTestPlan.md`: `CT-001..005`, `RD-001`, `CF-001`, `AE-001`, `AE-005`, `ML-001`.
-3. Run smoke failure set (`F1`, `F3`, `F7`) from `docs/FailureInjectionMatrix.md`.
-4. Produce replay divergence summary artifact.
+## 5. Replay divergence fail policy (normative, implemented)
 
-Quick gate objective:
-- fast merge protection for contract/lifecycle/authority regressions.
+`replay-smoke-report` and `replay-regression-report` both fail when `FailingCount > 0`.
 
-## 3.2 Full gate (`verify.sh full`)
-
-Minimum required checks:
-1. Run all conformance suites (`CT`, `RD`, `CF`, `AE`, `ML`).
-2. Run full failure matrix (`F1`-`F8`).
-3. Run replay regression on full fixture set with divergence report artifact.
-4. Run race/soak checks where available.
-
-Full gate objective:
-- release readiness and deterministic behavior confidence.
-
-## 4. Required pass criteria
-
-## 4.1 Quick pass criteria
-
-A quick run passes only when all are true:
-1. 100% pass for selected quick tests.
-2. No schema violations in contract artifacts.
-3. No unexplained replay divergence in:
-   - `PLAN_DIVERGENCE`
-   - `OUTCOME_DIVERGENCE`
-4. No `AUTHORITY_DIVERGENCE` in quick fixtures.
-5. `ORDERING_DIVERGENCE` count == 0 for quick fixtures.
-6. `TIMING_DIVERGENCE` stays within configured deterministic tolerance band.
-
-## 4.2 Full pass criteria
-
-A full run passes only when all are true:
-1. 100% pass for all conformance and failure-injection tests.
-2. No unexplained `PLAN_DIVERGENCE` or `OUTCOME_DIVERGENCE` in replay output.
-3. No `AUTHORITY_DIVERGENCE` in replay output.
-4. `ORDERING_DIVERGENCE` appears only in explicitly approved test scenarios declared in fixture metadata.
-5. `TIMING_DIVERGENCE` stays within configured deterministic tolerance policy.
-6. Race/soak checks (when configured for the gate) pass with no unapproved instability failures.
-7. Terminal lifecycle correctness is 100% (`commit` or `abort`, then `close`).
-8. Authority safety invariant holds (zero accepted stale-epoch outputs).
-9. OR-02 baseline evidence completeness is 100% for accepted turns.
-10. Same-point cancel+authority-revoke tie handling is deterministic (`authority_loss` terminal reason).
-
-## 5. Replay divergence fail conditions (normative)
-
-CI MUST fail immediately on:
-1. Any unexplained `PLAN_DIVERGENCE`.
-2. Any unexplained `OUTCOME_DIVERGENCE`.
+`internal/tooling/regression.EvaluateDivergences` marks a run failing when any of the following occurs:
+1. `PLAN_DIVERGENCE` without matching expected metadata entry.
+2. `OUTCOME_DIVERGENCE` without matching expected metadata entry.
 3. Any `AUTHORITY_DIVERGENCE`.
-4. Any `ORDERING_DIVERGENCE` unless explicitly approved test scenario expects it.
-5. `TIMING_DIVERGENCE` exceeding configured tolerance policy.
+4. `ORDERING_DIVERGENCE` without metadata expectation, or with expectation lacking `approved: true`.
+5. `TIMING_DIVERGENCE` where `diff_ms` is missing or exceeds fixture timing tolerance.
+6. Any expected divergence declared in metadata but not observed (`MissingExpected`).
+7. Any unknown divergence class.
 
-"Unexplained" means:
-- no matching expected divergence annotation in fixture metadata, or
-- mismatch between expected and observed divergence class/scope.
+Fixture metadata source:
+- `test/replay/fixtures/metadata.json`
 
-## 6. Required CI artifacts
+Gate filtering:
+1. `quick`: fixtures with `"gate": "quick"` or `"gate": "both"`.
+2. `full`: fixtures with `"gate": "full"` or `"gate": "both"`.
+3. If `gate` is omitted, it defaults to `full`.
 
-Every CI run must upload:
-1. conformance test summary (suite and case-level status)
-2. failure injection run summary
-3. replay divergence report (machine-readable + human-readable)
-4. OR-02 baseline evidence completeness report
-5. lifecycle correctness report (terminal sequence and pre-turn outcome checks)
-6. race/soak summary when race/soak checks are executed by the gate
+Current expected-divergence annotations in metadata:
+1. `rd-004-snapshot-provenance-plan`: expected `PLAN_DIVERGENCE`.
+2. `rd-ordering-approved-1`: expected `ORDERING_DIVERGENCE` with `approved: true`.
+3. `ml-003-replay-absence-classification`: expected `OUTCOME_DIVERGENCE`.
 
-## 7. Suggested implementation checklist
+## 6. Artifact outputs and paths
 
-- [ ] Define `make verify-quick` and `make verify-full`.
-- [ ] Export `VERIFY_QUICK_CMD` and `VERIFY_FULL_CMD` in CI pipeline.
-- [ ] Add divergence report parser that returns non-zero on fail conditions.
-- [ ] Block merge on quick gate failure.
-- [ ] Block release on full gate failure.
+Quick run artifacts:
+1. `.codex/replay/smoke-report.json`
+2. `.codex/replay/smoke-report.md`
+3. `.codex/replay/runtime-baseline.json`
+4. `.codex/ops/slo-gates-report.json`
+5. `.codex/ops/slo-gates-report.md`
+
+Full run artifacts:
+1. `.codex/replay/regression-report.json`
+2. `.codex/replay/regression-report.md`
+3. `.codex/replay/fixtures/*.json`
+4. `.codex/replay/fixtures/*.md`
+5. `.codex/replay/runtime-baseline.json`
+6. `.codex/ops/slo-gates-report.json`
+7. `.codex/ops/slo-gates-report.md`
+
+## 7. CI boundary status and remaining work
+
+Implemented now:
+1. Quick and full command chains return non-zero on validation/test/divergence/SLO failures.
+2. Replay and SLO artifacts are generated locally under `.codex/`.
+3. `.github/workflows/verify.yml` uploads quick/full artifacts with `if-no-files-found: error` so missing expected artifacts fail CI.
+
+Repository policy action (outside repo code):
+1. Configure branch protection required checks:
+   - `verify-quick` required for PR merge.
+   - `verify-full` required for protected `main`/release promotion path.
+
+## 8. Consistency references
+
+1. `docs/ConformanceTestPlan.md` maps conformance IDs and suite coverage to concrete tests/fixtures.
+2. `docs/MVP_ImplementationSlice.md` section `10.2` tracks remaining closure items.

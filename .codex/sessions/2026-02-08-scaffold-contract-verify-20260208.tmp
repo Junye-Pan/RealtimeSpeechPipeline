@@ -108,3 +108,87 @@ Paste this into a new Codex session:
 > Read and follow the session log at: .codex/sessions/2026-02-08-scaffold-contract-verify-20260208.tmp
 > First, restate current status, then execute the Next steps in order.
 ---
+---
+## Checkpoint: 2026-02-08 23:43:19 CST session-checkpoint-repair-v2
+
+### Objective (1-3 bullets)
+- Record a clean, complete checkpoint section after prior malformed entries.
+- Preserve the current session log file referenced by `LATEST`.
+- Provide a reliable resume handoff for the next Codex session.
+
+### What changed (verified)
+- Repo state at capture: local_time=`2026-02-08 23:43:19 CST`; repo_root=`/Users/tiger/Documents/projects/RealtimeSpeechPipeline`; cwd=`/Users/tiger/Documents/projects/RealtimeSpeechPipeline`; branch=`main`; head=`876cef3`; uncommitted_changes=`yes (.codex/sessions/2026-02-08-scaffold-contract-verify-20260208.tmp modified)`.
+- Verified `LATEST` pointer target is `.codex/sessions/2026-02-08-scaffold-contract-verify-20260208.tmp`.
+- Added this section as the latest authoritative checkpoint for the current session.
+
+### What worked (with evidence)
+- Session pointer lookup succeeded.
+  - Evidence: `cat .codex/sessions/LATEST` returned `.codex/sessions/2026-02-08-scaffold-contract-verify-20260208.tmp`.
+- Branch and commit lookup succeeded.
+  - Evidence: `git rev-parse --abbrev-ref HEAD && git rev-parse --short HEAD` returned `main` and `876cef3`.
+- The newest section includes all required headings in the required order.
+  - Evidence: this section includes Objective, What changed, What worked, What didn’t work, Decisions & rationale, Open questions / unknowns, Next steps, and Quick resume prompt.
+
+### What didn’t work (with evidence)
+- Earlier append attempts created malformed trailing sections.
+  - Evidence: previous sections ended with incomplete lines (`local_time=` / `auto`) and blanked fields from shell interpolation.
+
+### Decisions & rationale
+- Decision: Keep malformed historical entries unchanged and append a clean, authoritative section.
+- Why: Session-checkpoint workflow is append-oriented for existing logs and avoids rewriting prior history.
+- Trade-offs: Historical malformed sections remain visible in the file.
+- Follow-ups: If desired, perform a separate log-cleanup edit later.
+
+### Open questions / unknowns
+- Should malformed historical checkpoint sections be cleaned now, or retained as immutable append history?
+
+### Next steps (ordered, smallest-to-largest)
+1. Confirm this checkpoint section content is acceptable.
+2. If requested, perform a focused cleanup pass on malformed historical sections.
+
+### Quick resume prompt
+Paste this into a new Codex session:
+> Read and follow the session log at: .codex/sessions/2026-02-08-scaffold-contract-verify-20260208.tmp
+> First, restate current status, then execute the Next steps in order.
+---
+---
+## Checkpoint: 2026-02-08 23:50:44 CST session-log-cleanup
+
+### Objective (1-3 bullets)
+- Remove malformed historical checkpoint sections from this session log.
+- Preserve valid checkpoint history and maintain the same `LATEST` pointer target.
+- Verify no malformed placeholders remain after cleanup.
+
+### What changed (verified)
+- Repo state at capture: local_time=`2026-02-08 23:50:44 CST`; repo_root=`/Users/tiger/Documents/projects/RealtimeSpeechPipeline`; cwd=`/Users/tiger/Documents/projects/RealtimeSpeechPipeline`; branch=`main`; head=`876cef3`; uncommitted_changes=`yes (.codex/sessions/2026-02-08-scaffold-contract-verify-20260208.tmp modified)`.
+- Removed malformed checkpoint sections `2026-02-08 23:42:17 CST full-gate-completion` and `2026-02-08 23:43:07 CST session-checkpoint-repair` from `.codex/sessions/2026-02-08-scaffold-contract-verify-20260208.tmp`.
+- Retained valid checkpoints and kept `LATEST` unchanged.
+
+### What worked (with evidence)
+- Only valid checkpoint headers remain in the session file.
+  - Evidence: `rg -n "^## Checkpoint:" .codex/sessions/2026-02-08-scaffold-contract-verify-20260208.tmp` returns four valid entries: `21:21:21`, `22:25:48`, `23:43:19`, `23:50:44`.
+- No malformed placeholders remain.
+  - Evidence: `rg -n "local_time=$|Verified\s+points to\s+\.|keep\s+unchanged|^auto$" .codex/sessions/2026-02-08-scaffold-contract-verify-20260208.tmp` returned no matches.
+
+### What didn’t work (with evidence)
+- No new failures during this cleanup pass.
+  - Evidence: file edit applied cleanly and post-edit scans passed.
+
+### Decisions & rationale
+- Decision: Remove malformed historical sections rather than preserving them as immutable append history.
+- Why: You explicitly confirmed and requested a cleanup pass.
+- Trade-offs: Strict append-only history is relaxed for log hygiene.
+- Follow-ups: Keep future checkpoint appends quoted to prevent shell interpolation corruption.
+
+### Open questions / unknowns
+- None.
+
+### Next steps (ordered, smallest-to-largest)
+1. Confirm this cleaned session log state is acceptable.
+2. If needed, commit this log-only cleanup change with the next milestone.
+
+### Quick resume prompt
+Paste this into a new Codex session:
+> Read and follow the session log at: .codex/sessions/2026-02-08-scaffold-contract-verify-20260208.tmp
+> First, restate current status, then execute the Next steps in order.
+---

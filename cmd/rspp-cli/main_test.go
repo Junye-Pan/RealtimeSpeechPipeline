@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/tiger/realtime-speech-pipeline/api/controlplane"
@@ -167,6 +168,69 @@ func TestWriteReplayRegressionReport(t *testing.T) {
 	}
 	if report.FixtureCount != 1 || report.FailingCount != 0 {
 		t.Fatalf("unexpected replay regression report contents: %+v", report)
+	}
+
+	fixtureJSONPath := filepath.Join(tmp, replayFixtureReportsDirName, "rd-ordering-approved-1.json")
+	fixtureMarkdownPath := filepath.Join(tmp, replayFixtureReportsDirName, "rd-ordering-approved-1.md")
+
+	rawFixture, err := os.ReadFile(fixtureJSONPath)
+	if err != nil {
+		t.Fatalf("unexpected fixture report read error: %v", err)
+	}
+	var fixtureReport replayFixtureArtifact
+	if err := json.Unmarshal(rawFixture, &fixtureReport); err != nil {
+		t.Fatalf("unexpected fixture report decode error: %v", err)
+	}
+	if fixtureReport.FixtureID != "rd-ordering-approved-1" || fixtureReport.Status != "PASS" {
+		t.Fatalf("unexpected fixture report contents: %+v", fixtureReport)
+	}
+
+	rawFixtureSummary, err := os.ReadFile(fixtureMarkdownPath)
+	if err != nil {
+		t.Fatalf("unexpected fixture summary read error: %v", err)
+	}
+	if !strings.Contains(string(rawFixtureSummary), "Fixture: rd-ordering-approved-1") {
+		t.Fatalf("expected fixture summary to include fixture id, got %q", string(rawFixtureSummary))
+	}
+}
+
+func TestWriteReplayRegressionReportWritesFixtureArtifactsOnFailure(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	metadataPath := filepath.Join(tmp, "metadata.json")
+	outputPath := filepath.Join(tmp, "regression.json")
+	metadata := replayFixtureMetadata{
+		Fixtures: map[string]replayFixturePolicy{
+			"rd-ordering-approved-1": {
+				Gate:              "full",
+				TimingToleranceMS: int64Ptr(15),
+			},
+		},
+	}
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatalf("unexpected marshal error: %v", err)
+	}
+	if err := osWriteFile(metadataPath, data); err != nil {
+		t.Fatalf("unexpected write error: %v", err)
+	}
+
+	if err := writeReplayRegressionReport(outputPath, metadataPath, "full"); err == nil {
+		t.Fatalf("expected replay regression report failure when expected divergences are not declared")
+	}
+
+	fixtureJSONPath := filepath.Join(tmp, replayFixtureReportsDirName, "rd-ordering-approved-1.json")
+	rawFixture, err := os.ReadFile(fixtureJSONPath)
+	if err != nil {
+		t.Fatalf("unexpected fixture report read error on failure path: %v", err)
+	}
+	var fixtureReport replayFixtureArtifact
+	if err := json.Unmarshal(rawFixture, &fixtureReport); err != nil {
+		t.Fatalf("unexpected fixture report decode error on failure path: %v", err)
+	}
+	if fixtureReport.Status != "FAIL" || fixtureReport.FailingCount == 0 {
+		t.Fatalf("unexpected failure fixture report contents: %+v", fixtureReport)
 	}
 }
 

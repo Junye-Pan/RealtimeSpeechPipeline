@@ -33,12 +33,10 @@ jobs:
           path: |
             .codex/replay/smoke-report.json
             .codex/replay/smoke-report.md
-            .codex/replay/regression-report.json
-            .codex/replay/regression-report.md
             .codex/replay/runtime-baseline.json
             .codex/ops/slo-gates-report.json
             .codex/ops/slo-gates-report.md
-          if-no-files-found: warn
+          if-no-files-found: error
 
   full:
     name: verify-full
@@ -63,11 +61,11 @@ jobs:
         with:
           name: verify-full-artifacts
           path: |
-            .codex/replay/smoke-report.json
-            .codex/replay/smoke-report.md
             .codex/replay/regression-report.json
             .codex/replay/regression-report.md
+            .codex/replay/fixtures/*.json
+            .codex/replay/fixtures/*.md
             .codex/replay/runtime-baseline.json
             .codex/ops/slo-gates-report.json
             .codex/ops/slo-gates-report.md
-          if-no-files-found: warn
+          if-no-files-found: error
