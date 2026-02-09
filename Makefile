@@ -1,4 +1,4 @@
-.PHONY: test validate-contracts verify-quick verify-full
+.PHONY: test validate-contracts verify-quick verify-full live-provider-smoke
 
 test:
 	go test ./...
@@ -11,3 +11,6 @@ verify-quick:
 
 verify-full:
 	VERIFY_FULL_CMD='go run ./cmd/rspp-cli validate-contracts && go run ./cmd/rspp-cli replay-regression-report && go run ./cmd/rspp-cli generate-runtime-baseline && go run ./cmd/rspp-cli slo-gates-report && go test ./...' bash scripts/verify.sh full
+
+live-provider-smoke:
+	go test -tags=liveproviders ./test/integration -run TestLiveProviderSmoke -v

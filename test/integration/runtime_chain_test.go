@@ -4,8 +4,12 @@ import (
 	"testing"
 
 	"github.com/tiger/realtime-speech-pipeline/api/controlplane"
+	"github.com/tiger/realtime-speech-pipeline/internal/observability/timeline"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/executor"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/localadmission"
+	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/contracts"
+	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/invocation"
+	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/registry"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/turnarbiter"
 )
 
@@ -148,5 +152,78 @@ func TestSchedulingPointShedDoesNotForceTerminalLifecycle(t *testing.T) {
 	}
 	if len(active.Transitions) != 0 {
 		t.Fatalf("expected no lifecycle transitions from scheduling shed alone")
+	}
+}
+
+func TestProviderInvocationEvidenceThreadedIntoTerminalBaseline(t *testing.T) {
+	t.Parallel()
+
+	catalog, err := registry.NewCatalog([]contracts.Adapter{
+		contracts.StaticAdapter{
+			ID:   "stt-a",
+			Mode: contracts.ModalitySTT,
+			InvokeFn: func(req contracts.InvocationRequest) (contracts.Outcome, error) {
+				return contracts.Outcome{Class: contracts.OutcomeSuccess}, nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected catalog error: %v", err)
+	}
+
+	recorder := timeline.NewRecorder(timeline.StageAConfig{BaselineCapacity: 8, DetailCapacity: 16})
+	arbiter := turnarbiter.NewWithRecorder(&recorder)
+	scheduler := executor.NewSchedulerWithProviderInvoker(localadmission.Evaluator{}, invocation.NewController(catalog))
+
+	decision, err := scheduler.NodeDispatch(executor.SchedulingInput{
+		SessionID:            "sess-integration-provider-1",
+		TurnID:               "turn-integration-provider-1",
+		EventID:              "evt-dispatch-provider-1",
+		PipelineVersion:      "pipeline-v1",
+		TransportSequence:    1,
+		RuntimeSequence:      2,
+		AuthorityEpoch:       3,
+		RuntimeTimestampMS:   100,
+		WallClockTimestampMS: 100,
+		ProviderInvocation: &executor.ProviderInvocationInput{
+			Modality:          contracts.ModalitySTT,
+			PreferredProvider: "stt-a",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected scheduling/provider error: %v", err)
+	}
+	if !decision.Allowed || decision.Provider == nil {
+		t.Fatalf("expected allowed provider decision, got %+v", decision)
+	}
+
+	active, err := arbiter.HandleActive(turnarbiter.ActiveInput{
+		SessionID:                  "sess-integration-provider-1",
+		TurnID:                     "turn-integration-provider-1",
+		EventID:                    "evt-active-provider-1",
+		PipelineVersion:            "pipeline-v1",
+		RuntimeTimestampMS:         120,
+		WallClockTimestampMS:       120,
+		AuthorityEpoch:             3,
+		RuntimeSequence:            2,
+		TerminalSuccessReady:       true,
+		ProviderInvocationOutcomes: []timeline.InvocationOutcomeEvidence{decision.Provider.ToInvocationOutcomeEvidence()},
+	})
+	if err != nil {
+		t.Fatalf("unexpected active handling error: %v", err)
+	}
+	if active.State != controlplane.TurnClosed {
+		t.Fatalf("expected terminal close state, got %s", active.State)
+	}
+
+	entries := recorder.BaselineEntries()
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 baseline entry, got %d", len(entries))
+	}
+	if len(entries[0].InvocationOutcomes) != 1 {
+		t.Fatalf("expected 1 invocation outcome evidence, got %d", len(entries[0].InvocationOutcomes))
+	}
+	if entries[0].InvocationOutcomes[0].OutcomeClass != "success" {
+		t.Fatalf("expected success invocation outcome class, got %+v", entries[0].InvocationOutcomes[0])
 	}
 }

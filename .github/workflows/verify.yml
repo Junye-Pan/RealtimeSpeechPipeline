@@ -69,3 +69,49 @@ jobs:
             .codex/ops/slo-gates-report.json
             .codex/ops/slo-gates-report.md
           if-no-files-found: error
+
+  live-provider-smoke:
+    name: live-provider-smoke
+    runs-on: ubuntu-latest
+    needs: quick
+    continue-on-error: true
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'run-live-provider-smoke'))
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run live provider smoke suite (non-blocking)
+        env:
+          RSPP_LIVE_PROVIDER_SMOKE: "1"
+          RSPP_STT_DEEPGRAM_API_KEY: ${{ secrets.RSPP_STT_DEEPGRAM_API_KEY }}
+          RSPP_STT_GOOGLE_API_KEY: ${{ secrets.RSPP_STT_GOOGLE_API_KEY }}
+          RSPP_STT_ASSEMBLYAI_API_KEY: ${{ secrets.RSPP_STT_ASSEMBLYAI_API_KEY }}
+          RSPP_LLM_ANTHROPIC_API_KEY: ${{ secrets.RSPP_LLM_ANTHROPIC_API_KEY }}
+          RSPP_LLM_GEMINI_API_KEY: ${{ secrets.RSPP_LLM_GEMINI_API_KEY }}
+          RSPP_LLM_COHERE_API_KEY: ${{ secrets.RSPP_LLM_COHERE_API_KEY }}
+          RSPP_TTS_ELEVENLABS_API_KEY: ${{ secrets.RSPP_TTS_ELEVENLABS_API_KEY }}
+          RSPP_STT_DEEPGRAM_ENABLE: ${{ secrets.RSPP_STT_DEEPGRAM_API_KEY != '' && '1' || '0' }}
+          RSPP_STT_GOOGLE_ENABLE: ${{ secrets.RSPP_STT_GOOGLE_API_KEY != '' && '1' || '0' }}
+          RSPP_STT_ASSEMBLYAI_ENABLE: ${{ secrets.RSPP_STT_ASSEMBLYAI_API_KEY != '' && '1' || '0' }}
+          RSPP_LLM_ANTHROPIC_ENABLE: ${{ secrets.RSPP_LLM_ANTHROPIC_API_KEY != '' && '1' || '0' }}
+          RSPP_LLM_GEMINI_ENABLE: ${{ secrets.RSPP_LLM_GEMINI_API_KEY != '' && '1' || '0' }}
+          RSPP_LLM_COHERE_ENABLE: ${{ secrets.RSPP_LLM_COHERE_API_KEY != '' && '1' || '0' }}
+          RSPP_TTS_ELEVENLABS_ENABLE: ${{ secrets.RSPP_TTS_ELEVENLABS_API_KEY != '' && '1' || '0' }}
+          RSPP_TTS_GOOGLE_ENABLE: "0"
+          RSPP_TTS_POLLY_ENABLE: "0"
+        run: |
+          mkdir -p .codex/providers
+          make live-provider-smoke | tee .codex/providers/live-provider-smoke.log
+
+      - name: Upload live provider smoke log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-provider-smoke-log
+          path: .codex/providers/live-provider-smoke.log
+          if-no-files-found: warn

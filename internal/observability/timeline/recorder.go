@@ -31,6 +31,7 @@ type BaselineEvidence struct {
 	PlanHash                 string
 	SnapshotProvenance       controlplane.SnapshotProvenance
 	DecisionOutcomes         []controlplane.DecisionOutcome
+	InvocationOutcomes       []InvocationOutcomeEvidence
 	DeterminismSeed          int64
 	OrderingMarkers          []string
 	MergeRuleID              string
@@ -48,6 +49,37 @@ type BaselineEvidence struct {
 	CancelSentAtMS           *int64
 	CancelAckAtMS            *int64
 	AcceptedStaleEpochOutput bool
+}
+
+// InvocationOutcomeEvidence records normalized provider/external invocation outcomes.
+type InvocationOutcomeEvidence struct {
+	ProviderInvocationID string
+	Modality             string
+	ProviderID           string
+	OutcomeClass         string
+	Retryable            bool
+	RetryDecision        string
+	AttemptCount         int
+}
+
+// Validate enforces invocation evidence normalization fields.
+func (e InvocationOutcomeEvidence) Validate() error {
+	if e.ProviderInvocationID == "" || e.Modality == "" || e.ProviderID == "" {
+		return fmt.Errorf("provider_invocation_id, modality, and provider_id are required")
+	}
+	if !inStringSet(e.Modality, []string{"stt", "llm", "tts", "external"}) {
+		return fmt.Errorf("invalid invocation modality: %s", e.Modality)
+	}
+	if !inStringSet(e.OutcomeClass, []string{"success", "timeout", "overload", "blocked", "infrastructure_failure", "cancelled"}) {
+		return fmt.Errorf("invalid invocation outcome_class: %s", e.OutcomeClass)
+	}
+	if !inStringSet(e.RetryDecision, []string{"none", "retry", "provider_switch", "fallback"}) {
+		return fmt.Errorf("invalid invocation retry_decision: %s", e.RetryDecision)
+	}
+	if e.AttemptCount < 1 {
+		return fmt.Errorf("invocation attempt_count must be >=1")
+	}
+	return nil
 }
 
 // ValidateCompleteness enforces the L0 baseline requirements.
@@ -77,6 +109,11 @@ func (b BaselineEvidence) ValidateCompleteness() error {
 	}
 	for _, out := range b.DecisionOutcomes {
 		if err := out.Validate(); err != nil {
+			return err
+		}
+	}
+	for _, invocation := range b.InvocationOutcomes {
+		if err := invocation.Validate(); err != nil {
 			return err
 		}
 	}
@@ -131,6 +168,15 @@ func isPayloadTag(tag eventabi.PayloadClass) bool {
 	default:
 		return false
 	}
+}
+
+func inStringSet(value string, set []string) bool {
+	for _, candidate := range set {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 // DetailEvent captures non-critical Stage-A detail that may be dropped.
