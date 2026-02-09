@@ -86,6 +86,24 @@ Execution policy:
 5. Current CI config keeps Gemini disabled (`RSPP_LLM_GEMINI_ENABLE=0`), pins Anthropic to `claude-3-5-haiku-latest`, and uses OpenRouter-compatible Cohere settings.
 6. Does not replace required merge gates `verify-quick` and `verify-full`.
 
+## 4.4 A.2 runtime live matrix (`make a2-runtime-live`)
+
+Implemented command chain:
+
+```bash
+RSPP_LIVE_PROVIDER_SMOKE=1 go test -tags=liveproviders ./test/integration -run TestLiveProviderSmoke -v &&
+RSPP_A2_RUNTIME_LIVE=1 RSPP_A2_RUNTIME_LIVE_STRICT=1 go test -tags=liveproviders ./test/integration -run TestA2RuntimeLiveScenarios -v
+```
+
+Execution policy:
+1. Runs in CI as a non-blocking job (`a2-runtime-live`) in `.github/workflows/verify.yml`.
+2. Triggered on `schedule`, `workflow_dispatch`, and pull requests explicitly labeled `run-live-provider-smoke`.
+3. Produces real-provider runtime matrix artifacts:
+   - `.codex/providers/a2-runtime-live-report.json`
+   - `.codex/providers/a2-runtime-live-report.md`
+   - `.codex/providers/a2-runtime-live.log`
+4. Uses strict mode in CI (`RSPP_A2_RUNTIME_LIVE_STRICT=1`) so skipped A.2 scenarios are treated as failures for that non-blocking job.
+
 ## 5. Replay divergence fail policy (normative, implemented)
 
 `replay-smoke-report` and `replay-regression-report` both fail when `FailingCount > 0`.
@@ -137,6 +155,7 @@ Implemented now:
 2. Replay and SLO artifacts are generated locally under `.codex/`.
 3. `.github/workflows/verify.yml` uploads quick/full artifacts with `if-no-files-found: error` so missing expected artifacts fail CI.
 4. `.github/workflows/verify.yml` includes a non-blocking `live-provider-smoke` job for real-provider integration checks.
+5. `.github/workflows/verify.yml` includes a non-blocking `a2-runtime-live` job with per-module A.2 runtime evidence artifacts.
 
 Repository policy action (outside repo code):
 1. Configure branch protection required checks:

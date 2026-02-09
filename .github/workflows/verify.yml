@@ -117,3 +117,56 @@ jobs:
           name: live-provider-smoke-log
           path: .codex/providers/live-provider-smoke.log
           if-no-files-found: warn
+
+  a2-runtime-live:
+    name: a2-runtime-live
+    runs-on: ubuntu-latest
+    needs: quick
+    continue-on-error: true
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'run-live-provider-smoke'))
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run A.2 runtime live validation (non-blocking)
+        env:
+          RSPP_STT_DEEPGRAM_API_KEY: ${{ secrets.RSPP_STT_DEEPGRAM_API_KEY }}
+          RSPP_STT_GOOGLE_API_KEY: ${{ secrets.RSPP_STT_GOOGLE_API_KEY }}
+          RSPP_STT_ASSEMBLYAI_API_KEY: ${{ secrets.RSPP_STT_ASSEMBLYAI_API_KEY }}
+          RSPP_LLM_ANTHROPIC_API_KEY: ${{ secrets.RSPP_LLM_ANTHROPIC_API_KEY }}
+          RSPP_LLM_ANTHROPIC_MODEL: "claude-3-5-haiku-latest"
+          RSPP_LLM_COHERE_API_KEY: ${{ secrets.RSPP_LLM_COHERE_API_KEY }}
+          RSPP_LLM_COHERE_OPENROUTER: "1"
+          RSPP_LLM_COHERE_MODEL: "cohere/command-r-08-2024"
+          RSPP_TTS_ELEVENLABS_API_KEY: ${{ secrets.RSPP_TTS_ELEVENLABS_API_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+          RSPP_STT_DEEPGRAM_ENABLE: ${{ secrets.RSPP_STT_DEEPGRAM_API_KEY != '' && '1' || '0' }}
+          RSPP_STT_GOOGLE_ENABLE: ${{ secrets.RSPP_STT_GOOGLE_API_KEY != '' && '1' || '0' }}
+          RSPP_STT_ASSEMBLYAI_ENABLE: ${{ secrets.RSPP_STT_ASSEMBLYAI_API_KEY != '' && '1' || '0' }}
+          RSPP_LLM_ANTHROPIC_ENABLE: ${{ secrets.RSPP_LLM_ANTHROPIC_API_KEY != '' && '1' || '0' }}
+          RSPP_LLM_GEMINI_ENABLE: "0"
+          RSPP_LLM_COHERE_ENABLE: ${{ secrets.RSPP_LLM_COHERE_API_KEY != '' && '1' || '0' }}
+          RSPP_TTS_ELEVENLABS_ENABLE: ${{ secrets.RSPP_TTS_ELEVENLABS_API_KEY != '' && '1' || '0' }}
+          RSPP_TTS_GOOGLE_ENABLE: "0"
+          RSPP_TTS_POLLY_ENABLE: "0"
+        run: |
+          mkdir -p .codex/providers
+          make a2-runtime-live | tee .codex/providers/a2-runtime-live.log
+
+      - name: Upload A.2 runtime live artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a2-runtime-live-artifacts
+          path: |
+            .codex/providers/a2-runtime-live.log
+            .codex/providers/a2-runtime-live-report.json
+            .codex/providers/a2-runtime-live-report.md
+          if-no-files-found: warn

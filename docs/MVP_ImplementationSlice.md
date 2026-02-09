@@ -220,6 +220,12 @@ Status note:
    - `Makefile` target `live-provider-smoke`
    - `.github/workflows/verify.yml` non-blocking `live-provider-smoke` job
 
+13. Add A.2 runtime real-provider validation matrix:
+   - `test/integration/a2_runtime_live_test.go` (build tag `liveproviders`)
+   - `Makefile` target `a2-runtime-live`
+   - `.github/workflows/verify.yml` non-blocking `a2-runtime-live` job
+   - artifacts: `.codex/providers/a2-runtime-live-report.json|.md`
+
 ### 10.2 Remaining (ordered, post doc-sync 2026-02-09)
 
 Status update:
@@ -249,6 +255,10 @@ Status values:
 | CP-10 | scaffold-only | `internal/controlplane/providerhealth/.gitkeep` | Provider health aggregator remains scaffold. |
 
 ### A.2 Runtime
+
+Real-provider validation coverage:
+- `make a2-runtime-live` executes `TestLiveProviderSmoke` plus `TestA2RuntimeLiveScenarios`.
+- `TestA2RuntimeLiveScenarios` maps all A.2 runtime modules (`RK-02` through `RK-26`) to explicit scenario assertions and emits `.codex/providers/a2-runtime-live-report.json|.md`.
 
 | Module | Status | Evidence | Notes/Gap |
 | --- | --- | --- | --- |
