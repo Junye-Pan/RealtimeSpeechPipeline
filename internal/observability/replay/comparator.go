@@ -9,11 +9,19 @@ import (
 
 // TraceArtifact captures replay-comparable evidence dimensions.
 type TraceArtifact struct {
-	PlanHash           string
-	Decision           controlplane.DecisionOutcome
-	OrderingMarker     string
-	AuthorityEpoch     int64
-	RuntimeTimestampMS int64
+	PlanHash              string
+	SnapshotProvenanceRef string
+	Decision              controlplane.DecisionOutcome
+	OrderingMarker        string
+	AuthorityEpoch        int64
+	RuntimeTimestampMS    int64
+}
+
+// LineageRecord captures replay explainability context for merged/dropped outputs.
+type LineageRecord struct {
+	EventID      string
+	MergeGroupID string
+	Dropped      bool
 }
 
 // CompareConfig allows deterministic tolerance configuration.
@@ -83,6 +91,13 @@ func CompareTraceArtifacts(baseline, replay []TraceArtifact, cfg CompareConfig) 
 				Message: fmt.Sprintf("plan hash mismatch at index=%d baseline=%s replay=%s", i, baseline[i].PlanHash, replay[i].PlanHash),
 			})
 		}
+		if baseline[i].SnapshotProvenanceRef != replay[i].SnapshotProvenanceRef {
+			divergences = append(divergences, observability.ReplayDivergence{
+				Class:   observability.PlanDivergence,
+				Scope:   scope,
+				Message: fmt.Sprintf("snapshot provenance mismatch at index=%d baseline=%s replay=%s", i, baseline[i].SnapshotProvenanceRef, replay[i].SnapshotProvenanceRef),
+			})
+		}
 
 		if !equivalentDecisionOutcome(baseline[i].Decision, replay[i].Decision) {
 			divergences = append(divergences, observability.ReplayDivergence{
@@ -112,11 +127,51 @@ func CompareTraceArtifacts(baseline, replay []TraceArtifact, cfg CompareConfig) 
 		if tolerance < 0 {
 			tolerance = 0
 		}
-		if absDiff(baseline[i].RuntimeTimestampMS, replay[i].RuntimeTimestampMS) > tolerance {
+		diff := absDiff(baseline[i].RuntimeTimestampMS, replay[i].RuntimeTimestampMS)
+		if diff > tolerance {
+			diffCopy := diff
 			divergences = append(divergences, observability.ReplayDivergence{
 				Class:   observability.TimingDivergence,
 				Scope:   scope,
 				Message: fmt.Sprintf("timing mismatch at index=%d baseline=%d replay=%d tolerance=%d", i, baseline[i].RuntimeTimestampMS, replay[i].RuntimeTimestampMS, tolerance),
+				DiffMS:  &diffCopy,
+			})
+		}
+	}
+
+	return divergences
+}
+
+// CompareLineageRecords verifies merged/dropped explainability against baseline lineage.
+func CompareLineageRecords(baseline, replay []LineageRecord) []observability.ReplayDivergence {
+	divergences := make([]observability.ReplayDivergence, 0)
+	replayByID := make(map[string]LineageRecord, len(replay))
+	for _, entry := range replay {
+		replayByID[entry.EventID] = entry
+	}
+
+	for _, expected := range baseline {
+		observed, ok := replayByID[expected.EventID]
+		if !ok {
+			divergences = append(divergences, observability.ReplayDivergence{
+				Class:   observability.OutcomeDivergence,
+				Scope:   "event:" + expected.EventID,
+				Message: "upstream absence without drop/merge lineage marker",
+			})
+			continue
+		}
+		if expected.Dropped != observed.Dropped {
+			divergences = append(divergences, observability.ReplayDivergence{
+				Class:   observability.OutcomeDivergence,
+				Scope:   "event:" + expected.EventID,
+				Message: fmt.Sprintf("drop lineage mismatch baseline=%t replay=%t", expected.Dropped, observed.Dropped),
+			})
+		}
+		if expected.MergeGroupID != observed.MergeGroupID {
+			divergences = append(divergences, observability.ReplayDivergence{
+				Class:   observability.OutcomeDivergence,
+				Scope:   "event:" + expected.EventID,
+				Message: fmt.Sprintf("merge lineage mismatch baseline=%s replay=%s", expected.MergeGroupID, observed.MergeGroupID),
 			})
 		}
 	}

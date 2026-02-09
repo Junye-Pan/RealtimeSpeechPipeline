@@ -13,7 +13,9 @@ const (
 
 // ReplayDivergence captures a classified replay mismatch entry.
 type ReplayDivergence struct {
-	Class   DivergenceClass `json:"class"`
-	Scope   string          `json:"scope"`
-	Message string          `json:"message"`
+	Class    DivergenceClass `json:"class"`
+	Scope    string          `json:"scope"`
+	Message  string          `json:"message"`
+	DiffMS   *int64          `json:"diff_ms,omitempty"`
+	Expected bool            `json:"expected,omitempty"`
 }

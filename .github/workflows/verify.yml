@@ -1,0 +1,67 @@
+name: verify
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+  schedule:
+    - cron: '0 4 * * *'
+
+jobs:
+  quick:
+    name: verify-quick
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run quick verification
+        run: make verify-quick
+
+      - name: Upload quick artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-quick-artifacts
+          path: |
+            .codex/replay/smoke-report.json
+            .codex/replay/smoke-report.md
+            .codex/ops/slo-gates-report.json
+            .codex/ops/slo-gates-report.md
+          if-no-files-found: warn
+
+  full:
+    name: verify-full
+    runs-on: ubuntu-latest
+    needs: quick
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run full verification
+        run: make verify-full
+
+      - name: Upload full artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-full-artifacts
+          path: |
+            .codex/replay/smoke-report.json
+            .codex/replay/smoke-report.md
+            .codex/ops/slo-gates-report.json
+            .codex/ops/slo-gates-report.md
+          if-no-files-found: warn

@@ -47,3 +47,34 @@ func TestWriteReplaySmokeReport(t *testing.T) {
 		t.Fatalf("expected markdown summary at %s: %v", mdPath, err)
 	}
 }
+
+func TestWriteSLOGatesReport(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	out := filepath.Join(tmpDir, "ops", "slo-gates-report.json")
+	if err := writeSLOGatesReport(out); err != nil {
+		t.Fatalf("unexpected slo report write error: %v", err)
+	}
+
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("unexpected read error: %v", err)
+	}
+
+	var report sloGateArtifact
+	if err := json.Unmarshal(data, &report); err != nil {
+		t.Fatalf("unexpected json error: %v", err)
+	}
+	if !report.Report.Passed {
+		t.Fatalf("expected SLO report to pass, got %+v", report.Report.Violations)
+	}
+	if report.Report.BaselineCompletenessRatio != 1.0 {
+		t.Fatalf("expected OR-02 completeness ratio 1.0, got %.2f", report.Report.BaselineCompletenessRatio)
+	}
+
+	mdPath := strings.TrimSuffix(out, filepath.Ext(out)) + ".md"
+	if _, err := os.Stat(mdPath); err != nil {
+		t.Fatalf("expected markdown summary at %s: %v", mdPath, err)
+	}
+}
