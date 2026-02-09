@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
+	runtimebudget "github.com/tiger/realtime-speech-pipeline/internal/runtime/budget"
+	runtimeeventabi "github.com/tiger/realtime-speech-pipeline/internal/runtime/eventabi"
 )
 
 // NodeFailureInput defines deterministic F2 failure-shaping input.
@@ -17,6 +19,9 @@ type NodeFailureInput struct {
 	AuthorityEpoch       int64
 	RuntimeTimestampMS   int64
 	WallClockTimestampMS int64
+	NodeBudgetWarningMS  int64
+	NodeBudgetExhaustMS  int64
+	ObservedRuntimeMS    int64
 	AllowDegrade         bool
 	AllowFallback        bool
 }
@@ -47,26 +52,50 @@ func HandleFailure(in NodeFailureInput) (NodeFailureResult, error) {
 		Signals: []eventabi.ControlSignal{warning, exhausted},
 	}
 
-	if in.AllowDegrade {
+	warnAt := in.NodeBudgetWarningMS
+	if warnAt < 1 {
+		warnAt = 1200
+	}
+	exhaustAt := in.NodeBudgetExhaustMS
+	if exhaustAt < warnAt {
+		exhaustAt = 1500
+	}
+	observed := in.ObservedRuntimeMS
+	if observed < 1 {
+		observed = exhaustAt
+	}
+	budgetDecision, err := runtimebudget.NewManager().Evaluate(runtimebudget.BudgetSpec{
+		WarnAtMS:      warnAt,
+		ExhaustAtMS:   exhaustAt,
+		AllowDegrade:  in.AllowDegrade,
+		AllowFallback: in.AllowFallback,
+	}, runtimebudget.Usage{
+		ElapsedMS: observed,
+	})
+	if err != nil {
+		return NodeFailureResult{}, err
+	}
+
+	if budgetDecision.Action == runtimebudget.ActionDegrade {
 		degrade, err := buildDecisionSignal(in, "degrade", "node_timeout_or_failure")
 		if err != nil {
 			return NodeFailureResult{}, err
 		}
 		result.Signals = append(result.Signals, degrade)
-		return result, nil
+		return normalizeResultSignals(result)
 	}
-	if in.AllowFallback {
+	if budgetDecision.Action == runtimebudget.ActionFallback {
 		fallback, err := buildDecisionSignal(in, "fallback", "node_timeout_or_failure")
 		if err != nil {
 			return NodeFailureResult{}, err
 		}
 		result.Signals = append(result.Signals, fallback)
-		return result, nil
+		return normalizeResultSignals(result)
 	}
 
 	result.Terminal = true
 	result.TerminalReason = "node_timeout_or_failure"
-	return result, nil
+	return normalizeResultSignals(result)
 }
 
 func buildBudgetSignal(in NodeFailureInput, signal, reason string) (eventabi.ControlSignal, error) {
@@ -116,4 +145,13 @@ func nonNegative(v int64) int64 {
 		return 0
 	}
 	return v
+}
+
+func normalizeResultSignals(result NodeFailureResult) (NodeFailureResult, error) {
+	normalized, err := runtimeeventabi.ValidateAndNormalizeControlSignals(result.Signals)
+	if err != nil {
+		return NodeFailureResult{}, err
+	}
+	result.Signals = normalized
+	return result, nil
 }

@@ -99,24 +99,30 @@ func (c Controller) Invoke(in InvocationInput) (InvocationResult, error) {
 		return result, nil
 	}
 
-	actions := parseAdaptiveActions(in.AllowedAdaptiveActions)
+	actions, err := parseAdaptiveActions(in.AllowedAdaptiveActions)
+	if err != nil {
+		return InvocationResult{}, err
+	}
 	for providerIndex, adapter := range candidates {
 		for attempt := 1; attempt <= c.cfg.MaxAttemptsPerProvider; attempt++ {
 			req := contracts.InvocationRequest{
-				SessionID:            in.SessionID,
-				TurnID:               in.TurnID,
-				PipelineVersion:      in.PipelineVersion,
-				EventID:              in.EventID,
-				ProviderInvocationID: result.ProviderInvocationID,
-				ProviderID:           adapter.ProviderID(),
-				Modality:             in.Modality,
-				Attempt:              attempt,
-				TransportSequence:    nonNegative(in.TransportSequence),
-				RuntimeSequence:      nonNegative(in.RuntimeSequence),
-				AuthorityEpoch:       nonNegative(in.AuthorityEpoch),
-				RuntimeTimestampMS:   nonNegative(in.RuntimeTimestampMS),
-				WallClockTimestampMS: nonNegative(in.WallClockTimestampMS),
-				CancelRequested:      in.CancelRequested,
+				SessionID:              in.SessionID,
+				TurnID:                 in.TurnID,
+				PipelineVersion:        in.PipelineVersion,
+				EventID:                in.EventID,
+				ProviderInvocationID:   result.ProviderInvocationID,
+				ProviderID:             adapter.ProviderID(),
+				Modality:               in.Modality,
+				Attempt:                attempt,
+				TransportSequence:      nonNegative(in.TransportSequence),
+				RuntimeSequence:        nonNegative(in.RuntimeSequence),
+				AuthorityEpoch:         nonNegative(in.AuthorityEpoch),
+				RuntimeTimestampMS:     nonNegative(in.RuntimeTimestampMS),
+				WallClockTimestampMS:   nonNegative(in.WallClockTimestampMS),
+				CancelRequested:        in.CancelRequested,
+				AllowedAdaptiveActions: append([]string(nil), actions.normalized...),
+				RetryBudgetRemaining:   max(0, c.cfg.MaxAttemptsPerProvider-attempt),
+				CandidateProviderCount: len(candidates),
 			}
 			outcome, invokeErr := adapter.Invoke(req)
 			if invokeErr != nil {
@@ -188,11 +194,17 @@ type adaptiveActions struct {
 	retry          bool
 	providerSwitch bool
 	fallback       bool
+	normalized     []string
 }
 
-func parseAdaptiveActions(actions []string) adaptiveActions {
+func parseAdaptiveActions(actions []string) (adaptiveActions, error) {
 	out := adaptiveActions{}
-	for _, action := range actions {
+	normalized, err := contracts.NormalizeAdaptiveActions(actions)
+	if err != nil {
+		return out, err
+	}
+	out.normalized = normalized
+	for _, action := range normalized {
 		switch action {
 		case "retry":
 			out.retry = true
@@ -202,7 +214,7 @@ func parseAdaptiveActions(actions []string) adaptiveActions {
 			out.fallback = true
 		}
 	}
-	return out
+	return out, nil
 }
 
 func providerInvocationID(in InvocationInput) string {
@@ -262,4 +274,11 @@ func nonNegative(value int64) int64 {
 		return 0
 	}
 	return value
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

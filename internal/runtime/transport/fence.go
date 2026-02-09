@@ -2,9 +2,10 @@ package transport
 
 import (
 	"fmt"
-	"sync"
 
 	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
+	"github.com/tiger/realtime-speech-pipeline/internal/runtime/cancellation"
+	runtimeeventabi "github.com/tiger/realtime-speech-pipeline/internal/runtime/eventabi"
 )
 
 // OutputAttempt captures an egress output decision point.
@@ -29,13 +30,25 @@ type OutputDecision struct {
 
 // OutputFence applies deterministic post-cancel egress fencing.
 type OutputFence struct {
-	mu       sync.Mutex
-	canceled map[string]bool
+	turnFence turnFence
+}
+
+type turnFence interface {
+	Accept(sessionID, turnID string) error
+	IsFenced(sessionID, turnID string) bool
 }
 
 // NewOutputFence creates a new deterministic output fence.
 func NewOutputFence() *OutputFence {
-	return &OutputFence{canceled: make(map[string]bool)}
+	return NewOutputFenceWithTurnFence(cancellation.NewFence())
+}
+
+// NewOutputFenceWithTurnFence creates an output fence with an explicit cancel fence dependency.
+func NewOutputFenceWithTurnFence(fence turnFence) *OutputFence {
+	if fence == nil {
+		fence = cancellation.NewFence()
+	}
+	return &OutputFence{turnFence: fence}
 }
 
 // EvaluateOutput applies cancel fencing and emits deterministic control markers.
@@ -44,13 +57,12 @@ func (f *OutputFence) EvaluateOutput(in OutputAttempt) (OutputDecision, error) {
 		return OutputDecision{}, fmt.Errorf("session_id, turn_id, pipeline_version, and event_id are required")
 	}
 
-	key := in.SessionID + "/" + in.TurnID
-	f.mu.Lock()
 	if in.CancelAccepted {
-		f.canceled[key] = true
+		if err := f.turnFence.Accept(in.SessionID, in.TurnID); err != nil {
+			return OutputDecision{}, err
+		}
 	}
-	canceled := f.canceled[key]
-	f.mu.Unlock()
+	canceled := f.turnFence.IsFenced(in.SessionID, in.TurnID)
 
 	signalName := "output_accepted"
 	reason := "output_accepted"
@@ -83,6 +95,11 @@ func (f *OutputFence) EvaluateOutput(in OutputAttempt) (OutputDecision, error) {
 	if err := signal.Validate(); err != nil {
 		return OutputDecision{}, err
 	}
+	normalized, err := runtimeeventabi.ValidateAndNormalizeControlSignals([]eventabi.ControlSignal{signal})
+	if err != nil {
+		return OutputDecision{}, err
+	}
+	signal = normalized[0]
 
 	return OutputDecision{Accepted: accepted, Signal: signal}, nil
 }

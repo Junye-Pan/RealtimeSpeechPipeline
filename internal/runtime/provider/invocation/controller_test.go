@@ -1,6 +1,7 @@
 package invocation
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/contracts"
@@ -224,5 +225,88 @@ func TestInvokeCancelledBeforeAttempt(t *testing.T) {
 	}
 	if len(result.Signals) != 0 {
 		t.Fatalf("expected no signals on pre-cancel, got %+v", result.Signals)
+	}
+}
+
+func TestInvokeRejectsUnsupportedAdaptiveAction(t *testing.T) {
+	t.Parallel()
+
+	catalog, err := registry.NewCatalog([]contracts.Adapter{
+		contracts.StaticAdapter{ID: "stt-a", Mode: contracts.ModalitySTT},
+	})
+	if err != nil {
+		t.Fatalf("unexpected catalog error: %v", err)
+	}
+
+	controller := NewController(catalog)
+	_, err = controller.Invoke(InvocationInput{
+		SessionID:              "sess-rk11-5",
+		TurnID:                 "turn-rk11-5",
+		PipelineVersion:        "pipeline-v1",
+		EventID:                "evt-rk11-5",
+		Modality:               contracts.ModalitySTT,
+		PreferredProvider:      "stt-a",
+		AllowedAdaptiveActions: []string{"unsupported_action"},
+		TransportSequence:      5,
+		RuntimeSequence:        5,
+		AuthorityEpoch:         5,
+		RuntimeTimestampMS:     50,
+		WallClockTimestampMS:   50,
+	})
+	if err == nil {
+		t.Fatalf("expected unsupported adaptive action to fail")
+	}
+	if !strings.Contains(err.Error(), "unsupported adaptive action") {
+		t.Fatalf("expected adaptive-action validation error, got %v", err)
+	}
+}
+
+func TestInvokePolicyEnvelopePassedToAdapter(t *testing.T) {
+	t.Parallel()
+
+	received := contracts.InvocationRequest{}
+	catalog, err := registry.NewCatalog([]contracts.Adapter{
+		contracts.StaticAdapter{
+			ID:   "stt-a",
+			Mode: contracts.ModalitySTT,
+			InvokeFn: func(req contracts.InvocationRequest) (contracts.Outcome, error) {
+				received = req
+				return contracts.Outcome{Class: contracts.OutcomeSuccess}, nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected catalog error: %v", err)
+	}
+
+	controller := NewController(catalog)
+	_, err = controller.Invoke(InvocationInput{
+		SessionID:              "sess-rk11-6",
+		TurnID:                 "turn-rk11-6",
+		PipelineVersion:        "pipeline-v1",
+		EventID:                "evt-rk11-6",
+		Modality:               contracts.ModalitySTT,
+		PreferredProvider:      "stt-a",
+		AllowedAdaptiveActions: []string{"provider_switch", "retry"},
+		TransportSequence:      6,
+		RuntimeSequence:        6,
+		AuthorityEpoch:         6,
+		RuntimeTimestampMS:     60,
+		WallClockTimestampMS:   60,
+	})
+	if err != nil {
+		t.Fatalf("unexpected invoke error: %v", err)
+	}
+	if len(received.AllowedAdaptiveActions) != 2 {
+		t.Fatalf("expected 2 normalized actions on request, got %+v", received.AllowedAdaptiveActions)
+	}
+	if received.AllowedAdaptiveActions[0] != "provider_switch" || received.AllowedAdaptiveActions[1] != "retry" {
+		t.Fatalf("unexpected normalized action ordering: %+v", received.AllowedAdaptiveActions)
+	}
+	if received.RetryBudgetRemaining != 1 {
+		t.Fatalf("expected retry budget remaining 1 on first attempt, got %d", received.RetryBudgetRemaining)
+	}
+	if received.CandidateProviderCount != 1 {
+		t.Fatalf("expected candidate provider count 1, got %d", received.CandidateProviderCount)
 	}
 }

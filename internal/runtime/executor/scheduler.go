@@ -7,6 +7,8 @@ import (
 	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
 	"github.com/tiger/realtime-speech-pipeline/internal/observability/timeline"
 	runtimeeventabi "github.com/tiger/realtime-speech-pipeline/internal/runtime/eventabi"
+	runtimeexecutionpool "github.com/tiger/realtime-speech-pipeline/internal/runtime/executionpool"
+	runtimeidentity "github.com/tiger/realtime-speech-pipeline/internal/runtime/identity"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/lanes"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/localadmission"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/contracts"
@@ -93,18 +95,29 @@ type ProviderAttemptAppender interface {
 	AppendProviderInvocationAttempts([]timeline.ProviderAttemptEvidence) error
 }
 
+type eventIdentityService interface {
+	NewEventContext(sessionID, turnID string) (runtimeidentity.Context, error)
+}
+
+type dispatchPool interface {
+	Submit(task runtimeexecutionpool.Task) error
+}
+
 // Scheduler is a minimal RK-07 execution-path stub wired to RK-25 local admission.
 type Scheduler struct {
 	admission       localadmission.Evaluator
 	providerInvoker ProviderInvoker
 	attemptAppender ProviderAttemptAppender
 	router          lanes.Router
+	identity        eventIdentityService
+	executionPool   dispatchPool
 }
 
 func NewScheduler(admission localadmission.Evaluator) Scheduler {
 	return Scheduler{
 		admission: admission,
 		router:    lanes.NewDefaultRouter(),
+		identity:  runtimeidentity.NewService(),
 	}
 }
 
@@ -114,6 +127,7 @@ func NewSchedulerWithProviderInvoker(admission localadmission.Evaluator, provide
 		admission:       admission,
 		providerInvoker: providerInvoker,
 		router:          lanes.NewDefaultRouter(),
+		identity:        runtimeidentity.NewService(),
 	}
 }
 
@@ -128,6 +142,20 @@ func NewSchedulerWithProviderInvokerAndAttemptAppender(
 		providerInvoker: providerInvoker,
 		attemptAppender: attemptAppender,
 		router:          lanes.NewDefaultRouter(),
+		identity:        runtimeidentity.NewService(),
+	}
+}
+
+// NewSchedulerWithExecutionPool wires optional RK-26 execution pool support.
+func NewSchedulerWithExecutionPool(
+	admission localadmission.Evaluator,
+	executionPool *runtimeexecutionpool.Manager,
+) Scheduler {
+	return Scheduler{
+		admission:     admission,
+		router:        lanes.NewDefaultRouter(),
+		identity:      runtimeidentity.NewService(),
+		executionPool: executionPool,
 	}
 }
 
@@ -142,11 +170,13 @@ func NewSchedulerWithDependencies(
 		defaultRouter := lanes.NewDefaultRouter()
 		router = defaultRouter
 	}
+	identitySvc := runtimeidentity.NewService()
 	return Scheduler{
 		admission:       admission,
 		providerInvoker: providerInvoker,
 		attemptAppender: attemptAppender,
 		router:          router,
+		identity:        identitySvc,
 	}
 }
 
@@ -166,6 +196,17 @@ func (s Scheduler) NodeDispatch(in SchedulingInput) (SchedulingDecision, error) 
 }
 
 func (s Scheduler) evaluate(scope controlplane.OutcomeScope, in SchedulingInput) (SchedulingDecision, error) {
+	if in.EventID == "" {
+		if s.identity == nil {
+			return SchedulingDecision{}, fmt.Errorf("identity service is not configured")
+		}
+		ctx, err := s.identity.NewEventContext(in.SessionID, in.TurnID)
+		if err != nil {
+			return SchedulingDecision{}, err
+		}
+		in.EventID = ctx.EventID
+	}
+
 	result := s.admission.EvaluateSchedulingPoint(localadmission.SchedulingPointInput{
 		SessionID:            in.SessionID,
 		TurnID:               in.TurnID,

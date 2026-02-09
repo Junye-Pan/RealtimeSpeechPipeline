@@ -1,6 +1,9 @@
 package contracts
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+)
 
 // Modality defines provider families supported by runtime invocation.
 type Modality string
@@ -45,20 +48,23 @@ func (o OutcomeClass) Validate() error {
 
 // InvocationRequest is passed to adapter implementations per attempt.
 type InvocationRequest struct {
-	SessionID            string
-	TurnID               string
-	PipelineVersion      string
-	EventID              string
-	ProviderInvocationID string
-	ProviderID           string
-	Modality             Modality
-	Attempt              int
-	TransportSequence    int64
-	RuntimeSequence      int64
-	AuthorityEpoch       int64
-	RuntimeTimestampMS   int64
-	WallClockTimestampMS int64
-	CancelRequested      bool
+	SessionID              string
+	TurnID                 string
+	PipelineVersion        string
+	EventID                string
+	ProviderInvocationID   string
+	ProviderID             string
+	Modality               Modality
+	Attempt                int
+	TransportSequence      int64
+	RuntimeSequence        int64
+	AuthorityEpoch         int64
+	RuntimeTimestampMS     int64
+	WallClockTimestampMS   int64
+	CancelRequested        bool
+	AllowedAdaptiveActions []string
+	RetryBudgetRemaining   int
+	CandidateProviderCount int
 }
 
 // Validate enforces deterministic required fields.
@@ -81,7 +87,39 @@ func (r InvocationRequest) Validate() error {
 	if r.RuntimeTimestampMS < 0 || r.WallClockTimestampMS < 0 {
 		return fmt.Errorf("timestamps must be >=0")
 	}
+	if _, err := NormalizeAdaptiveActions(r.AllowedAdaptiveActions); err != nil {
+		return err
+	}
+	if r.RetryBudgetRemaining < 0 {
+		return fmt.Errorf("retry_budget_remaining must be >=0")
+	}
+	if r.CandidateProviderCount < 0 {
+		return fmt.Errorf("candidate_provider_count must be >=0")
+	}
 	return nil
+}
+
+// NormalizeAdaptiveActions validates and returns sorted unique adaptive actions.
+func NormalizeAdaptiveActions(actions []string) ([]string, error) {
+	if len(actions) == 0 {
+		return nil, nil
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(actions))
+	for _, action := range actions {
+		switch action {
+		case "retry", "provider_switch", "fallback":
+			if _, exists := seen[action]; exists {
+				return nil, fmt.Errorf("duplicate adaptive action: %q", action)
+			}
+			seen[action] = struct{}{}
+			out = append(out, action)
+		default:
+			return nil, fmt.Errorf("unsupported adaptive action: %q", action)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 // Outcome is an adapter-normalized invocation result.

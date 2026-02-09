@@ -8,9 +8,11 @@ import (
 	"github.com/tiger/realtime-speech-pipeline/internal/observability/timeline"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/executor"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/localadmission"
+	"github.com/tiger/realtime-speech-pipeline/internal/runtime/prelude"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/contracts"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/invocation"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/registry"
+	"github.com/tiger/realtime-speech-pipeline/internal/runtime/transport"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/turnarbiter"
 )
 
@@ -323,5 +325,107 @@ func TestExecutePlanPersistsAttemptEvidenceAndTerminalBaseline(t *testing.T) {
 	}
 	if active.State != controlplane.TurnClosed {
 		t.Fatalf("expected terminal close state, got %s", active.State)
+	}
+}
+
+func TestCancellationFenceRejectsLateOutputDeterministically(t *testing.T) {
+	t.Parallel()
+
+	fence := transport.NewOutputFence()
+	beforeCancel, err := fence.EvaluateOutput(transport.OutputAttempt{
+		SessionID:            "sess-int-cancel-1",
+		TurnID:               "turn-int-cancel-1",
+		PipelineVersion:      "pipeline-v1",
+		EventID:              "evt-int-cancel-before",
+		TransportSequence:    1,
+		RuntimeSequence:      1,
+		AuthorityEpoch:       1,
+		RuntimeTimestampMS:   100,
+		WallClockTimestampMS: 100,
+	})
+	if err != nil {
+		t.Fatalf("unexpected pre-cancel output error: %v", err)
+	}
+	if !beforeCancel.Accepted || beforeCancel.Signal.Signal != "output_accepted" {
+		t.Fatalf("expected output_accepted before cancel, got %+v", beforeCancel)
+	}
+
+	cancelAccepted, err := fence.EvaluateOutput(transport.OutputAttempt{
+		SessionID:            "sess-int-cancel-1",
+		TurnID:               "turn-int-cancel-1",
+		PipelineVersion:      "pipeline-v1",
+		EventID:              "evt-int-cancel-accept",
+		TransportSequence:    2,
+		RuntimeSequence:      2,
+		AuthorityEpoch:       1,
+		RuntimeTimestampMS:   101,
+		WallClockTimestampMS: 101,
+		CancelAccepted:       true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected cancel acceptance error: %v", err)
+	}
+	if cancelAccepted.Accepted || cancelAccepted.Signal.Signal != "playback_cancelled" {
+		t.Fatalf("expected cancel fence output rejection, got %+v", cancelAccepted)
+	}
+
+	lateOutput, err := fence.EvaluateOutput(transport.OutputAttempt{
+		SessionID:            "sess-int-cancel-1",
+		TurnID:               "turn-int-cancel-1",
+		PipelineVersion:      "pipeline-v1",
+		EventID:              "evt-int-cancel-late",
+		TransportSequence:    3,
+		RuntimeSequence:      3,
+		AuthorityEpoch:       1,
+		RuntimeTimestampMS:   102,
+		WallClockTimestampMS: 102,
+	})
+	if err != nil {
+		t.Fatalf("unexpected late output error: %v", err)
+	}
+	if lateOutput.Accepted || lateOutput.Signal.Signal != "playback_cancelled" {
+		t.Fatalf("expected deterministic post-cancel rejection, got %+v", lateOutput)
+	}
+}
+
+func TestPreludeProposalFeedsTurnOpenPath(t *testing.T) {
+	t.Parallel()
+
+	preludeEngine := prelude.NewEngine()
+	proposal, err := preludeEngine.ProposeTurn(prelude.Input{
+		SessionID:            "sess-prelude-chain-1",
+		TurnID:               "turn-prelude-chain-1",
+		PipelineVersion:      "pipeline-v1",
+		TransportSequence:    1,
+		RuntimeSequence:      1,
+		AuthorityEpoch:       1,
+		RuntimeTimestampMS:   100,
+		WallClockTimestampMS: 100,
+	})
+	if err != nil {
+		t.Fatalf("unexpected prelude proposal error: %v", err)
+	}
+	if proposal.Signal.Signal != "turn_open_proposed" {
+		t.Fatalf("expected turn_open_proposed signal, got %+v", proposal.Signal)
+	}
+
+	arbiter := turnarbiter.New()
+	open, err := arbiter.HandleTurnOpenProposed(turnarbiter.OpenRequest{
+		SessionID:            proposal.Signal.SessionID,
+		TurnID:               proposal.Signal.TurnID,
+		EventID:              proposal.Signal.EventID,
+		RuntimeTimestampMS:   proposal.Signal.RuntimeTimestampMS,
+		WallClockTimestampMS: proposal.Signal.WallClockMS,
+		PipelineVersion:      proposal.Signal.PipelineVersion,
+		AuthorityEpoch:       proposal.Signal.AuthorityEpoch,
+		SnapshotValid:        true,
+		AuthorityEpochValid:  true,
+		AuthorityAuthorized:  true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected arbiter open error: %v", err)
+	}
+	if open.State != controlplane.TurnActive {
+		t.Fatalf("expected active turn after prelude proposal, got %s", open.State)
 	}
 }
