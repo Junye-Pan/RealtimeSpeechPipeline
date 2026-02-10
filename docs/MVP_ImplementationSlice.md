@@ -4,12 +4,12 @@
 
 This document remains the normative MVP contract and now includes an implementation snapshot.
 
-Current milestone state (from current local workspace on `main` at commit `58aa676`):
+Current milestone state (from current local workspace on `main` at commit `62532d8`):
 - Contract/schema validation, runtime arbiter/guard path, full failure matrix slices (`F1`-`F8`), and replay divergence gating paths are implemented.
 - `RK-10`/`RK-11` provider contracts plus deterministic invocation/retry-switch/fallback behavior are implemented, including startup+CI provider-count enforcement (3-5 per modality), non-terminal attempt evidence promotion into terminal OR-02 baseline evidence, per-attempt/invocation latency fields in OR-02 invocation outcomes, optional non-terminal invocation snapshot append support (config-gated), and live-provider switch/fallback smoke coverage.
 - Replay invocation-latency threshold gating is implemented with runtime-baseline-artifact extraction in replay regression (`cmd/rspp-cli replay-regression-report`), replacing synthetic threshold sample inputs.
 - CP turn-start bundle seam is implemented for deterministic CP-derived plan inputs and snapshot provenance (`CP-01/02/03/04/05/07/08/09/10` services + runtime seam wiring in arbiter), including backend bootstrap wiring (`turnarbiter.NewWithControlPlaneBackends`), file/env/http-backed distribution adapter loading, per-service partial-backend fallback defaults, stale-snapshot error classification, CP-03 graph compile output threading, CP-05 pre-turn admission decision shaping, CP-07 lease authority gating, and integration coverage for custom/partial/stale pipeline-version/snapshot propagation.
-- Security/data-handling baseline is implemented, including replay access controls, immutable replay-audit durable JSONL backend resolver path (resolver-backed sink adapter), tenant policy-resolver-backed retention enforcement seams, retention/deletion contract coverage with backend resolver wiring, concrete scheduled retention sweep entrypoint (`rspp-runtime retention-sweep`), deterministic per-run/per-tenant/per-class sweep counters, and fail-fast policy-artifact validation with stable error taxonomy.
+- Security/data-handling baseline is implemented, including replay access controls, immutable replay-audit durable backend resolver paths (HTTP backend with ordered retry/failover plus JSONL fallback), tenant policy-resolver-backed retention enforcement seams, retention/deletion contract coverage with backend resolver wiring, distributed CP snapshot-sourced retention policy loading for `retention-sweep` (with deterministic fallback defaults), deterministic per-run/per-tenant/per-class sweep counters, and fail-fast policy-artifact validation with stable error taxonomy.
 - `make verify-quick` and `make verify-full` invoke `scripts/verify.sh` with replay and SLO artifacts.
 - CI enforces blocking `codex-artifact-policy`, `verify-quick`, `verify-full`, and `security-baseline` jobs; `live-provider-smoke` and `a2-runtime-live` remain non-blocking.
 
@@ -253,23 +253,24 @@ Status note:
    - added ordered multi-endpoint failover (`RSPP_CP_DISTRIBUTION_HTTP_URLS`) with deterministic per-endpoint retry/backoff controls.
    - added on-demand TTL cache refresh with bounded stale-serving fallback (`cache_ttl` + `max_staleness`) and failover orchestration coverage for degraded/stale endpoint chains.
 
+18. Productionize replay durability and policy distribution backends (2026-02-10):
+   - added distributed replay-audit durable HTTP backend path with auth headers, deterministic retry/backoff, and ordered endpoint failover.
+   - added JSONL tenant-scoped replay-audit fallback resolver composition for deterministic degraded operation when HTTP backends are unavailable.
+   - moved retention policy sourcing for `rspp-runtime retention-sweep` from static artifact-first to CP distribution snapshot-first (`file`/`env`/`http`) with deterministic default-policy fallback and run-level source/fallback reporting.
+   - added outage/recovery tests covering CP distribution snapshot fallback on backend outage and deterministic source recovery on subsequent runs.
+
 ### 10.2 Remaining (open, ordered as of 2026-02-10)
 
 Status update:
 - This section tracks unfinished/partially finished/unstarted next-step work only.
 - Completed closure items were moved to section `10.1`.
 
-1. Productionize replay durability and policy distribution backends:
-   - replace/augment local JSONL durable sink with distributed durable backend implementation,
-   - move retention policy sourcing from static artifact paths to distributed CP policy snapshots,
-   - add integration coverage for backend outage/recovery and deterministic fallback behavior.
-
-2. Expand replay invocation-latency evidence coverage:
+1. Expand replay invocation-latency evidence coverage:
    - extend artifact-derived latency extraction beyond current baseline fixture scope,
    - add replay fixtures that assert latency thresholds across more runtime chains,
    - keep threshold-failure divergence output deterministic across fixture sets.
 
-3. Promote partial CP modules toward `implemented` gate:
+2. Promote partial CP modules toward `implemented` gate:
    - define and satisfy promotion gate criteria for CP-01/03/04/05/07/08/09/10,
    - require service-client backend parity + failure-injection coverage + conformance evidence updates,
    - update A.1 status rows only after those gates are met.
@@ -332,7 +333,7 @@ Real-provider validation coverage:
 | --- | --- | --- | --- |
 | OR-01 | scaffold-only | `internal/observability/telemetry/.gitkeep` | Telemetry pipeline module is not implemented in this slice. |
 | OR-02 | implemented | `internal/observability/timeline/recorder.go`, `internal/observability/timeline/redaction.go`, `internal/observability/timeline/artifact.go`, `internal/runtime/turnarbiter/arbiter.go`, tests | Baseline timeline recording includes payload classification tags, persisted redaction decisions, terminal baseline promotion of invocation outcomes synthesized from non-terminal provider attempt evidence, deterministic invocation latency fields (`final_attempt_latency_ms`, `total_invocation_latency_ms`), and optional non-terminal invocation snapshot append path (config-gated). |
-| OR-03 | implemented | `internal/observability/replay/comparator.go`, `internal/observability/replay/access.go`, `internal/observability/replay/retention.go`, `internal/observability/replay/retention_backend.go`, `internal/observability/replay/service.go`, `internal/observability/replay/audit_backend.go`, `api/observability/types.go`, `test/replay/*`, `cmd/rspp-cli/main.go`, `cmd/rspp-cli/main_test.go`, `cmd/rspp-runtime/main.go`, `cmd/rspp-runtime/main_test.go` | Replay divergence comparison/reporting is implemented, with deny-by-default replay access schema, immutable audit sink durable JSONL backend resolver path, backend-policy resolver seams for retention enforcement, artifact-derived invocation-latency threshold gating in replay regression, and a concrete scheduled retention sweep command path (`retention-sweep`) for baseline operational enforcement. |
+| OR-03 | implemented | `internal/observability/replay/comparator.go`, `internal/observability/replay/access.go`, `internal/observability/replay/retention.go`, `internal/observability/replay/retention_backend.go`, `internal/observability/replay/service.go`, `internal/observability/replay/audit_backend.go`, `internal/observability/replay/audit_backend_http.go`, `internal/controlplane/distribution/retention_snapshot.go`, `api/observability/types.go`, `test/replay/*`, `cmd/rspp-cli/main.go`, `cmd/rspp-cli/main_test.go`, `cmd/rspp-runtime/main.go`, `cmd/rspp-runtime/main_test.go` | Replay divergence comparison/reporting is implemented, with deny-by-default replay access schema, immutable audit sink durable backend resolver paths (HTTP + JSONL fallback), backend-policy resolver seams for retention enforcement, CP distribution snapshot-first retention policy resolution with deterministic fallback defaults in `retention-sweep`, artifact-derived invocation-latency threshold gating in replay regression, and concrete scheduled retention sweep operational enforcement. |
 
 ### A.4 Tooling and DevEx
 
@@ -347,6 +348,6 @@ Real-provider validation coverage:
 ## Appendix B. Follow-up references (mapped to section 10.2)
 
 1. Keep `docs/CIValidationGates.md` and `docs/ConformanceTestPlan.md` synchronized with `Makefile`, `.github/workflows/verify.yml`, and `.codex` artifact policy changes as `10.2` items progress.
-2. Replay durability/policy distribution backend productionization scope is tracked in `10.2.1` (distributed durable sink + distributed policy snapshots).
-3. Replay invocation-latency evidence expansion scope is tracked in `10.2.2` (artifact-derived extraction coverage growth).
-4. CP module promotion-to-implemented gate scope is tracked in `10.2.3` (backend parity + failure-injection + conformance evidence updates).
+2. Replay durability/policy distribution backend productionization scope is closed in `10.1.18` (distributed durable sink + distributed policy snapshots + outage/recovery fallback coverage).
+3. Replay invocation-latency evidence expansion scope is tracked in `10.2.1` (artifact-derived extraction coverage growth).
+4. CP module promotion-to-implemented gate scope is tracked in `10.2.2` (backend parity + failure-injection + conformance evidence updates).

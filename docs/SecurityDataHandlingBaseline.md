@@ -151,18 +151,18 @@ Any missing attribute => deny.
 ### 7.2 Baseline backend path and behavior
 
 1. Retention/deletion scaffold contract and in-memory baseline implementation live in `internal/observability/replay/retention.go`, with backend-policy resolver wiring in `internal/observability/replay/retention_backend.go`.
-2. Immutable replay-audit sink interface and backend access path wrappers live in `internal/observability/replay/service.go`, with durable JSONL backend adapter/resolver implementations in `internal/observability/replay/audit_backend.go`.
+2. Immutable replay-audit sink interface and backend access path wrappers live in `internal/observability/replay/service.go`, with durable backend adapter/resolver implementations in `internal/observability/replay/audit_backend.go` and `internal/observability/replay/audit_backend_http.go` (HTTP primary + JSONL fallback).
 3. Replay access authorization must fail closed when immutable audit append fails or audit sink is unavailable.
 4. `hard_delete` removes matching replay artifacts for the requested tenant/session-or-turn scope.
 5. `crypto_inaccessible` keeps matching replay artifacts but makes reads fail with an inaccessible outcome.
 6. Deleting replay artifacts does not delete immutable audit log entries.
-7. Scheduled retention enforcement entrypoint is available via `cmd/rspp-runtime` subcommand `retention-sweep`, which composes backend+fallback policy resolvers through `EnforceTenantRetentionWithResolver`.
+7. Scheduled retention enforcement entrypoint is available via `cmd/rspp-runtime` subcommand `retention-sweep`, which resolves policy in deterministic precedence order: explicit `-policy` artifact override, then CP distribution snapshot source (`file`/`env`/`http`), then default-policy fallback.
 
 ### 7.3 Production scheduling guidance (implemented 2026-02-10)
 
 1. Operators should run `rspp-runtime retention-sweep` on a fixed schedule with explicit:
    - `-store` artifact path
-   - `-policy` artifact path (when policy distribution is configured)
+   - optional `-policy` artifact path override (when explicitly pinning policy input for an operation window)
    - `-tenants` scope list
    - `-runs` and `-interval-ms` values
 2. Policy artifacts are validated before sweep execution. Invalid/malformed artifacts fail fast with deterministic error codes:
@@ -172,6 +172,7 @@ Any missing attribute => deny.
    - `RETENTION_POLICY_TENANT_MISMATCH`
    - `RETENTION_POLICY_VALIDATION_ERROR`
 3. Sweep reports include deterministic per-run, per-tenant, and per-class deletion counters (`deleted_by_class`) for operational audits.
+4. Sweep reports include deterministic policy-source metadata (`policy_source`) and fallback reason markers (`policy_fallback_reason`) for degraded CP distribution fetch scenarios.
 
 #### Example: cron
 

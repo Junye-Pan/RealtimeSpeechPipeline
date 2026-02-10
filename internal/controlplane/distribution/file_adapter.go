@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/tiger/realtime-speech-pipeline/api/controlplane"
+	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
 	"github.com/tiger/realtime-speech-pipeline/internal/controlplane/admission"
 	"github.com/tiger/realtime-speech-pipeline/internal/controlplane/graphcompiler"
 	"github.com/tiger/realtime-speech-pipeline/internal/controlplane/lease"
@@ -165,6 +166,7 @@ type fileArtifact struct {
 	GraphCompiler  fileGraphCompilerSection  `json:"graph_compiler"`
 	Admission      fileAdmissionSection      `json:"admission"`
 	Lease          fileLeaseSection          `json:"lease"`
+	Retention      fileRetentionSection      `json:"retention,omitempty"`
 }
 
 func (a fileArtifact) validate(path string) error {
@@ -267,6 +269,20 @@ type fileLeaseOutput struct {
 	AuthorityEpochValid     *bool  `json:"authority_epoch_valid,omitempty"`
 	AuthorityAuthorized     *bool  `json:"authority_authorized,omitempty"`
 	Reason                  string `json:"reason,omitempty"`
+}
+
+type fileRetentionSection struct {
+	Stale          bool                           `json:"stale,omitempty"`
+	DefaultPolicy  *fileRetentionPolicy           `json:"default_policy,omitempty"`
+	TenantPolicies map[string]fileRetentionPolicy `json:"tenant_policies,omitempty"`
+}
+
+type fileRetentionPolicy struct {
+	TenantID              string                          `json:"tenant_id,omitempty"`
+	DefaultRetentionMS    int64                           `json:"default_retention_ms,omitempty"`
+	PIIRetentionLimitMS   int64                           `json:"pii_retention_limit_ms,omitempty"`
+	PHIRetentionLimitMS   int64                           `json:"phi_retention_limit_ms,omitempty"`
+	MaxRetentionByClassMS map[eventabi.PayloadClass]int64 `json:"max_retention_by_class_ms,omitempty"`
 }
 
 type fileRegistryBackend struct {

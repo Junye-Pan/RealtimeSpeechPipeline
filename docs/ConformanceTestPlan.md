@@ -7,9 +7,9 @@ Define and track the implemented conformance baseline for contract correctness, 
 Status snapshot:
 - Baseline reflects repository behavior as of `2026-02-10`.
 - This document is synchronized with current gate execution in `Makefile`, `scripts/verify.sh`, and `cmd/rspp-cli`.
-- This document is synchronized with the closed MVP `10.2` state and current post-MVP follow-up tracking in `docs/MVP_ImplementationSlice.md`.
+- This document is synchronized with the current MVP `10.1` completion state and active `10.2` follow-up tracking in `docs/MVP_ImplementationSlice.md`.
 - CP bundle provenance integration coverage now includes partial-backend fallback and stale-snapshot deterministic pre-turn handling scenarios, plus CP-03 graph compile output propagation, CP-05 pre-turn decision shaping (`CP-05` emitter outcomes), CP-07 lease-authority gating paths, and HTTP distribution hardening coverage (ordered failover chains, retry/backoff, and bounded stale refresh behavior); replay invocation-latency threshold enforcement is implemented in the current baseline.
-- OR-03 replay access path now includes durable JSONL audit-backend adapter coverage plus backend-resolver failure-mode assertions.
+- OR-03 replay access path now includes distributed HTTP replay-audit backend coverage with deterministic JSONL fallback behavior, plus backend-resolver failure-mode assertions; retention-sweep coverage now includes CP distribution snapshot-first policy sourcing with deterministic outage fallback and recovery behavior.
 
 ## 2. Suite structure and current coverage
 
