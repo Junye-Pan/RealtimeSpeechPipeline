@@ -96,3 +96,19 @@ func TestEvaluateDivergencesMissingExpectedFails(t *testing.T) {
 		t.Fatalf("expected missing expected divergence to fail, got %+v", eval.Failing)
 	}
 }
+
+func TestEvaluateDivergencesInvocationLatencyTimingAlwaysFails(t *testing.T) {
+	t.Parallel()
+
+	diff := int64(1)
+	eval := EvaluateDivergences([]obs.ReplayDivergence{{
+		Class:   obs.TimingDivergence,
+		Scope:   "invocation_latency_total:turn:t5",
+		Message: "total invocation latency exceeded threshold",
+		DiffMS:  &diff,
+	}}, DivergencePolicy{TimingToleranceMS: 15})
+
+	if len(eval.Failing) != 1 {
+		t.Fatalf("expected invocation latency timing divergence to fail regardless of tolerance, got %+v", eval.Failing)
+	}
+}

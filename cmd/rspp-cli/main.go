@@ -203,9 +203,11 @@ type replayFixtureMetadata struct {
 }
 
 type replayFixturePolicy struct {
-	Gate                string                          `json:"gate,omitempty"`
-	TimingToleranceMS   *int64                          `json:"timing_tolerance_ms,omitempty"`
-	ExpectedDivergences []regression.ExpectedDivergence `json:"expected_divergences,omitempty"`
+	Gate                              string                          `json:"gate,omitempty"`
+	TimingToleranceMS                 *int64                          `json:"timing_tolerance_ms,omitempty"`
+	FinalAttemptLatencyThresholdMS    *int64                          `json:"final_attempt_latency_threshold_ms,omitempty"`
+	TotalInvocationLatencyThresholdMS *int64                          `json:"total_invocation_latency_threshold_ms,omitempty"`
+	ExpectedDivergences               []regression.ExpectedDivergence `json:"expected_divergences,omitempty"`
 }
 
 func loadReplayFixturePolicy(metadataPath string, fixtureID string, defaultTimingToleranceMS int64) (regression.DivergencePolicy, int64, error) {
@@ -255,16 +257,19 @@ func fixtureTimingTolerance(policy replayFixturePolicy, defaultTimingToleranceMS
 }
 
 type replayFixtureExecutionReport struct {
-	FixtureID          string         `json:"fixture_id"`
-	Gate               string         `json:"gate"`
-	TimingToleranceMS  int64          `json:"timing_tolerance_ms"`
-	TotalDivergences   int            `json:"total_divergences"`
-	FailingCount       int            `json:"failing_count"`
-	UnexplainedCount   int            `json:"unexplained_count"`
-	MissingExpected    int            `json:"missing_expected"`
-	ExpectedConfigured int            `json:"expected_configured"`
-	ByClass            map[string]int `json:"by_class"`
-	FailingClasses     []string       `json:"failing_classes,omitempty"`
+	FixtureID                         string         `json:"fixture_id"`
+	Gate                              string         `json:"gate"`
+	TimingToleranceMS                 int64          `json:"timing_tolerance_ms"`
+	FinalAttemptLatencyThresholdMS    *int64         `json:"final_attempt_latency_threshold_ms,omitempty"`
+	TotalInvocationLatencyThresholdMS *int64         `json:"total_invocation_latency_threshold_ms,omitempty"`
+	InvocationLatencyBreaches         int            `json:"invocation_latency_breaches,omitempty"`
+	TotalDivergences                  int            `json:"total_divergences"`
+	FailingCount                      int            `json:"failing_count"`
+	UnexplainedCount                  int            `json:"unexplained_count"`
+	MissingExpected                   int            `json:"missing_expected"`
+	ExpectedConfigured                int            `json:"expected_configured"`
+	ByClass                           map[string]int `json:"by_class"`
+	FailingClasses                    []string       `json:"failing_classes,omitempty"`
 }
 
 type replayFixtureArtifact struct {
@@ -289,6 +294,12 @@ type replayRegressionReport struct {
 }
 
 type replayFixtureBuilder func(timingToleranceMS int64) []obs.ReplayDivergence
+
+type invocationLatencySample struct {
+	Scope                    string
+	FinalAttemptLatencyMS    int64
+	TotalInvocationLatencyMS int64
+}
 
 func writeReplayRegressionReport(outputPath string, metadataPath string, gate string) error {
 	normalizedGate := strings.ToLower(strings.TrimSpace(gate))
@@ -317,6 +328,7 @@ func writeReplayRegressionReport(outputPath string, metadataPath string, gate st
 		string(obs.AuthorityDivergence): 0,
 		string(obs.TimingDivergence):    0,
 	}
+	latencySamplesByScope, latencySamplesErr := runtimeBaselineInvocationLatencySamplesForReplay()
 
 	failingEntries := make([]obs.ReplayDivergence, 0)
 	totalDivergences := 0
@@ -333,6 +345,8 @@ func writeReplayRegressionReport(outputPath string, metadataPath string, gate st
 
 		timingToleranceMS := fixtureTimingTolerance(policy, replaySmokeTimingToleranceMS)
 		divergences := builder(timingToleranceMS)
+		latencyThresholdDivergences := buildInvocationLatencyThresholdDivergences(fixtureID, policy, latencySamplesByScope, latencySamplesErr)
+		divergences = append(divergences, latencyThresholdDivergences...)
 		evaluation := regression.EvaluateDivergences(divergences, regression.DivergencePolicy{
 			TimingToleranceMS: timingToleranceMS,
 			Expected:          policy.ExpectedDivergences,
@@ -351,16 +365,19 @@ func writeReplayRegressionReport(outputPath string, metadataPath string, gate st
 		}
 
 		report := replayFixtureExecutionReport{
-			FixtureID:          fixtureID,
-			Gate:               normalizedGate,
-			TimingToleranceMS:  timingToleranceMS,
-			TotalDivergences:   len(divergences),
-			FailingCount:       len(evaluation.Failing),
-			UnexplainedCount:   len(evaluation.Unexplained),
-			MissingExpected:    len(evaluation.MissingExpected),
-			ExpectedConfigured: len(policy.ExpectedDivergences),
-			ByClass:            byClass,
-			FailingClasses:     uniqueFailingClasses(evaluation.Failing),
+			FixtureID:                         fixtureID,
+			Gate:                              normalizedGate,
+			TimingToleranceMS:                 timingToleranceMS,
+			FinalAttemptLatencyThresholdMS:    normalizeNonNegativeThreshold(policy.FinalAttemptLatencyThresholdMS),
+			TotalInvocationLatencyThresholdMS: normalizeNonNegativeThreshold(policy.TotalInvocationLatencyThresholdMS),
+			InvocationLatencyBreaches:         len(latencyThresholdDivergences),
+			TotalDivergences:                  len(divergences),
+			FailingCount:                      len(evaluation.Failing),
+			UnexplainedCount:                  len(evaluation.Unexplained),
+			MissingExpected:                   len(evaluation.MissingExpected),
+			ExpectedConfigured:                len(policy.ExpectedDivergences),
+			ByClass:                           byClass,
+			FailingClasses:                    uniqueFailingClasses(evaluation.Failing),
 		}
 		fixtureReports = append(fixtureReports, report)
 
@@ -518,6 +535,143 @@ func replayFixtureBuilders() map[string]replayFixtureBuilder {
 	}
 }
 
+func buildInvocationLatencyThresholdDivergences(
+	fixtureID string,
+	policy replayFixturePolicy,
+	samplesByScope map[string]invocationLatencySample,
+	samplesErr error,
+) []obs.ReplayDivergence {
+	finalThreshold := normalizeNonNegativeThreshold(policy.FinalAttemptLatencyThresholdMS)
+	totalThreshold := normalizeNonNegativeThreshold(policy.TotalInvocationLatencyThresholdMS)
+	if finalThreshold == nil && totalThreshold == nil {
+		return nil
+	}
+
+	if samplesErr != nil {
+		return appendMissingInvocationLatencyEvidenceDivergences(nil, fixtureIDScope(fixtureID), finalThreshold, totalThreshold, fmt.Sprintf("runtime baseline latency extraction failed: %v", samplesErr))
+	}
+
+	scopes := invocationLatencyScopesForFixture(fixtureID)
+	if len(scopes) == 0 {
+		return appendMissingInvocationLatencyEvidenceDivergences(nil, fixtureIDScope(fixtureID), finalThreshold, totalThreshold, "latency evidence scope could not be derived from fixture id")
+	}
+
+	divergences := make([]obs.ReplayDivergence, 0)
+	for _, scope := range scopes {
+		sample, ok := samplesByScope[scope]
+		if !ok {
+			divergences = appendMissingInvocationLatencyEvidenceDivergences(divergences, scope, finalThreshold, totalThreshold, "runtime baseline artifact lacks invocation latency evidence for scope")
+			continue
+		}
+		if finalThreshold != nil && sample.FinalAttemptLatencyMS > *finalThreshold {
+			diff := sample.FinalAttemptLatencyMS - *finalThreshold
+			divergences = append(divergences, obs.ReplayDivergence{
+				Class:   obs.TimingDivergence,
+				Scope:   "invocation_latency_final:" + scope,
+				Message: fmt.Sprintf("final attempt latency threshold exceeded: observed=%d threshold=%d", sample.FinalAttemptLatencyMS, *finalThreshold),
+				DiffMS:  &diff,
+			})
+		}
+		if totalThreshold != nil && sample.TotalInvocationLatencyMS > *totalThreshold {
+			diff := sample.TotalInvocationLatencyMS - *totalThreshold
+			divergences = append(divergences, obs.ReplayDivergence{
+				Class:   obs.TimingDivergence,
+				Scope:   "invocation_latency_total:" + scope,
+				Message: fmt.Sprintf("total invocation latency threshold exceeded: observed=%d threshold=%d", sample.TotalInvocationLatencyMS, *totalThreshold),
+				DiffMS:  &diff,
+			})
+		}
+	}
+	return divergences
+}
+
+func runtimeBaselineInvocationLatencySamplesForReplay() (map[string]invocationLatencySample, error) {
+	tempDir, err := os.MkdirTemp("", "rspp-replay-runtime-baseline-*")
+	if err != nil {
+		return nil, fmt.Errorf("create runtime baseline temp directory: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	path := filepath.Join(tempDir, "runtime-baseline.json")
+	entries, err := generateRuntimeBaselineArtifact(path)
+	if err != nil {
+		return nil, fmt.Errorf("generate runtime baseline artifact: %w", err)
+	}
+	return invocationLatencySamplesFromBaselineEntries(entries), nil
+}
+
+func invocationLatencySamplesFromBaselineEntries(entries []timeline.BaselineEvidence) map[string]invocationLatencySample {
+	samples := make(map[string]invocationLatencySample)
+	for _, entry := range entries {
+		if entry.TurnID == "" || len(entry.InvocationOutcomes) == 0 {
+			continue
+		}
+		scope := "turn:" + entry.TurnID
+		current, hasCurrent := samples[scope]
+		if !hasCurrent {
+			current = invocationLatencySample{Scope: scope}
+		}
+		for _, outcome := range entry.InvocationOutcomes {
+			if outcome.FinalAttemptLatencyMS > current.FinalAttemptLatencyMS {
+				current.FinalAttemptLatencyMS = outcome.FinalAttemptLatencyMS
+			}
+			if outcome.TotalInvocationLatencyMS > current.TotalInvocationLatencyMS {
+				current.TotalInvocationLatencyMS = outcome.TotalInvocationLatencyMS
+			}
+		}
+		samples[scope] = current
+	}
+	return samples
+}
+
+func invocationLatencyScopesForFixture(fixtureID string) []string {
+	parts := strings.Split(fixtureID, "-")
+	if len(parts) < 2 || !isDigits(parts[1]) {
+		return nil
+	}
+	return []string{"turn:turn-" + parts[0] + "-" + parts[1]}
+}
+
+func fixtureIDScope(fixtureID string) string {
+	return "fixture:" + strings.TrimSpace(fixtureID)
+}
+
+func appendMissingInvocationLatencyEvidenceDivergences(
+	divergences []obs.ReplayDivergence,
+	scope string,
+	finalThreshold *int64,
+	totalThreshold *int64,
+	reason string,
+) []obs.ReplayDivergence {
+	if finalThreshold != nil {
+		divergences = append(divergences, obs.ReplayDivergence{
+			Class:   obs.TimingDivergence,
+			Scope:   "invocation_latency_final:" + scope,
+			Message: fmt.Sprintf("invocation latency evidence missing: %s", reason),
+		})
+	}
+	if totalThreshold != nil {
+		divergences = append(divergences, obs.ReplayDivergence{
+			Class:   obs.TimingDivergence,
+			Scope:   "invocation_latency_total:" + scope,
+			Message: fmt.Sprintf("invocation latency evidence missing: %s", reason),
+		})
+	}
+	return divergences
+}
+
+func isDigits(v string) bool {
+	if v == "" {
+		return false
+	}
+	for _, r := range v {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 func buildReplayNoDivergence(timingToleranceMS int64) []obs.ReplayDivergence {
 	return buildReplaySmokeDivergences(timingToleranceMS)
 }
@@ -670,6 +824,9 @@ func renderReplayFixtureSummary(report replayFixtureArtifact) string {
 		"Gate: " + report.Gate,
 		"Metadata path: " + report.MetadataPath,
 		fmt.Sprintf("Timing tolerance (ms): %d", report.TimingToleranceMS),
+		renderThresholdSummary("Final-attempt latency threshold (ms)", report.FinalAttemptLatencyThresholdMS),
+		renderThresholdSummary("Total-invocation latency threshold (ms)", report.TotalInvocationLatencyThresholdMS),
+		fmt.Sprintf("Invocation latency threshold breaches: %d", report.InvocationLatencyBreaches),
 		fmt.Sprintf("Total divergences: %d", report.TotalDivergences),
 		fmt.Sprintf("Failing divergences: %d", report.FailingCount),
 		fmt.Sprintf("Unexplained divergences: %d", report.UnexplainedCount),
@@ -696,6 +853,13 @@ func renderReplayFixtureSummary(report replayFixtureArtifact) string {
 		lines = append(lines, "", "Status: FAIL", "- Forbidden divergences: "+strings.Join(report.FailingClasses, ", "))
 	}
 	return strings.Join(lines, "\n") + "\n"
+}
+
+func renderThresholdSummary(label string, threshold *int64) string {
+	if threshold == nil {
+		return label + ": unset"
+	}
+	return fmt.Sprintf("%s: %d", label, *threshold)
 }
 
 func buildReplaySmokeDivergences(timingToleranceMS int64) []obs.ReplayDivergence {
@@ -758,6 +922,17 @@ func uniqueFailingClasses(failing []obs.ReplayDivergence) []string {
 	}
 	sort.Strings(classes)
 	return classes
+}
+
+func normalizeNonNegativeThreshold(in *int64) *int64 {
+	if in == nil {
+		return nil
+	}
+	value := *in
+	if value < 0 {
+		value = 0
+	}
+	return &value
 }
 
 func renderReplaySmokeSummary(report replaySmokeReport) string {
@@ -872,6 +1047,8 @@ func generateRuntimeBaselineArtifact(baselineArtifactPath string) ([]timeline.Ba
 	first560 := int64(560)
 	open70 := int64(70)
 	first360 := int64(360)
+	open100 := int64(100)
+	first500 := int64(500)
 	cancelAccepted := int64(500)
 	cancelFence := int64(620)
 	cancelSent := int64(498)
@@ -980,6 +1157,52 @@ func generateRuntimeBaselineArtifact(baselineArtifactPath string) ([]timeline.Ba
 				CancelAcceptedAtMS:     &cancelAccepted,
 				CancelFenceAppliedAtMS: &cancelFence,
 				CancelAckAtMS:          &cancelAck,
+			},
+		},
+		{
+			SessionID:            "sess-rd-003-runtime",
+			TurnID:               "turn-rd-003",
+			EventID:              "evt-rd-003",
+			PipelineVersion:      "pipeline-v1",
+			RuntimeSequence:      130,
+			RuntimeTimestampMS:   510,
+			WallClockTimestampMS: 510,
+			AuthorityEpoch:       7,
+			TerminalSuccessReady: true,
+			BaselineEvidence: &timeline.BaselineEvidence{
+				SessionID:          "sess-rd-003-runtime",
+				TurnID:             "turn-rd-003",
+				PipelineVersion:    "pipeline-v1",
+				EventID:            "evt-rd-003",
+				EnvelopeSnapshot:   "eventabi/v1",
+				PayloadTags:        []eventabi.PayloadClass{eventabi.PayloadMetadata},
+				RedactionDecisions: []eventabi.RedactionDecision{{PayloadClass: eventabi.PayloadMetadata, Action: eventabi.RedactionAllow}},
+				PlanHash:           "plan/turn-rd-003",
+				SnapshotProvenance: defaultSnapshotProvenance(),
+				DecisionOutcomes:   []controlplane.DecisionOutcome{sloAdmitDecision("sess-rd-003-runtime", "turn-rd-003", "evt-rd-003-admit", 100)},
+				InvocationOutcomes: []timeline.InvocationOutcomeEvidence{
+					{
+						ProviderInvocationID:     "inv-rd-003-1",
+						Modality:                 "llm",
+						ProviderID:               "llm-a",
+						OutcomeClass:             "success",
+						Retryable:                false,
+						RetryDecision:            "none",
+						AttemptCount:             1,
+						FinalAttemptLatencyMS:    12,
+						TotalInvocationLatencyMS: 27,
+					},
+				},
+				DeterminismSeed:      130,
+				OrderingMarkers:      []string{"runtime_sequence:130"},
+				MergeRuleID:          "merge/default",
+				MergeRuleVersion:     "v1.0",
+				AuthorityEpoch:       7,
+				TerminalOutcome:      "commit",
+				CloseEmitted:         true,
+				TurnOpenProposedAtMS: &open0,
+				TurnOpenAtMS:         &open100,
+				FirstOutputAtMS:      &first500,
 			},
 		},
 	}

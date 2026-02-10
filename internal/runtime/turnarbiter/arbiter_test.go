@@ -1,6 +1,8 @@
 package turnarbiter
 
 import (
+	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/tiger/realtime-speech-pipeline/api/controlplane"
@@ -40,6 +42,211 @@ func TestHandleTurnOpenProposedSuccess(t *testing.T) {
 	}
 	if result.Transitions[1].Trigger != controlplane.TriggerTurnOpen {
 		t.Fatalf("expected second transition trigger turn_open, got %s", result.Transitions[1].Trigger)
+	}
+}
+
+func TestHandleTurnOpenProposedUsesResolvedTurnStartBundle(t *testing.T) {
+	t.Parallel()
+
+	customSnapshot := controlplane.SnapshotProvenance{
+		RoutingViewSnapshot:       "routing-view/custom",
+		AdmissionPolicySnapshot:   "admission-policy/custom",
+		ABICompatibilitySnapshot:  "abi-compat/custom",
+		VersionResolutionSnapshot: "version-resolution/custom",
+		PolicyResolutionSnapshot:  "policy-resolution/custom",
+		ProviderHealthSnapshot:    "provider-health/custom",
+	}
+	arbiter := NewWithDependencies(nil, stubTurnStartBundleResolver{
+		bundle: TurnStartBundle{
+			PipelineVersion:        "pipeline-custom",
+			GraphDefinitionRef:     "graph/custom",
+			ExecutionProfile:       "simple",
+			AllowedAdaptiveActions: []string{"retry", "fallback"},
+			SnapshotProvenance:     customSnapshot,
+		},
+	})
+
+	result, err := arbiter.HandleTurnOpenProposed(OpenRequest{
+		SessionID:             "sess-custom-1",
+		TurnID:                "turn-custom-1",
+		EventID:               "evt-custom-1",
+		RuntimeTimestampMS:    11,
+		WallClockTimestampMS:  11,
+		PipelineVersion:       "pipeline-ignored",
+		AuthorityEpoch:        2,
+		SnapshotValid:         true,
+		AuthorityEpochValid:   true,
+		AuthorityAuthorized:   true,
+		SnapshotFailurePolicy: controlplane.OutcomeDefer,
+		PlanFailurePolicy:     controlplane.OutcomeReject,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Plan == nil {
+		t.Fatalf("expected resolved plan")
+	}
+	if result.Plan.PipelineVersion != "pipeline-custom" || result.Plan.GraphDefinitionRef != "graph/custom" {
+		t.Fatalf("expected resolved plan to use custom bundle, got %+v", result.Plan)
+	}
+	if !reflect.DeepEqual(result.Plan.SnapshotProvenance, customSnapshot) {
+		t.Fatalf("expected custom snapshot provenance, got %+v", result.Plan.SnapshotProvenance)
+	}
+}
+
+func TestHandleTurnOpenProposedAppliesCPAdmissionDecision(t *testing.T) {
+	t.Parallel()
+
+	arbiter := NewWithDependencies(nil, stubTurnStartBundleResolver{
+		bundle: TurnStartBundle{
+			PipelineVersion:        "pipeline-custom",
+			GraphDefinitionRef:     "graph/custom",
+			ExecutionProfile:       "simple",
+			AllowedAdaptiveActions: []string{"retry", "fallback"},
+			SnapshotProvenance:     defaultSnapshotProvenance(),
+			HasCPAdmissionDecision: true,
+			CPAdmissionOutcomeKind: controlplane.OutcomeDefer,
+			CPAdmissionScope:       controlplane.ScopeSession,
+			CPAdmissionReason:      "cp_admission_defer_capacity",
+		},
+	})
+
+	result, err := arbiter.HandleTurnOpenProposed(OpenRequest{
+		SessionID:            "sess-cp-admission-1",
+		TurnID:               "turn-cp-admission-1",
+		EventID:              "evt-cp-admission-1",
+		RuntimeTimestampMS:   19,
+		WallClockTimestampMS: 19,
+		AuthorityEpoch:       2,
+		SnapshotValid:        true,
+		AuthorityEpochValid:  true,
+		AuthorityAuthorized:  true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.State != controlplane.TurnIdle {
+		t.Fatalf("expected Idle after CP admission defer, got %s", result.State)
+	}
+	if result.Decision == nil {
+		t.Fatalf("expected CP admission decision")
+	}
+	if result.Decision.OutcomeKind != controlplane.OutcomeDefer || result.Decision.EmittedBy != controlplane.EmitterCP05 {
+		t.Fatalf("unexpected CP admission outcome: %+v", result.Decision)
+	}
+	if result.Decision.Reason != "cp_admission_defer_capacity" {
+		t.Fatalf("unexpected CP admission reason: %+v", result.Decision)
+	}
+}
+
+func TestHandleTurnOpenProposedAppliesLeaseDecisionToAuthorityGate(t *testing.T) {
+	t.Parallel()
+
+	arbiter := NewWithDependencies(nil, stubTurnStartBundleResolver{
+		bundle: TurnStartBundle{
+			PipelineVersion:        "pipeline-custom",
+			GraphDefinitionRef:     "graph/custom",
+			ExecutionProfile:       "simple",
+			AllowedAdaptiveActions: []string{"retry", "fallback"},
+			SnapshotProvenance:     defaultSnapshotProvenance(),
+			HasLeaseDecision:       true,
+			LeaseAuthorityEpoch:    41,
+			LeaseAuthorityValid:    false,
+			LeaseAuthorityGranted:  true,
+		},
+	})
+
+	result, err := arbiter.HandleTurnOpenProposed(OpenRequest{
+		SessionID:            "sess-lease-gate-1",
+		TurnID:               "turn-lease-gate-1",
+		EventID:              "evt-lease-gate-1",
+		RuntimeTimestampMS:   23,
+		WallClockTimestampMS: 23,
+		AuthorityEpoch:       40,
+		SnapshotValid:        true,
+		AuthorityEpochValid:  true,
+		AuthorityAuthorized:  true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.State != controlplane.TurnIdle {
+		t.Fatalf("expected Idle when lease reports stale epoch, got %s", result.State)
+	}
+	if result.Decision == nil || result.Decision.OutcomeKind != controlplane.OutcomeStaleEpochReject {
+		t.Fatalf("expected stale_epoch_reject from lease authority gate, got %+v", result.Decision)
+	}
+}
+
+func TestHandleTurnOpenProposedUsesLeaseAuthorityEpochForResolvedPlan(t *testing.T) {
+	t.Parallel()
+
+	arbiter := NewWithDependencies(nil, stubTurnStartBundleResolver{
+		bundle: TurnStartBundle{
+			PipelineVersion:        "pipeline-custom",
+			GraphDefinitionRef:     "graph/custom",
+			ExecutionProfile:       "simple",
+			AllowedAdaptiveActions: []string{"retry", "fallback"},
+			SnapshotProvenance:     defaultSnapshotProvenance(),
+			HasLeaseDecision:       true,
+			LeaseAuthorityEpoch:    88,
+			LeaseAuthorityValid:    true,
+			LeaseAuthorityGranted:  true,
+		},
+	})
+
+	result, err := arbiter.HandleTurnOpenProposed(OpenRequest{
+		SessionID:            "sess-lease-epoch-1",
+		TurnID:               "turn-lease-epoch-1",
+		EventID:              "evt-lease-epoch-1",
+		RuntimeTimestampMS:   29,
+		WallClockTimestampMS: 29,
+		AuthorityEpoch:       12,
+		SnapshotValid:        true,
+		AuthorityEpochValid:  true,
+		AuthorityAuthorized:  true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.State != controlplane.TurnActive || result.Plan == nil {
+		t.Fatalf("expected active turn with resolved plan, got %+v", result)
+	}
+	if result.Plan.AuthorityEpoch != 88 {
+		t.Fatalf("expected lease authority epoch to be threaded into resolved plan, got %+v", result.Plan)
+	}
+}
+
+func TestHandleTurnOpenProposedBundleResolutionFailureUsesPlanFailurePolicy(t *testing.T) {
+	t.Parallel()
+
+	arbiter := NewWithDependencies(nil, stubTurnStartBundleResolver{err: errors.New("resolver unavailable")})
+	result, err := arbiter.HandleTurnOpenProposed(OpenRequest{
+		SessionID:            "sess-bundle-fail-1",
+		TurnID:               "turn-bundle-fail-1",
+		EventID:              "evt-bundle-fail-1",
+		RuntimeTimestampMS:   12,
+		WallClockTimestampMS: 12,
+		AuthorityEpoch:       1,
+		SnapshotValid:        true,
+		AuthorityEpochValid:  true,
+		AuthorityAuthorized:  true,
+		PlanFailurePolicy:    controlplane.OutcomeReject,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.State != controlplane.TurnIdle {
+		t.Fatalf("expected Idle after bundle resolution failure, got %s", result.State)
+	}
+	if result.Decision == nil {
+		t.Fatalf("expected deterministic decision outcome on bundle resolution failure")
+	}
+	if result.Decision.OutcomeKind != controlplane.OutcomeReject {
+		t.Fatalf("expected plan failure policy reject outcome, got %+v", result.Decision)
+	}
+	if result.Decision.Reason != "turn_start_bundle_resolution_failed" {
+		t.Fatalf("expected bundle resolution failure reason, got %+v", result.Decision)
 	}
 }
 
@@ -422,6 +629,195 @@ func TestHandleActiveBaselineAppendFailureFallsBackDeterministically(t *testing.
 	}
 }
 
+func TestHandleActiveUsesResolvedSnapshotDefaultsForBaselineEvidence(t *testing.T) {
+	t.Parallel()
+
+	customSnapshot := controlplane.SnapshotProvenance{
+		RoutingViewSnapshot:       "routing-view/custom",
+		AdmissionPolicySnapshot:   "admission-policy/custom",
+		ABICompatibilitySnapshot:  "abi-compat/custom",
+		VersionResolutionSnapshot: "version-resolution/custom",
+		PolicyResolutionSnapshot:  "policy-resolution/custom",
+		ProviderHealthSnapshot:    "provider-health/custom",
+	}
+	recorder := timeline.NewRecorder(timeline.StageAConfig{BaselineCapacity: 2, DetailCapacity: 2})
+	arbiter := NewWithDependencies(&recorder, stubTurnStartBundleResolver{
+		bundle: TurnStartBundle{
+			PipelineVersion:        "pipeline-custom",
+			GraphDefinitionRef:     "graph/custom",
+			ExecutionProfile:       "simple",
+			AllowedAdaptiveActions: []string{"retry"},
+			SnapshotProvenance:     customSnapshot,
+		},
+	})
+
+	_, err := arbiter.HandleActive(ActiveInput{
+		SessionID:            "sess-or02-custom-1",
+		TurnID:               "turn-or02-custom-1",
+		EventID:              "evt-or02-custom-1",
+		RuntimeSequence:      44,
+		RuntimeTimestampMS:   444,
+		WallClockTimestampMS: 444,
+		AuthorityEpoch:       4,
+		TerminalSuccessReady: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	entries := recorder.BaselineEntries()
+	if len(entries) != 1 {
+		t.Fatalf("expected one baseline entry, got %d", len(entries))
+	}
+	if !reflect.DeepEqual(entries[0].SnapshotProvenance, customSnapshot) {
+		t.Fatalf("expected baseline to use custom snapshot defaults, got %+v", entries[0].SnapshotProvenance)
+	}
+}
+
+func TestHandleActivePromotesProviderAttemptsToBaselineWhenOutcomesMissing(t *testing.T) {
+	t.Parallel()
+
+	recorder := timeline.NewRecorder(timeline.StageAConfig{BaselineCapacity: 2, DetailCapacity: 2, AttemptCapacity: 8})
+	if err := recorder.AppendProviderInvocationAttempts([]timeline.ProviderAttemptEvidence{
+		{
+			SessionID:            "sess-promote-1",
+			TurnID:               "turn-promote-1",
+			PipelineVersion:      "pipeline-v1",
+			EventID:              "evt-provider-1",
+			ProviderInvocationID: "pvi-promote-1",
+			Modality:             "stt",
+			ProviderID:           "stt-a",
+			Attempt:              1,
+			OutcomeClass:         "overload",
+			Retryable:            true,
+			RetryDecision:        "provider_switch",
+			TransportSequence:    1,
+			RuntimeSequence:      1,
+			AuthorityEpoch:       1,
+			RuntimeTimestampMS:   10,
+			WallClockTimestampMS: 10,
+		},
+		{
+			SessionID:            "sess-promote-1",
+			TurnID:               "turn-promote-1",
+			PipelineVersion:      "pipeline-v1",
+			EventID:              "evt-provider-1",
+			ProviderInvocationID: "pvi-promote-1",
+			Modality:             "stt",
+			ProviderID:           "stt-b",
+			Attempt:              1,
+			OutcomeClass:         "success",
+			Retryable:            false,
+			RetryDecision:        "none",
+			TransportSequence:    2,
+			RuntimeSequence:      2,
+			AuthorityEpoch:       1,
+			RuntimeTimestampMS:   11,
+			WallClockTimestampMS: 11,
+		},
+	}); err != nil {
+		t.Fatalf("append attempts: %v", err)
+	}
+
+	arbiter := NewWithRecorder(&recorder)
+	_, err := arbiter.HandleActive(ActiveInput{
+		SessionID:            "sess-promote-1",
+		TurnID:               "turn-promote-1",
+		EventID:              "evt-active-promote-1",
+		PipelineVersion:      "pipeline-v1",
+		RuntimeSequence:      99,
+		RuntimeTimestampMS:   100,
+		WallClockTimestampMS: 100,
+		AuthorityEpoch:       1,
+		TerminalSuccessReady: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected active handling error: %v", err)
+	}
+
+	entries := recorder.BaselineEntries()
+	if len(entries) != 1 {
+		t.Fatalf("expected one baseline entry, got %d", len(entries))
+	}
+	if len(entries[0].InvocationOutcomes) != 1 {
+		t.Fatalf("expected promoted invocation outcomes, got %+v", entries[0].InvocationOutcomes)
+	}
+	outcome := entries[0].InvocationOutcomes[0]
+	if outcome.ProviderInvocationID != "pvi-promote-1" || outcome.ProviderID != "stt-b" || outcome.AttemptCount != 2 {
+		t.Fatalf("expected promoted final attempt evidence, got %+v", outcome)
+	}
+	if outcome.FinalAttemptLatencyMS != 1 || outcome.TotalInvocationLatencyMS != 1 {
+		t.Fatalf("expected promoted latency fields to equal 1ms, got %+v", outcome)
+	}
+}
+
+func TestHandleActiveExplicitInvocationOutcomesOverridePromotedAttempts(t *testing.T) {
+	t.Parallel()
+
+	recorder := timeline.NewRecorder(timeline.StageAConfig{BaselineCapacity: 2, DetailCapacity: 2, AttemptCapacity: 8})
+	if err := recorder.AppendProviderInvocationAttempts([]timeline.ProviderAttemptEvidence{
+		{
+			SessionID:            "sess-promote-2",
+			TurnID:               "turn-promote-2",
+			PipelineVersion:      "pipeline-v1",
+			EventID:              "evt-provider-2",
+			ProviderInvocationID: "pvi-promote-2",
+			Modality:             "stt",
+			ProviderID:           "stt-a",
+			Attempt:              1,
+			OutcomeClass:         "success",
+			Retryable:            false,
+			RetryDecision:        "none",
+			TransportSequence:    1,
+			RuntimeSequence:      1,
+			AuthorityEpoch:       1,
+			RuntimeTimestampMS:   10,
+			WallClockTimestampMS: 10,
+		},
+	}); err != nil {
+		t.Fatalf("append attempts: %v", err)
+	}
+
+	explicit := timeline.InvocationOutcomeEvidence{
+		ProviderInvocationID:     "pvi-explicit",
+		Modality:                 "external",
+		ProviderID:               "manual-provider",
+		OutcomeClass:             "success",
+		Retryable:                false,
+		RetryDecision:            "none",
+		AttemptCount:             1,
+		FinalAttemptLatencyMS:    0,
+		TotalInvocationLatencyMS: 0,
+	}
+	arbiter := NewWithRecorder(&recorder)
+	_, err := arbiter.HandleActive(ActiveInput{
+		SessionID:                  "sess-promote-2",
+		TurnID:                     "turn-promote-2",
+		EventID:                    "evt-active-promote-2",
+		PipelineVersion:            "pipeline-v1",
+		RuntimeSequence:            100,
+		RuntimeTimestampMS:         101,
+		WallClockTimestampMS:       101,
+		AuthorityEpoch:             1,
+		TerminalSuccessReady:       true,
+		ProviderInvocationOutcomes: []timeline.InvocationOutcomeEvidence{explicit},
+	})
+	if err != nil {
+		t.Fatalf("unexpected active handling error: %v", err)
+	}
+
+	entries := recorder.BaselineEntries()
+	if len(entries) != 1 {
+		t.Fatalf("expected one baseline entry, got %d", len(entries))
+	}
+	if len(entries[0].InvocationOutcomes) != 1 {
+		t.Fatalf("expected one invocation outcome, got %+v", entries[0].InvocationOutcomes)
+	}
+	if !reflect.DeepEqual(entries[0].InvocationOutcomes[0], explicit) {
+		t.Fatalf("expected explicit invocation outcome to win, got %+v", entries[0].InvocationOutcomes[0])
+	}
+}
+
 func containsLifecycleEvent(events []LifecycleEvent, name string) bool {
 	for _, e := range events {
 		if e.Name == name {
@@ -429,4 +825,16 @@ func containsLifecycleEvent(events []LifecycleEvent, name string) bool {
 		}
 	}
 	return false
+}
+
+type stubTurnStartBundleResolver struct {
+	bundle TurnStartBundle
+	err    error
+}
+
+func (s stubTurnStartBundleResolver) ResolveTurnStartBundle(_ TurnStartBundleInput) (TurnStartBundle, error) {
+	if s.err != nil {
+		return TurnStartBundle{}, s.err
+	}
+	return s.bundle, nil
 }

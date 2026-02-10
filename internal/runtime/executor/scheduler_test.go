@@ -272,6 +272,9 @@ func TestSchedulerProviderInvocationSwitchAfterFailure(t *testing.T) {
 	if evidence.OutcomeClass != "success" || evidence.Modality != "stt" {
 		t.Fatalf("expected invocation evidence success/stt, got %+v", evidence)
 	}
+	if evidence.FinalAttemptLatencyMS != 0 || evidence.TotalInvocationLatencyMS != 0 {
+		t.Fatalf("expected default zero latency fields for direct provider evidence projection, got %+v", evidence)
+	}
 }
 
 func TestExecutePlanDeterministicOrderAndRoutes(t *testing.T) {
@@ -450,6 +453,152 @@ func TestExecutePlanProviderAttemptsPersisted(t *testing.T) {
 	}
 	if attempts[0].ProviderID != "stt-a" || attempts[1].ProviderID != "stt-b" {
 		t.Fatalf("unexpected persisted attempt providers: %+v", attempts)
+	}
+	if attempts[0].AttemptLatencyMS != 0 || attempts[1].AttemptLatencyMS != 1 {
+		t.Fatalf("unexpected persisted attempt latencies: %+v", attempts)
+	}
+}
+
+func TestExecutePlanInvocationSnapshotDisabledByDefault(t *testing.T) {
+	t.Parallel()
+
+	catalog, err := registry.NewCatalog([]contracts.Adapter{
+		contracts.StaticAdapter{
+			ID:   "stt-a",
+			Mode: contracts.ModalitySTT,
+			InvokeFn: func(req contracts.InvocationRequest) (contracts.Outcome, error) {
+				return contracts.Outcome{Class: contracts.OutcomeSuccess}, nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected catalog error: %v", err)
+	}
+
+	recorder := timeline.NewRecorder(timeline.StageAConfig{BaselineCapacity: 4, DetailCapacity: 4, AttemptCapacity: 8})
+	scheduler := NewSchedulerWithProviderInvokerAndAttemptAppender(
+		localadmission.Evaluator{},
+		invocation.NewController(catalog),
+		&recorder,
+	)
+
+	_, err = scheduler.ExecutePlan(
+		SchedulingInput{
+			SessionID:            "sess-plan-snapshot-disabled-1",
+			TurnID:               "turn-plan-snapshot-disabled-1",
+			EventID:              "evt-plan-snapshot-disabled-1",
+			PipelineVersion:      "pipeline-v1",
+			TransportSequence:    10,
+			RuntimeSequence:      11,
+			AuthorityEpoch:       1,
+			RuntimeTimestampMS:   100,
+			WallClockTimestampMS: 100,
+		},
+		ExecutionPlan{
+			Nodes: []NodeSpec{
+				{
+					NodeID:   "provider-node",
+					NodeType: "provider",
+					Lane:     eventabi.LaneData,
+					Provider: &ProviderInvocationInput{
+						Modality:          contracts.ModalitySTT,
+						PreferredProvider: "stt-a",
+					},
+				},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("unexpected execute plan error: %v", err)
+	}
+
+	if snapshots := recorder.InvocationSnapshotEntries(); len(snapshots) != 0 {
+		t.Fatalf("expected no invocation snapshots when disabled, got %+v", snapshots)
+	}
+}
+
+func TestExecutePlanInvocationSnapshotEnabled(t *testing.T) {
+	t.Parallel()
+
+	catalog, err := registry.NewCatalog([]contracts.Adapter{
+		contracts.StaticAdapter{
+			ID:   "stt-a",
+			Mode: contracts.ModalitySTT,
+			InvokeFn: func(req contracts.InvocationRequest) (contracts.Outcome, error) {
+				return contracts.Outcome{
+					Class:       contracts.OutcomeOverload,
+					Retryable:   false,
+					CircuitOpen: true,
+					Reason:      "provider_overload",
+				}, nil
+			},
+		},
+		contracts.StaticAdapter{
+			ID:   "stt-b",
+			Mode: contracts.ModalitySTT,
+			InvokeFn: func(req contracts.InvocationRequest) (contracts.Outcome, error) {
+				return contracts.Outcome{Class: contracts.OutcomeSuccess}, nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected catalog error: %v", err)
+	}
+
+	recorder := timeline.NewRecorder(timeline.StageAConfig{
+		BaselineCapacity:         4,
+		DetailCapacity:           4,
+		AttemptCapacity:          8,
+		InvocationSnapshotCap:    4,
+		EnableInvocationSnapshot: true,
+	})
+	scheduler := NewSchedulerWithProviderInvokerAndAttemptAppender(
+		localadmission.Evaluator{},
+		invocation.NewController(catalog),
+		&recorder,
+	)
+
+	_, err = scheduler.ExecutePlan(
+		SchedulingInput{
+			SessionID:            "sess-plan-snapshot-enabled-1",
+			TurnID:               "turn-plan-snapshot-enabled-1",
+			EventID:              "evt-plan-snapshot-enabled-1",
+			PipelineVersion:      "pipeline-v1",
+			TransportSequence:    10,
+			RuntimeSequence:      11,
+			AuthorityEpoch:       1,
+			RuntimeTimestampMS:   100,
+			WallClockTimestampMS: 100,
+		},
+		ExecutionPlan{
+			Nodes: []NodeSpec{
+				{
+					NodeID:   "provider-node",
+					NodeType: "provider",
+					Lane:     eventabi.LaneData,
+					Provider: &ProviderInvocationInput{
+						Modality:               contracts.ModalitySTT,
+						PreferredProvider:      "stt-a",
+						AllowedAdaptiveActions: []string{"provider_switch"},
+					},
+				},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("unexpected execute plan error: %v", err)
+	}
+
+	snapshots := recorder.InvocationSnapshotEntries()
+	if len(snapshots) != 1 {
+		t.Fatalf("expected one invocation snapshot entry, got %+v", snapshots)
+	}
+	snapshot := snapshots[0]
+	if snapshot.ProviderID != "stt-b" || snapshot.OutcomeClass != "success" || snapshot.AttemptCount != 2 {
+		t.Fatalf("unexpected invocation snapshot payload: %+v", snapshot)
+	}
+	if snapshot.FinalAttemptLatencyMS != 1 || snapshot.TotalInvocationLatencyMS != 1 {
+		t.Fatalf("unexpected invocation snapshot latencies: %+v", snapshot)
 	}
 }
 

@@ -139,13 +139,15 @@ func TestValidateCompletenessInvocationOutcomeEvidence(t *testing.T) {
 	baseline := minimalBaseline("turn-provider-evidence")
 	baseline.InvocationOutcomes = []InvocationOutcomeEvidence{
 		{
-			ProviderInvocationID: "pvi-1",
-			Modality:             "stt",
-			ProviderID:           "stt-a",
-			OutcomeClass:         "success",
-			Retryable:            false,
-			RetryDecision:        "none",
-			AttemptCount:         1,
+			ProviderInvocationID:     "pvi-1",
+			Modality:                 "stt",
+			ProviderID:               "stt-a",
+			OutcomeClass:             "success",
+			Retryable:                false,
+			RetryDecision:            "none",
+			AttemptCount:             1,
+			FinalAttemptLatencyMS:    0,
+			TotalInvocationLatencyMS: 0,
 		},
 	}
 
@@ -156,16 +158,35 @@ func TestValidateCompletenessInvocationOutcomeEvidence(t *testing.T) {
 	invalid := baseline
 	invalid.InvocationOutcomes = []InvocationOutcomeEvidence{
 		{
-			ProviderInvocationID: "pvi-2",
-			Modality:             "stt",
-			ProviderID:           "stt-a",
-			OutcomeClass:         "unknown",
-			RetryDecision:        "none",
-			AttemptCount:         1,
+			ProviderInvocationID:     "pvi-2",
+			Modality:                 "stt",
+			ProviderID:               "stt-a",
+			OutcomeClass:             "unknown",
+			RetryDecision:            "none",
+			AttemptCount:             1,
+			FinalAttemptLatencyMS:    0,
+			TotalInvocationLatencyMS: 0,
 		},
 	}
 	if err := invalid.ValidateCompleteness(); err == nil {
 		t.Fatalf("expected invalid invocation outcome class to fail completeness")
+	}
+
+	invalidLatency := baseline
+	invalidLatency.InvocationOutcomes = []InvocationOutcomeEvidence{
+		{
+			ProviderInvocationID:     "pvi-3",
+			Modality:                 "stt",
+			ProviderID:               "stt-a",
+			OutcomeClass:             "success",
+			RetryDecision:            "none",
+			AttemptCount:             1,
+			FinalAttemptLatencyMS:    -1,
+			TotalInvocationLatencyMS: 0,
+		},
+	}
+	if err := invalidLatency.ValidateCompleteness(); err == nil {
+		t.Fatalf("expected negative invocation latency evidence to fail completeness")
 	}
 }
 
@@ -258,6 +279,239 @@ func TestProviderAttemptEvidenceValidate(t *testing.T) {
 	if err := invalid.Validate(); err == nil {
 		t.Fatalf("expected invalid provider attempt outcome class to fail")
 	}
+
+	invalidLatency := valid
+	invalidLatency.AttemptLatencyMS = -1
+	if err := invalidLatency.Validate(); err == nil {
+		t.Fatalf("expected negative provider attempt latency to fail")
+	}
+}
+
+func TestProviderAttemptEntriesForTurn(t *testing.T) {
+	t.Parallel()
+
+	recorder := NewRecorder(StageAConfig{BaselineCapacity: 4, DetailCapacity: 4, AttemptCapacity: 8})
+	attempts := []ProviderAttemptEvidence{
+		{
+			SessionID:            "sess-1",
+			TurnID:               "turn-1",
+			PipelineVersion:      "pipeline-v1",
+			EventID:              "evt-1",
+			ProviderInvocationID: "pvi-1",
+			Modality:             "stt",
+			ProviderID:           "stt-a",
+			Attempt:              1,
+			OutcomeClass:         "success",
+			Retryable:            false,
+			RetryDecision:        "none",
+			TransportSequence:    1,
+			RuntimeSequence:      1,
+			AuthorityEpoch:       2,
+			RuntimeTimestampMS:   100,
+			WallClockTimestampMS: 100,
+		},
+		{
+			SessionID:            "sess-1",
+			TurnID:               "turn-2",
+			PipelineVersion:      "pipeline-v1",
+			EventID:              "evt-2",
+			ProviderInvocationID: "pvi-2",
+			Modality:             "stt",
+			ProviderID:           "stt-b",
+			Attempt:              1,
+			OutcomeClass:         "success",
+			Retryable:            false,
+			RetryDecision:        "none",
+			TransportSequence:    2,
+			RuntimeSequence:      2,
+			AuthorityEpoch:       2,
+			RuntimeTimestampMS:   101,
+			WallClockTimestampMS: 101,
+		},
+	}
+	if err := recorder.AppendProviderInvocationAttempts(attempts); err != nil {
+		t.Fatalf("append attempts: %v", err)
+	}
+
+	filtered := recorder.ProviderAttemptEntriesForTurn("sess-1", "turn-1")
+	if len(filtered) != 1 {
+		t.Fatalf("expected one filtered attempt, got %d", len(filtered))
+	}
+	if filtered[0].ProviderInvocationID != "pvi-1" {
+		t.Fatalf("unexpected filtered attempt: %+v", filtered[0])
+	}
+}
+
+func TestAppendInvocationSnapshotDisabledByDefault(t *testing.T) {
+	t.Parallel()
+
+	recorder := NewRecorder(StageAConfig{BaselineCapacity: 4, DetailCapacity: 4, AttemptCapacity: 4})
+	if err := recorder.AppendInvocationSnapshot(minimalInvocationSnapshot("evt-snapshot-disabled-1")); err != nil {
+		t.Fatalf("expected disabled invocation snapshot append to no-op, got %v", err)
+	}
+	if got := recorder.InvocationSnapshotEntries(); len(got) != 0 {
+		t.Fatalf("expected no stored snapshots when disabled, got %+v", got)
+	}
+}
+
+func TestAppendInvocationSnapshotEnabledCapacityAndFilter(t *testing.T) {
+	t.Parallel()
+
+	recorder := NewRecorder(StageAConfig{
+		BaselineCapacity:         4,
+		DetailCapacity:           4,
+		AttemptCapacity:          4,
+		InvocationSnapshotCap:    1,
+		EnableInvocationSnapshot: true,
+	})
+
+	first := minimalInvocationSnapshot("evt-snapshot-enabled-1")
+	first.TurnID = "turn-snapshot-1"
+	if err := recorder.AppendInvocationSnapshot(first); err != nil {
+		t.Fatalf("unexpected first snapshot append error: %v", err)
+	}
+
+	second := minimalInvocationSnapshot("evt-snapshot-enabled-2")
+	second.TurnID = "turn-snapshot-2"
+	if err := recorder.AppendInvocationSnapshot(second); !errors.Is(err, ErrInvocationSnapshotCapacityExhausted) {
+		t.Fatalf("expected invocation snapshot capacity exhaustion, got %v", err)
+	}
+
+	filtered := recorder.InvocationSnapshotEntriesForTurn("sess-1", "turn-snapshot-1")
+	if len(filtered) != 1 || filtered[0].EventID != "evt-snapshot-enabled-1" {
+		t.Fatalf("unexpected filtered snapshots: %+v", filtered)
+	}
+}
+
+func TestInvocationSnapshotEvidenceValidate(t *testing.T) {
+	t.Parallel()
+
+	valid := minimalInvocationSnapshot("evt-snapshot-validate-1")
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("expected valid invocation snapshot, got %v", err)
+	}
+
+	invalid := valid
+	invalid.OutcomeClass = "unknown"
+	if err := invalid.Validate(); err == nil {
+		t.Fatalf("expected invalid invocation snapshot outcome class to fail")
+	}
+
+	invalidTS := valid
+	invalidTS.RuntimeTimestampMS = -1
+	if err := invalidTS.Validate(); err == nil {
+		t.Fatalf("expected negative invocation snapshot timestamp to fail")
+	}
+}
+
+func TestInvocationOutcomesFromProviderAttempts(t *testing.T) {
+	t.Parallel()
+
+	attempts := []ProviderAttemptEvidence{
+		{
+			SessionID:            "sess-1",
+			TurnID:               "turn-1",
+			PipelineVersion:      "pipeline-v1",
+			EventID:              "evt-1",
+			ProviderInvocationID: "pvi-b",
+			Modality:             "stt",
+			ProviderID:           "stt-a",
+			Attempt:              1,
+			OutcomeClass:         "overload",
+			Retryable:            true,
+			RetryDecision:        "provider_switch",
+			TransportSequence:    1,
+			RuntimeSequence:      1,
+			AuthorityEpoch:       2,
+			RuntimeTimestampMS:   100,
+			WallClockTimestampMS: 100,
+		},
+		{
+			SessionID:            "sess-1",
+			TurnID:               "turn-1",
+			PipelineVersion:      "pipeline-v1",
+			EventID:              "evt-1",
+			ProviderInvocationID: "pvi-b",
+			Modality:             "stt",
+			ProviderID:           "stt-b",
+			Attempt:              1,
+			OutcomeClass:         "success",
+			Retryable:            false,
+			RetryDecision:        "none",
+			TransportSequence:    2,
+			RuntimeSequence:      2,
+			AuthorityEpoch:       2,
+			RuntimeTimestampMS:   101,
+			WallClockTimestampMS: 101,
+		},
+		{
+			SessionID:            "sess-1",
+			TurnID:               "turn-1",
+			PipelineVersion:      "pipeline-v1",
+			EventID:              "evt-2",
+			ProviderInvocationID: "pvi-a",
+			Modality:             "llm",
+			ProviderID:           "llm-a",
+			Attempt:              1,
+			OutcomeClass:         "success",
+			Retryable:            false,
+			RetryDecision:        "none",
+			TransportSequence:    3,
+			RuntimeSequence:      3,
+			AuthorityEpoch:       2,
+			RuntimeTimestampMS:   102,
+			WallClockTimestampMS: 102,
+		},
+	}
+
+	outcomes, err := InvocationOutcomesFromProviderAttempts(attempts)
+	if err != nil {
+		t.Fatalf("unexpected synthesis error: %v", err)
+	}
+	if len(outcomes) != 2 {
+		t.Fatalf("expected 2 synthesized outcomes, got %d", len(outcomes))
+	}
+
+	if outcomes[0].ProviderInvocationID != "pvi-a" || outcomes[1].ProviderInvocationID != "pvi-b" {
+		t.Fatalf("expected deterministic provider invocation ordering, got %+v", outcomes)
+	}
+	if outcomes[1].ProviderID != "stt-b" || outcomes[1].OutcomeClass != "success" || outcomes[1].AttemptCount != 2 {
+		t.Fatalf("expected final-attempt synthesis for pvi-b, got %+v", outcomes[1])
+	}
+	if outcomes[0].FinalAttemptLatencyMS != 0 || outcomes[0].TotalInvocationLatencyMS != 0 {
+		t.Fatalf("expected single-attempt latency fields to be zero, got %+v", outcomes[0])
+	}
+	if outcomes[1].FinalAttemptLatencyMS != 1 || outcomes[1].TotalInvocationLatencyMS != 1 {
+		t.Fatalf("expected synthesized latency fields for pvi-b to equal 1ms, got %+v", outcomes[1])
+	}
+}
+
+func TestInvocationOutcomesFromProviderAttemptsRejectsInvalidInput(t *testing.T) {
+	t.Parallel()
+
+	_, err := InvocationOutcomesFromProviderAttempts([]ProviderAttemptEvidence{
+		{
+			SessionID:            "sess-1",
+			TurnID:               "turn-1",
+			PipelineVersion:      "pipeline-v1",
+			EventID:              "evt-1",
+			ProviderInvocationID: "pvi-1",
+			Modality:             "stt",
+			ProviderID:           "stt-a",
+			Attempt:              1,
+			OutcomeClass:         "unknown",
+			Retryable:            false,
+			RetryDecision:        "none",
+			TransportSequence:    1,
+			RuntimeSequence:      1,
+			AuthorityEpoch:       1,
+			RuntimeTimestampMS:   100,
+			WallClockTimestampMS: 100,
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected invalid attempt evidence error")
+	}
 }
 
 func minimalBaseline(turnID string) BaselineEvidence {
@@ -308,5 +562,25 @@ func minimalBaseline(turnID string) BaselineEvidence {
 		TurnOpenAtMS:         &open,
 		FirstOutputAtMS:      &firstOutput,
 		TerminalReason:       "",
+	}
+}
+
+func minimalInvocationSnapshot(eventID string) InvocationSnapshotEvidence {
+	return InvocationSnapshotEvidence{
+		SessionID:                "sess-1",
+		TurnID:                   "turn-1",
+		PipelineVersion:          "pipeline-v1",
+		EventID:                  eventID,
+		ProviderInvocationID:     "pvi-1",
+		Modality:                 "stt",
+		ProviderID:               "stt-a",
+		OutcomeClass:             "success",
+		Retryable:                false,
+		RetryDecision:            "none",
+		AttemptCount:             1,
+		FinalAttemptLatencyMS:    0,
+		TotalInvocationLatencyMS: 0,
+		RuntimeTimestampMS:       100,
+		WallClockTimestampMS:     100,
 	}
 }

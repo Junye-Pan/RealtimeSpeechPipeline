@@ -2,6 +2,7 @@ package regression
 
 import (
 	"fmt"
+	"strings"
 
 	obs "github.com/tiger/realtime-speech-pipeline/api/observability"
 )
@@ -62,7 +63,7 @@ func EvaluateDivergences(divergences []obs.ReplayDivergence, policy DivergencePo
 				}
 			}
 		case obs.TimingDivergence:
-			if exceedsTimingTolerance(entryCopy, policy.TimingToleranceMS) {
+			if isInvocationLatencyScope(entryCopy.Scope) || exceedsTimingTolerance(entryCopy, policy.TimingToleranceMS) {
 				evaluation.Failing = append(evaluation.Failing, entryCopy)
 			}
 		default:
@@ -91,4 +92,8 @@ func exceedsTimingTolerance(divergence obs.ReplayDivergence, tolerance int64) bo
 		return true
 	}
 	return *divergence.DiffMS > tolerance
+}
+
+func isInvocationLatencyScope(scope string) bool {
+	return strings.HasPrefix(scope, "invocation_latency_final:") || strings.HasPrefix(scope, "invocation_latency_total:")
 }

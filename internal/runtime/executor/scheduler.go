@@ -75,13 +75,15 @@ func (d ProviderDecision) ToInvocationOutcomeEvidence() timeline.InvocationOutco
 		attempts = 1
 	}
 	return timeline.InvocationOutcomeEvidence{
-		ProviderInvocationID: d.ProviderInvocationID,
-		Modality:             modality,
-		ProviderID:           d.SelectedProvider,
-		OutcomeClass:         string(d.OutcomeClass),
-		Retryable:            d.Retryable,
-		RetryDecision:        retryDecision,
-		AttemptCount:         attempts,
+		ProviderInvocationID:     d.ProviderInvocationID,
+		Modality:                 modality,
+		ProviderID:               d.SelectedProvider,
+		OutcomeClass:             string(d.OutcomeClass),
+		Retryable:                d.Retryable,
+		RetryDecision:            retryDecision,
+		AttemptCount:             attempts,
+		FinalAttemptLatencyMS:    0,
+		TotalInvocationLatencyMS: 0,
 	}
 }
 
@@ -95,6 +97,11 @@ type ProviderAttemptAppender interface {
 	AppendProviderInvocationAttempts([]timeline.ProviderAttemptEvidence) error
 }
 
+// ProviderInvocationSnapshotAppender appends optional non-terminal invocation snapshots.
+type ProviderInvocationSnapshotAppender interface {
+	AppendInvocationSnapshot(timeline.InvocationSnapshotEvidence) error
+}
+
 type eventIdentityService interface {
 	NewEventContext(sessionID, turnID string) (runtimeidentity.Context, error)
 }
@@ -105,12 +112,13 @@ type dispatchPool interface {
 
 // Scheduler is a minimal RK-07 execution-path stub wired to RK-25 local admission.
 type Scheduler struct {
-	admission       localadmission.Evaluator
-	providerInvoker ProviderInvoker
-	attemptAppender ProviderAttemptAppender
-	router          lanes.Router
-	identity        eventIdentityService
-	executionPool   dispatchPool
+	admission        localadmission.Evaluator
+	providerInvoker  ProviderInvoker
+	attemptAppender  ProviderAttemptAppender
+	snapshotAppender ProviderInvocationSnapshotAppender
+	router           lanes.Router
+	identity         eventIdentityService
+	executionPool    dispatchPool
 }
 
 func NewScheduler(admission localadmission.Evaluator) Scheduler {
@@ -138,11 +146,12 @@ func NewSchedulerWithProviderInvokerAndAttemptAppender(
 	attemptAppender ProviderAttemptAppender,
 ) Scheduler {
 	return Scheduler{
-		admission:       admission,
-		providerInvoker: providerInvoker,
-		attemptAppender: attemptAppender,
-		router:          lanes.NewDefaultRouter(),
-		identity:        runtimeidentity.NewService(),
+		admission:        admission,
+		providerInvoker:  providerInvoker,
+		attemptAppender:  attemptAppender,
+		snapshotAppender: toSnapshotAppender(attemptAppender),
+		router:           lanes.NewDefaultRouter(),
+		identity:         runtimeidentity.NewService(),
 	}
 }
 
@@ -172,11 +181,12 @@ func NewSchedulerWithDependencies(
 	}
 	identitySvc := runtimeidentity.NewService()
 	return Scheduler{
-		admission:       admission,
-		providerInvoker: providerInvoker,
-		attemptAppender: attemptAppender,
-		router:          router,
-		identity:        identitySvc,
+		admission:        admission,
+		providerInvoker:  providerInvoker,
+		attemptAppender:  attemptAppender,
+		snapshotAppender: toSnapshotAppender(attemptAppender),
+		router:           router,
+		identity:         identitySvc,
 	}
 }
 
@@ -247,12 +257,22 @@ func (s Scheduler) evaluate(scope controlplane.OutcomeScope, in SchedulingInput)
 			if err != nil {
 				return SchedulingDecision{}, err
 			}
+			attemptEvidence := buildAttemptEvidence(in, in.ProviderInvocation.Modality, invocationResult)
 
 			if s.attemptAppender != nil {
-				if err := s.attemptAppender.AppendProviderInvocationAttempts(
-					buildAttemptEvidence(in, in.ProviderInvocation.Modality, invocationResult),
-				); err != nil {
+				if err := s.attemptAppender.AppendProviderInvocationAttempts(attemptEvidence); err != nil {
 					return SchedulingDecision{}, err
+				}
+			}
+			if s.snapshotAppender != nil {
+				snapshot, ok, err := buildInvocationSnapshotEvidence(in, invocationResult, attemptEvidence)
+				if err != nil {
+					return SchedulingDecision{}, err
+				}
+				if ok {
+					if err := s.snapshotAppender.AppendInvocationSnapshot(snapshot); err != nil {
+						return SchedulingDecision{}, err
+					}
 				}
 			}
 
@@ -350,8 +370,15 @@ func buildAttemptEvidence(
 		retryDecision = "none"
 	}
 	attempts := make([]timeline.ProviderAttemptEvidence, 0, len(result.Attempts))
+	var previousWallClockMS int64
+	hasPrevious := false
 	for idx, attempt := range result.Attempts {
 		offset := int64(idx)
+		wallClockMS := nonNegative(in.WallClockTimestampMS) + offset
+		attemptLatencyMS := int64(0)
+		if hasPrevious && wallClockMS > previousWallClockMS {
+			attemptLatencyMS = wallClockMS - previousWallClockMS
+		}
 		attempts = append(attempts, timeline.ProviderAttemptEvidence{
 			SessionID:            in.SessionID,
 			TurnID:               in.TurnID,
@@ -364,12 +391,80 @@ func buildAttemptEvidence(
 			OutcomeClass:         string(attempt.Outcome.Class),
 			Retryable:            attempt.Outcome.Retryable,
 			RetryDecision:        retryDecision,
+			AttemptLatencyMS:     attemptLatencyMS,
 			TransportSequence:    nonNegative(in.TransportSequence) + offset,
 			RuntimeSequence:      nonNegative(in.RuntimeSequence) + offset,
 			AuthorityEpoch:       nonNegative(in.AuthorityEpoch),
 			RuntimeTimestampMS:   nonNegative(in.RuntimeTimestampMS) + offset,
-			WallClockTimestampMS: nonNegative(in.WallClockTimestampMS) + offset,
+			WallClockTimestampMS: wallClockMS,
 		})
+		previousWallClockMS = wallClockMS
+		hasPrevious = true
 	}
 	return attempts
+}
+
+func toSnapshotAppender(appender ProviderAttemptAppender) ProviderInvocationSnapshotAppender {
+	if appender == nil {
+		return nil
+	}
+	snapshotAppender, ok := appender.(ProviderInvocationSnapshotAppender)
+	if !ok {
+		return nil
+	}
+	return snapshotAppender
+}
+
+func buildInvocationSnapshotEvidence(
+	in SchedulingInput,
+	result invocation.InvocationResult,
+	attemptEvidence []timeline.ProviderAttemptEvidence,
+) (timeline.InvocationSnapshotEvidence, bool, error) {
+	if len(attemptEvidence) == 0 {
+		return timeline.InvocationSnapshotEvidence{}, false, nil
+	}
+
+	outcomes, err := timeline.InvocationOutcomesFromProviderAttempts(attemptEvidence)
+	if err != nil {
+		return timeline.InvocationSnapshotEvidence{}, false, err
+	}
+	if len(outcomes) == 0 {
+		return timeline.InvocationSnapshotEvidence{}, false, nil
+	}
+
+	outcome := outcomes[len(outcomes)-1]
+	for _, candidate := range outcomes {
+		if candidate.ProviderInvocationID == result.ProviderInvocationID {
+			outcome = candidate
+			break
+		}
+	}
+
+	finalAttempt := attemptEvidence[len(attemptEvidence)-1]
+	runtimeTimestampMS := nonNegative(in.RuntimeTimestampMS)
+	if finalAttempt.RuntimeTimestampMS > runtimeTimestampMS {
+		runtimeTimestampMS = finalAttempt.RuntimeTimestampMS
+	}
+	wallClockTimestampMS := nonNegative(in.WallClockTimestampMS)
+	if finalAttempt.WallClockTimestampMS > wallClockTimestampMS {
+		wallClockTimestampMS = finalAttempt.WallClockTimestampMS
+	}
+
+	return timeline.InvocationSnapshotEvidence{
+		SessionID:                in.SessionID,
+		TurnID:                   in.TurnID,
+		PipelineVersion:          defaultPipelineVersion(in.PipelineVersion),
+		EventID:                  in.EventID,
+		ProviderInvocationID:     outcome.ProviderInvocationID,
+		Modality:                 outcome.Modality,
+		ProviderID:               outcome.ProviderID,
+		OutcomeClass:             outcome.OutcomeClass,
+		Retryable:                outcome.Retryable,
+		RetryDecision:            outcome.RetryDecision,
+		AttemptCount:             outcome.AttemptCount,
+		FinalAttemptLatencyMS:    outcome.FinalAttemptLatencyMS,
+		TotalInvocationLatencyMS: outcome.TotalInvocationLatencyMS,
+		RuntimeTimestampMS:       runtimeTimestampMS,
+		WallClockTimestampMS:     wallClockTimestampMS,
+	}, true, nil
 }
