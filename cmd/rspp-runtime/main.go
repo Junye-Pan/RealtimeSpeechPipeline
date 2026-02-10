@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
+	"github.com/tiger/realtime-speech-pipeline/internal/controlplane/distribution"
 	"github.com/tiger/realtime-speech-pipeline/internal/observability/replay"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/bootstrap"
 )
@@ -92,27 +93,32 @@ type retentionSweepTenantResult struct {
 }
 
 type retentionSweepRunResult struct {
-	RunIndex       int                          `json:"run_index"`
-	RunAtMS        int64                        `json:"run_at_ms"`
-	TenantResults  []retentionSweepTenantResult `json:"tenant_results"`
-	TotalEvaluated int                          `json:"total_evaluated"`
-	TotalExpired   int                          `json:"total_expired"`
-	TotalDeleted   int                          `json:"total_deleted"`
-	DeletedByClass map[string]int               `json:"deleted_by_class"`
+	RunIndex             int                          `json:"run_index"`
+	RunAtMS              int64                        `json:"run_at_ms"`
+	PolicySource         string                       `json:"policy_source"`
+	PolicyFallbackReason string                       `json:"policy_fallback_reason,omitempty"`
+	TenantResults        []retentionSweepTenantResult `json:"tenant_results"`
+	TotalEvaluated       int                          `json:"total_evaluated"`
+	TotalExpired         int                          `json:"total_expired"`
+	TotalDeleted         int                          `json:"total_deleted"`
+	DeletedByClass       map[string]int               `json:"deleted_by_class"`
 }
 
 type retentionSweepReport struct {
-	GeneratedAtUTC string                    `json:"generated_at_utc"`
-	StorePath      string                    `json:"store_path"`
-	PolicyPath     string                    `json:"policy_path,omitempty"`
-	Tenants        []string                  `json:"tenants"`
-	Runs           int                       `json:"runs"`
-	IntervalMS     int64                     `json:"interval_ms"`
-	RunResults     []retentionSweepRunResult `json:"run_results"`
-	FinalRecords   int                       `json:"final_records"`
+	GeneratedAtUTC       string                    `json:"generated_at_utc"`
+	StorePath            string                    `json:"store_path"`
+	PolicyPath           string                    `json:"policy_path,omitempty"`
+	PolicySource         string                    `json:"policy_source"`
+	PolicyFallbackReason string                    `json:"policy_fallback_reason,omitempty"`
+	Tenants              []string                  `json:"tenants"`
+	Runs                 int                       `json:"runs"`
+	IntervalMS           int64                     `json:"interval_ms"`
+	RunResults           []retentionSweepRunResult `json:"run_results"`
+	FinalRecords         int                       `json:"final_records"`
 }
 
 type retentionSweepPolicyErrorCode string
+type retentionPolicySource string
 
 const (
 	retentionSweepPolicyReadErrorCode            retentionSweepPolicyErrorCode = "RETENTION_POLICY_READ_ERROR"
@@ -121,6 +127,18 @@ const (
 	retentionSweepPolicyTenantMismatchErrorCode  retentionSweepPolicyErrorCode = "RETENTION_POLICY_TENANT_MISMATCH"
 	retentionSweepPolicyValidationErrorCode      retentionSweepPolicyErrorCode = "RETENTION_POLICY_VALIDATION_ERROR"
 	defaultRetentionPolicyTenantID                                             = "retention-policy-default"
+
+	retentionPolicySourceArtifactOverride   retentionPolicySource = "policy_artifact"
+	retentionPolicySourceCPDistributionFile retentionPolicySource = "cp_distribution_file"
+	retentionPolicySourceCPDistributionHTTP retentionPolicySource = "cp_distribution_http"
+	retentionPolicySourceDefaultFallback    retentionPolicySource = "default_fallback"
+	retentionPolicySourceMixed              retentionPolicySource = "mixed"
+
+	retentionPolicyFallbackReasonCPDistributionUnconfigured = "cp_distribution_unconfigured"
+	retentionPolicyFallbackReasonCPDistributionFetchFailed  = "cp_distribution_fetch_failed"
+	retentionPolicyFallbackReasonCPDistributionStale        = "cp_distribution_snapshot_stale"
+	retentionPolicyFallbackReasonCPDistributionInvalid      = "cp_distribution_policy_invalid"
+	retentionPolicyFallbackReasonMixed                      = "mixed"
 )
 
 type retentionSweepPolicyError struct {
@@ -182,19 +200,21 @@ func runRetentionSweep(args []string, stdout io.Writer, now func() time.Time) er
 	if err != nil {
 		return err
 	}
-	resolver, err := loadRetentionResolver(*policyPath)
-	if err != nil {
-		return err
-	}
 
 	runResults := make([]retentionSweepRunResult, 0, *runs)
 	for runIndex := 1; runIndex <= *runs; runIndex++ {
 		runAtMS := computeRunAtMS(*nowMSFlag, *intervalMS, runIndex, now)
+		resolver, policySource, fallbackReason, err := loadRetentionResolver(*policyPath)
+		if err != nil {
+			return err
+		}
 		runResult := retentionSweepRunResult{
-			RunIndex:       runIndex,
-			RunAtMS:        runAtMS,
-			TenantResults:  make([]retentionSweepTenantResult, 0, len(tenants)),
-			DeletedByClass: newRetentionClassCounters(),
+			RunIndex:             runIndex,
+			RunAtMS:              runAtMS,
+			PolicySource:         string(policySource),
+			PolicyFallbackReason: fallbackReason,
+			TenantResults:        make([]retentionSweepTenantResult, 0, len(tenants)),
+			DeletedByClass:       newRetentionClassCounters(),
 		}
 		for _, tenantID := range tenants {
 			sweepResult, err := replay.EnforceTenantRetentionWithResolverDetailed(store, resolver, tenantID, runAtMS)
@@ -230,14 +250,16 @@ func runRetentionSweep(args []string, stdout io.Writer, now func() time.Time) er
 	}
 
 	report := retentionSweepReport{
-		GeneratedAtUTC: now().UTC().Format(time.RFC3339),
-		StorePath:      *storePath,
-		PolicyPath:     strings.TrimSpace(*policyPath),
-		Tenants:        tenants,
-		Runs:           *runs,
-		IntervalMS:     *intervalMS,
-		RunResults:     runResults,
-		FinalRecords:   len(finalRecords),
+		GeneratedAtUTC:       now().UTC().Format(time.RFC3339),
+		StorePath:            *storePath,
+		PolicyPath:           strings.TrimSpace(*policyPath),
+		PolicySource:         summarizePolicySource(runResults),
+		PolicyFallbackReason: summarizePolicyFallbackReason(runResults),
+		Tenants:              tenants,
+		Runs:                 *runs,
+		IntervalMS:           *intervalMS,
+		RunResults:           runResults,
+		FinalRecords:         len(finalRecords),
 	}
 	if err := writeJSONArtifact(*reportPath, report); err != nil {
 		return err
@@ -330,46 +352,127 @@ func writeRetentionStore(path string, records []replay.ReplayArtifactRecord, now
 	return writeJSONArtifact(path, artifact)
 }
 
-func loadRetentionResolver(policyPath string) (replay.RetentionPolicyResolver, error) {
-	fallback := replay.StaticRetentionPolicyResolver{}
-	trimmedPath := strings.TrimSpace(policyPath)
-	if trimmedPath == "" {
-		return replay.BackendRetentionPolicyResolver{Fallback: fallback}, nil
+func loadRetentionResolver(policyPath string) (replay.RetentionPolicyResolver, retentionPolicySource, string, error) {
+	fallback := replay.BackendRetentionPolicyResolver{
+		Fallback: replay.StaticRetentionPolicyResolver{},
 	}
 
-	raw, err := os.ReadFile(trimmedPath)
+	trimmedPath := strings.TrimSpace(policyPath)
+	if trimmedPath != "" {
+		resolver, err := loadRetentionResolverFromArtifactPath(trimmedPath)
+		if err != nil {
+			return nil, "", "", err
+		}
+		return resolver, retentionPolicySourceArtifactOverride, "", nil
+	}
+
+	resolver, source, err := loadRetentionResolverFromDistributionEnv()
+	if err == nil {
+		return resolver, source, "", nil
+	}
+
+	return fallback, retentionPolicySourceDefaultFallback, classifyDistributionFallbackReason(err), nil
+}
+
+func loadRetentionResolverFromArtifactPath(path string) (replay.RetentionPolicyResolver, error) {
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, retentionSweepPolicyError{
 			Code:   retentionSweepPolicyReadErrorCode,
-			Detail: fmt.Sprintf("read retention policy artifact %s", trimmedPath),
+			Detail: fmt.Sprintf("read retention policy artifact %s", path),
 			Err:    err,
 		}
 	}
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return nil, retentionSweepPolicyError{
 			Code:   retentionSweepPolicyArtifactInvalidErrorCode,
-			Detail: fmt.Sprintf("retention policy artifact %s must not be empty", trimmedPath),
+			Detail: fmt.Sprintf("retention policy artifact %s must not be empty", path),
 		}
 	}
+
 	var artifact retentionPolicyArtifact
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&artifact); err != nil {
 		return nil, retentionSweepPolicyError{
 			Code:   retentionSweepPolicyDecodeErrorCode,
-			Detail: fmt.Sprintf("decode retention policy artifact %s", trimmedPath),
+			Detail: fmt.Sprintf("decode retention policy artifact %s", path),
 			Err:    err,
 		}
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return nil, retentionSweepPolicyError{
 			Code:   retentionSweepPolicyDecodeErrorCode,
-			Detail: fmt.Sprintf("decode retention policy artifact %s", trimmedPath),
+			Detail: fmt.Sprintf("decode retention policy artifact %s", path),
 			Err:    fmt.Errorf("trailing data after top-level object"),
 		}
 	}
 
-	normalizedArtifact, err := normalizeRetentionPolicyArtifact(trimmedPath, artifact)
+	return retentionResolverFromArtifact(path, artifact)
+}
+
+func loadRetentionResolverFromDistributionEnv() (replay.RetentionPolicyResolver, retentionPolicySource, error) {
+	snapshot, source, err := distribution.LoadRetentionPolicySnapshotFromEnv()
+	if err != nil {
+		switch source {
+		case distribution.RetentionSnapshotSourceHTTP:
+			return nil, retentionPolicySourceCPDistributionHTTP, err
+		case distribution.RetentionSnapshotSourceFile:
+			return nil, retentionPolicySourceCPDistributionFile, err
+		default:
+			return nil, retentionPolicySourceCPDistributionFile, err
+		}
+	}
+
+	artifact := retentionPolicyArtifact{
+		TenantPolicies: map[string]retentionPolicyArtifactPolicy{},
+	}
+	if snapshot.DefaultPolicy != nil {
+		artifact.DefaultPolicy = &retentionPolicyArtifactPolicy{
+			TenantID:              snapshot.DefaultPolicy.TenantID,
+			DefaultRetentionMS:    snapshot.DefaultPolicy.DefaultRetentionMS,
+			PIIRetentionLimitMS:   snapshot.DefaultPolicy.PIIRetentionLimitMS,
+			PHIRetentionLimitMS:   snapshot.DefaultPolicy.PHIRetentionLimitMS,
+			MaxRetentionByClassMS: cloneRetentionPolicyWindows(snapshot.DefaultPolicy.MaxRetentionByClassMS),
+		}
+	}
+	for tenantID, policy := range snapshot.TenantPolicies {
+		artifact.TenantPolicies[tenantID] = retentionPolicyArtifactPolicy{
+			TenantID:              policy.TenantID,
+			DefaultRetentionMS:    policy.DefaultRetentionMS,
+			PIIRetentionLimitMS:   policy.PIIRetentionLimitMS,
+			PHIRetentionLimitMS:   policy.PHIRetentionLimitMS,
+			MaxRetentionByClassMS: cloneRetentionPolicyWindows(policy.MaxRetentionByClassMS),
+		}
+	}
+	if len(artifact.TenantPolicies) == 0 {
+		artifact.TenantPolicies = nil
+	}
+
+	resolver, err := retentionResolverFromArtifact(string(source), artifact)
+	if err != nil {
+		switch source {
+		case distribution.RetentionSnapshotSourceHTTP:
+			return nil, retentionPolicySourceCPDistributionHTTP, err
+		case distribution.RetentionSnapshotSourceFile:
+			return nil, retentionPolicySourceCPDistributionFile, err
+		default:
+			return nil, retentionPolicySourceCPDistributionFile, err
+		}
+	}
+
+	switch source {
+	case distribution.RetentionSnapshotSourceHTTP:
+		return resolver, retentionPolicySourceCPDistributionHTTP, nil
+	case distribution.RetentionSnapshotSourceFile:
+		return resolver, retentionPolicySourceCPDistributionFile, nil
+	default:
+		return resolver, retentionPolicySourceCPDistributionFile, nil
+	}
+}
+
+func retentionResolverFromArtifact(source string, artifact retentionPolicyArtifact) (replay.RetentionPolicyResolver, error) {
+	normalizedArtifact, err := normalizeRetentionPolicyArtifact(source, artifact)
 	if err != nil {
 		return nil, err
 	}
@@ -382,8 +485,70 @@ func loadRetentionResolver(policyPath string) (replay.RetentionPolicyResolver, e
 	}
 	return replay.BackendRetentionPolicyResolver{
 		Backend:  backend,
-		Fallback: fallback,
+		Fallback: replay.StaticRetentionPolicyResolver{},
 	}, nil
+}
+
+func cloneRetentionPolicyWindows(in map[eventabi.PayloadClass]int64) map[eventabi.PayloadClass]int64 {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[eventabi.PayloadClass]int64, len(in))
+	for class, window := range in {
+		out[class] = window
+	}
+	return out
+}
+
+func classifyDistributionFallbackReason(err error) string {
+	var backendErr distribution.BackendError
+	if errors.As(err, &backendErr) {
+		switch backendErr.Code {
+		case distribution.ErrorCodeInvalidConfig:
+			return retentionPolicyFallbackReasonCPDistributionUnconfigured
+		case distribution.ErrorCodeSnapshotStale:
+			return retentionPolicyFallbackReasonCPDistributionStale
+		case distribution.ErrorCodeDecodeArtifact, distribution.ErrorCodeInvalidArtifact, distribution.ErrorCodeSnapshotMissing:
+			return retentionPolicyFallbackReasonCPDistributionInvalid
+		case distribution.ErrorCodeReadArtifact:
+			return retentionPolicyFallbackReasonCPDistributionFetchFailed
+		default:
+			return retentionPolicyFallbackReasonCPDistributionFetchFailed
+		}
+	}
+
+	var policyErr retentionSweepPolicyError
+	if errors.As(err, &policyErr) {
+		return retentionPolicyFallbackReasonCPDistributionInvalid
+	}
+
+	return retentionPolicyFallbackReasonCPDistributionFetchFailed
+}
+
+func summarizePolicySource(runResults []retentionSweepRunResult) string {
+	if len(runResults) == 0 {
+		return string(retentionPolicySourceDefaultFallback)
+	}
+	source := runResults[0].PolicySource
+	for _, result := range runResults[1:] {
+		if result.PolicySource != source {
+			return string(retentionPolicySourceMixed)
+		}
+	}
+	return source
+}
+
+func summarizePolicyFallbackReason(runResults []retentionSweepRunResult) string {
+	if len(runResults) == 0 {
+		return ""
+	}
+	reason := runResults[0].PolicyFallbackReason
+	for _, result := range runResults[1:] {
+		if result.PolicyFallbackReason != reason {
+			return retentionPolicyFallbackReasonMixed
+		}
+	}
+	return reason
 }
 
 func normalizeRetentionPolicyArtifact(path string, artifact retentionPolicyArtifact) (normalizedRetentionPolicyArtifact, error) {

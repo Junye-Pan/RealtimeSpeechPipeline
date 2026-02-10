@@ -9,9 +9,9 @@ Status snapshot:
 - Verification runs through `scripts/verify.sh` and command chains in `Makefile`.
 - Replay divergence and SLO gating behavior are enforced by `cmd/rspp-cli`.
 - Replay fixture metadata invocation-latency thresholds are now evaluated against runtime-baseline-artifact OR-02 invocation evidence in full replay regression.
-- Runtime CP backend bootstrap integration is now hardened with file/env/http-backed distribution adapters, authenticated HTTP fetch (`Authorization` + client identity), ordered endpoint failover, deterministic retry/backoff, on-demand TTL refresh with bounded stale-serving fallback, per-service partial-backend fallback, and stale-snapshot deterministic handling coverage; CP-03 graph compile output threading, CP-05 pre-turn admission decision shaping, CP-07 lease authority gating, and replay-audit durable backend adapters are implemented and test-covered in the current baseline.
+- Runtime CP backend bootstrap integration is now hardened with file/env/http-backed distribution adapters, authenticated HTTP fetch (`Authorization` + client identity), ordered endpoint failover, deterministic retry/backoff, on-demand TTL refresh with bounded stale-serving fallback, per-service partial-backend fallback, and stale-snapshot deterministic handling coverage; CP-03 graph compile output threading, CP-05 pre-turn admission decision shaping, CP-07 lease authority gating, distributed replay-audit durable backend paths (HTTP + JSONL fallback), and CP distribution snapshot-first retention policy sourcing for `retention-sweep` are implemented and test-covered in the current baseline.
 - `.codex` generated artifact tracking policy is finalized and enforced in CI.
-- This document is synchronized with the closed MVP `10.2` state and current post-MVP follow-up tracking in `docs/MVP_ImplementationSlice.md`.
+- This document is synchronized with the current MVP `10.1` completion state and active `10.2` follow-up tracking in `docs/MVP_ImplementationSlice.md`.
 
 ## 2. Source of truth files
 
@@ -27,13 +27,15 @@ Status snapshot:
 10. `test/replay/fixtures/metadata.json`
 11. `internal/runtime/turnarbiter/controlplane_backends.go`
 12. `internal/observability/replay/audit_backend.go`
-13. `internal/controlplane/distribution/file_adapter.go`
-14. `internal/controlplane/distribution/http_adapter.go`
-15. `internal/controlplane/graphcompiler/graphcompiler.go`
-16. `internal/controlplane/admission/admission.go`
-17. `internal/controlplane/lease/lease.go`
-18. `internal/runtime/turnarbiter/controlplane_bundle.go`
-19. `internal/runtime/turnarbiter/arbiter.go`
+13. `internal/observability/replay/audit_backend_http.go`
+14. `internal/controlplane/distribution/retention_snapshot.go`
+15. `internal/controlplane/distribution/file_adapter.go`
+16. `internal/controlplane/distribution/http_adapter.go`
+17. `internal/controlplane/graphcompiler/graphcompiler.go`
+18. `internal/controlplane/admission/admission.go`
+19. `internal/controlplane/lease/lease.go`
+20. `internal/runtime/turnarbiter/controlplane_bundle.go`
+21. `internal/runtime/turnarbiter/arbiter.go`
 
 ## 3. Verify entrypoint behavior (`scripts/verify.sh`)
 

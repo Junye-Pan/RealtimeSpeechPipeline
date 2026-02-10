@@ -4,18 +4,19 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
+	"github.com/tiger/realtime-speech-pipeline/internal/controlplane/distribution"
 	"github.com/tiger/realtime-speech-pipeline/internal/observability/replay"
 )
 
 func TestRunRetentionSweepUsesBackendPolicyResolver(t *testing.T) {
-	t.Parallel()
-
 	tmp := t.TempDir()
 	storePath := filepath.Join(tmp, "store.json")
 	policyPath := filepath.Join(tmp, "policy.json")
@@ -95,8 +96,14 @@ func TestRunRetentionSweepUsesBackendPolicyResolver(t *testing.T) {
 	if report.Runs != 1 || len(report.RunResults) != 1 {
 		t.Fatalf("unexpected run metadata: %+v", report)
 	}
+	if report.PolicySource != string(retentionPolicySourceArtifactOverride) || report.PolicyFallbackReason != "" {
+		t.Fatalf("expected explicit policy artifact source metadata, got source=%q fallback=%q", report.PolicySource, report.PolicyFallbackReason)
+	}
 	if report.RunResults[0].TotalDeleted != 2 {
 		t.Fatalf("expected two deletions in report, got %+v", report.RunResults[0])
+	}
+	if report.RunResults[0].PolicySource != string(retentionPolicySourceArtifactOverride) || report.RunResults[0].PolicyFallbackReason != "" {
+		t.Fatalf("expected per-run explicit policy artifact source metadata, got %+v", report.RunResults[0])
 	}
 	if len(report.RunResults[0].TenantResults) != 1 {
 		t.Fatalf("expected one tenant result, got %+v", report.RunResults[0].TenantResults)
@@ -114,11 +121,12 @@ func TestRunRetentionSweepUsesBackendPolicyResolver(t *testing.T) {
 }
 
 func TestRunRetentionSweepUsesFallbackDefaultsWithoutPolicyFile(t *testing.T) {
-	t.Parallel()
-
 	tmp := t.TempDir()
 	storePath := filepath.Join(tmp, "store.json")
 	reportPath := filepath.Join(tmp, "report.json")
+	t.Setenv(distribution.EnvFileAdapterPath, "")
+	t.Setenv(distribution.EnvHTTPAdapterURL, "")
+	t.Setenv(distribution.EnvHTTPAdapterURLs, "")
 
 	mustWriteJSON(t, storePath, retentionStoreArtifact{
 		Records: []replay.ReplayArtifactRecord{
@@ -149,8 +157,18 @@ func TestRunRetentionSweepUsesFallbackDefaultsWithoutPolicyFile(t *testing.T) {
 	}
 
 	report := mustReadSweepReport(t, reportPath)
+	if report.PolicySource != string(retentionPolicySourceDefaultFallback) {
+		t.Fatalf("expected fallback policy source without configured backends, got %s", report.PolicySource)
+	}
+	if report.PolicyFallbackReason != retentionPolicyFallbackReasonCPDistributionUnconfigured {
+		t.Fatalf("expected unconfigured fallback reason, got %q", report.PolicyFallbackReason)
+	}
 	if report.RunResults[0].TotalDeleted != 0 {
 		t.Fatalf("expected zero deletions under fallback default retention, got %+v", report.RunResults[0])
+	}
+	if report.RunResults[0].PolicySource != string(retentionPolicySourceDefaultFallback) ||
+		report.RunResults[0].PolicyFallbackReason != retentionPolicyFallbackReasonCPDistributionUnconfigured {
+		t.Fatalf("unexpected per-run fallback source metadata: %+v", report.RunResults[0])
 	}
 	assertAllPayloadClassesPresent(t, report.RunResults[0].DeletedByClass)
 	for _, class := range payloadClasses() {
@@ -160,8 +178,6 @@ func TestRunRetentionSweepUsesFallbackDefaultsWithoutPolicyFile(t *testing.T) {
 }
 
 func TestRunRetentionSweepScheduledRunsUseIntervalOffsets(t *testing.T) {
-	t.Parallel()
-
 	tmp := t.TempDir()
 	storePath := filepath.Join(tmp, "store.json")
 	policyPath := filepath.Join(tmp, "policy.json")
@@ -205,6 +221,9 @@ func TestRunRetentionSweepScheduledRunsUseIntervalOffsets(t *testing.T) {
 	if len(report.RunResults) != 2 {
 		t.Fatalf("expected two run results, got %+v", report)
 	}
+	if report.PolicySource != string(retentionPolicySourceArtifactOverride) {
+		t.Fatalf("expected policy source to stay explicit artifact across runs, got %s", report.PolicySource)
+	}
 	if report.RunResults[0].RunAtMS != 50 || report.RunResults[1].RunAtMS != 150 {
 		t.Fatalf("expected interval-offset run timestamps, got %+v", report.RunResults)
 	}
@@ -220,9 +239,238 @@ func TestRunRetentionSweepScheduledRunsUseIntervalOffsets(t *testing.T) {
 	}
 }
 
-func TestRunRetentionSweepPolicyErrorsAreDeterministic(t *testing.T) {
-	t.Parallel()
+func TestRunRetentionSweepUsesCPDistributionFilePolicySnapshot(t *testing.T) {
+	tmp := t.TempDir()
+	storePath := filepath.Join(tmp, "store.json")
+	reportPath := filepath.Join(tmp, "report.json")
+	distributionPath := filepath.Join(tmp, "cp-distribution.json")
 
+	mustWriteJSON(t, storePath, retentionStoreArtifact{
+		Records: []replay.ReplayArtifactRecord{
+			{
+				ArtifactID:   "metadata-expired",
+				TenantID:     "tenant-a",
+				SessionID:    "session-1",
+				TurnID:       "turn-1",
+				PayloadClass: eventabi.PayloadMetadata,
+				RecordedAtMS: 100,
+			},
+		},
+	})
+
+	mustWriteJSON(t, distributionPath, map[string]any{
+		"schema_version": "cp-snapshot-distribution/v1",
+		"retention": map[string]any{
+			"tenant_policies": map[string]any{
+				"tenant-a": map[string]any{
+					"tenant_id":              "tenant-a",
+					"default_retention_ms":   10,
+					"pii_retention_limit_ms": 10,
+					"phi_retention_limit_ms": 10,
+					"max_retention_by_class_ms": map[string]any{
+						"audio_raw":       10,
+						"text_raw":        10,
+						"PII":             10,
+						"PHI":             10,
+						"derived_summary": 10,
+						"metadata":        10,
+					},
+				},
+			},
+		},
+	})
+
+	t.Setenv(distribution.EnvFileAdapterPath, distributionPath)
+	t.Setenv(distribution.EnvHTTPAdapterURL, "")
+	t.Setenv(distribution.EnvHTTPAdapterURLs, "")
+
+	if err := run([]string{
+		"retention-sweep",
+		"-store", storePath,
+		"-report", reportPath,
+		"-tenants", "tenant-a",
+		"-now-ms", "1000",
+	}, &bytes.Buffer{}, &bytes.Buffer{}, fixedNow()); err != nil {
+		t.Fatalf("unexpected retention sweep error: %v", err)
+	}
+
+	storeArtifact := mustReadStoreArtifact(t, storePath)
+	if len(storeArtifact.Records) != 0 {
+		t.Fatalf("expected metadata artifact deleted by cp distribution retention policy, got %+v", storeArtifact.Records)
+	}
+
+	report := mustReadSweepReport(t, reportPath)
+	if report.PolicySource != string(retentionPolicySourceCPDistributionFile) || report.PolicyFallbackReason != "" {
+		t.Fatalf("expected cp distribution file policy source, got source=%q fallback=%q", report.PolicySource, report.PolicyFallbackReason)
+	}
+	if report.RunResults[0].PolicySource != string(retentionPolicySourceCPDistributionFile) || report.RunResults[0].PolicyFallbackReason != "" {
+		t.Fatalf("unexpected run source metadata: %+v", report.RunResults[0])
+	}
+}
+
+func TestRunRetentionSweepUsesCPDistributionHTTPPolicySnapshot(t *testing.T) {
+	tmp := t.TempDir()
+	storePath := filepath.Join(tmp, "store.json")
+	reportPath := filepath.Join(tmp, "report.json")
+
+	mustWriteJSON(t, storePath, retentionStoreArtifact{
+		Records: []replay.ReplayArtifactRecord{
+			{
+				ArtifactID:   "metadata-expired",
+				TenantID:     "tenant-a",
+				SessionID:    "session-1",
+				TurnID:       "turn-1",
+				PayloadClass: eventabi.PayloadMetadata,
+				RecordedAtMS: 100,
+			},
+		},
+	})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+  "schema_version":"cp-snapshot-distribution/v1",
+  "retention": {
+    "tenant_policies": {
+      "tenant-a": {
+        "tenant_id": "tenant-a",
+        "default_retention_ms": 10,
+        "pii_retention_limit_ms": 10,
+        "phi_retention_limit_ms": 10,
+        "max_retention_by_class_ms": {
+          "audio_raw": 10,
+          "text_raw": 10,
+          "PII": 10,
+          "PHI": 10,
+          "derived_summary": 10,
+          "metadata": 10
+        }
+      }
+    }
+  }
+}`))
+	}))
+	defer server.Close()
+
+	t.Setenv(distribution.EnvHTTPAdapterURLs, server.URL)
+	t.Setenv(distribution.EnvHTTPAdapterURL, "")
+	t.Setenv(distribution.EnvFileAdapterPath, "")
+
+	if err := run([]string{
+		"retention-sweep",
+		"-store", storePath,
+		"-report", reportPath,
+		"-tenants", "tenant-a",
+		"-now-ms", "1000",
+	}, &bytes.Buffer{}, &bytes.Buffer{}, fixedNow()); err != nil {
+		t.Fatalf("unexpected retention sweep error: %v", err)
+	}
+
+	storeArtifact := mustReadStoreArtifact(t, storePath)
+	if len(storeArtifact.Records) != 0 {
+		t.Fatalf("expected metadata artifact deleted by cp http retention policy, got %+v", storeArtifact.Records)
+	}
+
+	report := mustReadSweepReport(t, reportPath)
+	if report.PolicySource != string(retentionPolicySourceCPDistributionHTTP) || report.PolicyFallbackReason != "" {
+		t.Fatalf("expected cp distribution http policy source, got source=%q fallback=%q", report.PolicySource, report.PolicyFallbackReason)
+	}
+}
+
+func TestRunRetentionSweepCPDistributionOutageRecoveryAcrossRuns(t *testing.T) {
+	tmp := t.TempDir()
+	storePath := filepath.Join(tmp, "store.json")
+	reportPath := filepath.Join(tmp, "report.json")
+
+	mustWriteJSON(t, storePath, retentionStoreArtifact{
+		Records: []replay.ReplayArtifactRecord{
+			{
+				ArtifactID:   "metadata-target",
+				TenantID:     "tenant-a",
+				SessionID:    "session-1",
+				TurnID:       "turn-1",
+				PayloadClass: eventabi.PayloadMetadata,
+				RecordedAtMS: 100,
+			},
+		},
+	})
+
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":"temporary outage"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+  "schema_version":"cp-snapshot-distribution/v1",
+  "retention": {
+    "tenant_policies": {
+      "tenant-a": {
+        "tenant_id": "tenant-a",
+        "default_retention_ms": 10,
+        "pii_retention_limit_ms": 10,
+        "phi_retention_limit_ms": 10,
+        "max_retention_by_class_ms": {
+          "audio_raw": 10,
+          "text_raw": 10,
+          "PII": 10,
+          "PHI": 10,
+          "derived_summary": 10,
+          "metadata": 10
+        }
+      }
+    }
+  }
+}`))
+	}))
+	defer server.Close()
+
+	t.Setenv(distribution.EnvHTTPAdapterURLs, server.URL)
+	t.Setenv(distribution.EnvHTTPAdapterURL, "")
+	t.Setenv(distribution.EnvFileAdapterPath, "")
+	t.Setenv(distribution.EnvHTTPAdapterRetryMaxAttempts, "1")
+
+	if err := run([]string{
+		"retention-sweep",
+		"-store", storePath,
+		"-report", reportPath,
+		"-tenants", "tenant-a",
+		"-now-ms", "1000",
+		"-runs", "2",
+		"-interval-ms", "0",
+	}, &bytes.Buffer{}, &bytes.Buffer{}, fixedNow()); err != nil {
+		t.Fatalf("unexpected retention sweep error: %v", err)
+	}
+
+	report := mustReadSweepReport(t, reportPath)
+	if len(report.RunResults) != 2 {
+		t.Fatalf("expected two run results, got %+v", report.RunResults)
+	}
+	if report.PolicySource != string(retentionPolicySourceMixed) {
+		t.Fatalf("expected mixed top-level policy source for outage/recovery run set, got %q", report.PolicySource)
+	}
+	if report.PolicyFallbackReason != retentionPolicyFallbackReasonMixed {
+		t.Fatalf("expected mixed top-level fallback reason for outage/recovery run set, got %q", report.PolicyFallbackReason)
+	}
+	if report.RunResults[0].PolicySource != string(retentionPolicySourceDefaultFallback) ||
+		report.RunResults[0].PolicyFallbackReason != retentionPolicyFallbackReasonCPDistributionFetchFailed {
+		t.Fatalf("expected first run fallback on outage, got %+v", report.RunResults[0])
+	}
+	if report.RunResults[1].PolicySource != string(retentionPolicySourceCPDistributionHTTP) ||
+		report.RunResults[1].PolicyFallbackReason != "" {
+		t.Fatalf("expected second run recovery to cp distribution http source, got %+v", report.RunResults[1])
+	}
+
+	storeArtifact := mustReadStoreArtifact(t, storePath)
+	if len(storeArtifact.Records) != 0 {
+		t.Fatalf("expected artifact deleted after recovery run, got %+v", storeArtifact.Records)
+	}
+}
+
+func TestRunRetentionSweepPolicyErrorsAreDeterministic(t *testing.T) {
 	validPolicy := replay.DefaultRetentionPolicy("tenant-a")
 	validPolicy.MaxRetentionByClassMS[eventabi.PayloadMetadata] = 1_000
 
@@ -271,8 +519,6 @@ func TestRunRetentionSweepPolicyErrorsAreDeterministic(t *testing.T) {
 	for _, tc := range tests {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
 			tmp := t.TempDir()
 			storePath := filepath.Join(tmp, "store.json")
 			policyPath := filepath.Join(tmp, "policy.json")
@@ -309,8 +555,6 @@ func TestRunRetentionSweepPolicyErrorsAreDeterministic(t *testing.T) {
 }
 
 func TestRunRetentionSweepPolicyReadErrorCode(t *testing.T) {
-	t.Parallel()
-
 	err := run([]string{
 		"retention-sweep",
 		"-store", filepath.Join(t.TempDir(), "store.json"),
@@ -331,8 +575,6 @@ func TestRunRetentionSweepPolicyReadErrorCode(t *testing.T) {
 }
 
 func TestRunRetentionSweepRequiresTenants(t *testing.T) {
-	t.Parallel()
-
 	err := run([]string{
 		"retention-sweep",
 		"-store", filepath.Join(t.TempDir(), "store.json"),
