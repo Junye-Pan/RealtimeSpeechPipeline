@@ -13,6 +13,8 @@
     "rd-003-baseline-completeness": {
       "gate": "full",
       "timing_tolerance_ms": 15,
+      "final_attempt_latency_threshold_ms": 20,
+      "total_invocation_latency_threshold_ms": 40,
       "expected_divergences": []
     },
     "rd-004-snapshot-provenance-plan": {

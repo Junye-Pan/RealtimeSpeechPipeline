@@ -52,6 +52,7 @@ type ActiveInput struct {
 	TurnID                       string
 	EventID                      string
 	PipelineVersion              string
+	SnapshotProvenance           controlplane.SnapshotProvenance
 	TransportSequence            int64
 	RuntimeSequence              int64
 	RuntimeTimestampMS           int64
@@ -92,10 +93,11 @@ type ApplyResult struct {
 
 // Arbiter composes RK-24/RK-25 guard checks and RK-04 plan resolution.
 type Arbiter struct {
-	admission        localadmission.Evaluator
-	guard            guard.Evaluator
-	resolver         planresolver.Resolver
-	baselineRecorder *timeline.Recorder
+	admission         localadmission.Evaluator
+	guard             guard.Evaluator
+	resolver          planresolver.Resolver
+	baselineRecorder  *timeline.Recorder
+	turnStartResolver TurnStartBundleResolver
 }
 
 func New() Arbiter {
@@ -108,11 +110,20 @@ func New() Arbiter {
 
 // NewWithRecorder wires a runtime baseline recorder used for OR-02 append semantics.
 func NewWithRecorder(recorder *timeline.Recorder) Arbiter {
+	return NewWithDependencies(recorder, nil)
+}
+
+// NewWithDependencies wires deterministic runtime dependencies for testing and seams.
+func NewWithDependencies(recorder *timeline.Recorder, turnStartResolver TurnStartBundleResolver) Arbiter {
+	if turnStartResolver == nil {
+		turnStartResolver = newControlPlaneBundleResolver()
+	}
 	return Arbiter{
-		admission:        localadmission.Evaluator{},
-		guard:            guard.Evaluator{},
-		resolver:         planresolver.Resolver{},
-		baselineRecorder: recorder,
+		admission:         localadmission.Evaluator{},
+		guard:             guard.Evaluator{},
+		resolver:          planresolver.Resolver{},
+		baselineRecorder:  recorder,
+		turnStartResolver: turnStartResolver,
 	}
 }
 
@@ -223,46 +234,85 @@ func (a Arbiter) HandleTurnOpenProposed(in OpenRequest) (OpenResult, error) {
 		return result, validateOpenTransitions(result.Transitions)
 	}
 
-	plan, err := a.resolver.Resolve(planresolver.Input{
-		TurnID:             in.TurnID,
-		PipelineVersion:    in.PipelineVersion,
-		GraphDefinitionRef: "graph/default",
-		ExecutionProfile:   "simple",
-		AuthorityEpoch:     in.AuthorityEpoch,
-		SnapshotProvenance: controlplane.SnapshotProvenance{
-			RoutingViewSnapshot:       "routing-view/v1",
-			AdmissionPolicySnapshot:   "admission-policy/v1",
-			ABICompatibilitySnapshot:  "abi-compat/v1",
-			VersionResolutionSnapshot: "version-resolution/v1",
-			PolicyResolutionSnapshot:  "policy-resolution/v1",
-			ProviderHealthSnapshot:    "provider-health/v1",
-		},
-		AllowedAdaptiveActions: []string{},
-		FailMaterialization:    in.PlanShouldFail,
+	turnStartBundle, err := a.resolveTurnStartBundle(TurnStartBundleInput{
+		SessionID:                in.SessionID,
+		TurnID:                   in.TurnID,
+		RequestedPipelineVersion: in.PipelineVersion,
+		AuthorityEpoch:           in.AuthorityEpoch,
 	})
 	if err != nil {
-		kind := in.PlanFailurePolicy
-		if kind != controlplane.OutcomeReject {
-			kind = controlplane.OutcomeDefer
+		return a.planMaterializationFailure(result, in, "turn_start_bundle_resolution_failed")
+	}
+
+	resolvedAuthorityEpoch := in.AuthorityEpoch
+	resolvedAuthorityEpochValid := in.AuthorityEpochValid
+	resolvedAuthorityAuthorized := in.AuthorityAuthorized
+
+	if turnStartBundle.HasLeaseDecision {
+		if turnStartBundle.LeaseAuthorityEpoch > 0 || resolvedAuthorityEpoch == 0 {
+			resolvedAuthorityEpoch = turnStartBundle.LeaseAuthorityEpoch
+		}
+		resolvedAuthorityEpochValid = resolvedAuthorityEpochValid && turnStartBundle.LeaseAuthorityValid
+		resolvedAuthorityAuthorized = resolvedAuthorityAuthorized && turnStartBundle.LeaseAuthorityGranted
+
+		leaseGate := a.guard.Evaluate(guard.PreTurnInput{
+			SessionID:            in.SessionID,
+			TurnID:               in.TurnID,
+			EventID:              in.EventID,
+			RuntimeTimestampMS:   in.RuntimeTimestampMS,
+			WallClockTimestampMS: in.WallClockTimestampMS,
+			AuthorityEpoch:       resolvedAuthorityEpoch,
+			AuthorityEpochValid:  resolvedAuthorityEpochValid,
+			AuthorityAuthorized:  resolvedAuthorityAuthorized,
+		})
+		if !leaseGate.Allowed {
+			if leaseGate.Outcome == nil {
+				return OpenResult{}, fmt.Errorf("lease authority gate denied but no outcome produced")
+			}
+			if err := leaseGate.Outcome.Validate(); err != nil {
+				return OpenResult{}, err
+			}
+
+			trigger, err := triggerFromOutcome(leaseGate.Outcome.OutcomeKind)
+			if err != nil {
+				return OpenResult{}, err
+			}
+
+			result.Transitions = append(result.Transitions, controlplane.TurnTransition{
+				FromState:     controlplane.TurnOpening,
+				Trigger:       trigger,
+				ToState:       controlplane.TurnIdle,
+				Deterministic: true,
+			})
+			result.Decision = leaseGate.Outcome
+			result.State = controlplane.TurnIdle
+			result.Events = append(result.Events, LifecycleEvent{Name: string(leaseGate.Outcome.OutcomeKind), Reason: leaseGate.Outcome.Reason})
+			return result, validateOpenTransitions(result.Transitions)
+		}
+	}
+
+	if turnStartBundle.HasCPAdmissionDecision && turnStartBundle.CPAdmissionOutcomeKind != controlplane.OutcomeAdmit {
+		scope := turnStartBundle.CPAdmissionScope
+		if scope == "" {
+			scope = controlplane.ScopeSession
 		}
 		outcome := controlplane.DecisionOutcome{
-			OutcomeKind:        kind,
+			OutcomeKind:        turnStartBundle.CPAdmissionOutcomeKind,
 			Phase:              controlplane.PhasePreTurn,
-			Scope:              controlplane.ScopeTurn,
+			Scope:              scope,
 			SessionID:          in.SessionID,
-			TurnID:             in.TurnID,
 			EventID:            in.EventID,
 			RuntimeTimestampMS: in.RuntimeTimestampMS,
 			WallClockMS:        in.WallClockTimestampMS,
-			EmittedBy:          controlplane.EmitterRK25,
-			Reason:             "plan_materialization_failed",
+			EmittedBy:          controlplane.EmitterCP05,
+			Reason:             turnStartBundle.CPAdmissionReason,
 		}
-		if vErr := outcome.Validate(); vErr != nil {
-			return OpenResult{}, vErr
+		if err := outcome.Validate(); err != nil {
+			return OpenResult{}, err
 		}
-		trigger, trigErr := triggerFromOutcome(outcome.OutcomeKind)
-		if trigErr != nil {
-			return OpenResult{}, trigErr
+		trigger, err := triggerFromOutcome(outcome.OutcomeKind)
+		if err != nil {
+			return OpenResult{}, err
 		}
 		result.Transitions = append(result.Transitions, controlplane.TurnTransition{
 			FromState:     controlplane.TurnOpening,
@@ -274,6 +324,20 @@ func (a Arbiter) HandleTurnOpenProposed(in OpenRequest) (OpenResult, error) {
 		result.State = controlplane.TurnIdle
 		result.Events = append(result.Events, LifecycleEvent{Name: string(outcome.OutcomeKind), Reason: outcome.Reason})
 		return result, validateOpenTransitions(result.Transitions)
+	}
+
+	plan, err := a.resolver.Resolve(planresolver.Input{
+		TurnID:                 in.TurnID,
+		PipelineVersion:        turnStartBundle.PipelineVersion,
+		GraphDefinitionRef:     turnStartBundle.GraphDefinitionRef,
+		ExecutionProfile:       turnStartBundle.ExecutionProfile,
+		AuthorityEpoch:         resolvedAuthorityEpoch,
+		SnapshotProvenance:     turnStartBundle.SnapshotProvenance,
+		AllowedAdaptiveActions: append([]string(nil), turnStartBundle.AllowedAdaptiveActions...),
+		FailMaterialization:    in.PlanShouldFail,
+	})
+	if err != nil {
+		return a.planMaterializationFailure(result, in, "plan_materialization_failed")
 	}
 
 	if err := plan.Validate(); err != nil {
@@ -289,6 +353,50 @@ func (a Arbiter) HandleTurnOpenProposed(in OpenRequest) (OpenResult, error) {
 	result.State = controlplane.TurnActive
 	result.Events = append(result.Events, LifecycleEvent{Name: string(controlplane.TriggerTurnOpen)})
 
+	return result, validateOpenTransitions(result.Transitions)
+}
+
+func (a Arbiter) resolveTurnStartBundle(in TurnStartBundleInput) (TurnStartBundle, error) {
+	resolver := a.turnStartResolver
+	if resolver == nil {
+		resolver = newControlPlaneBundleResolver()
+	}
+	return resolver.ResolveTurnStartBundle(in)
+}
+
+func (a Arbiter) planMaterializationFailure(result OpenResult, in OpenRequest, reason string) (OpenResult, error) {
+	kind := in.PlanFailurePolicy
+	if kind != controlplane.OutcomeReject {
+		kind = controlplane.OutcomeDefer
+	}
+	outcome := controlplane.DecisionOutcome{
+		OutcomeKind:        kind,
+		Phase:              controlplane.PhasePreTurn,
+		Scope:              controlplane.ScopeTurn,
+		SessionID:          in.SessionID,
+		TurnID:             in.TurnID,
+		EventID:            in.EventID,
+		RuntimeTimestampMS: in.RuntimeTimestampMS,
+		WallClockMS:        in.WallClockTimestampMS,
+		EmittedBy:          controlplane.EmitterRK25,
+		Reason:             reason,
+	}
+	if err := outcome.Validate(); err != nil {
+		return OpenResult{}, err
+	}
+	trigger, err := triggerFromOutcome(outcome.OutcomeKind)
+	if err != nil {
+		return OpenResult{}, err
+	}
+	result.Transitions = append(result.Transitions, controlplane.TurnTransition{
+		FromState:     controlplane.TurnOpening,
+		Trigger:       trigger,
+		ToState:       controlplane.TurnIdle,
+		Deterministic: true,
+	})
+	result.Decision = &outcome
+	result.State = controlplane.TurnIdle
+	result.Events = append(result.Events, LifecycleEvent{Name: string(outcome.OutcomeKind), Reason: outcome.Reason})
 	return result, validateOpenTransitions(result.Transitions)
 }
 
@@ -453,19 +561,53 @@ func (a Arbiter) appendBaselineEvidence(in ActiveInput, terminalOutcome string, 
 		return fmt.Errorf("timeline recorder unavailable")
 	}
 
-	evidence, err := buildBaselineEvidence(in, terminalOutcome, terminalReason)
+	turnStartBundle, err := a.resolveTurnStartBundle(TurnStartBundleInput{
+		SessionID:                in.SessionID,
+		TurnID:                   in.TurnID,
+		RequestedPipelineVersion: in.PipelineVersion,
+		AuthorityEpoch:           in.AuthorityEpoch,
+	})
+	if err != nil {
+		return err
+	}
+
+	if in.PipelineVersion == "" {
+		in.PipelineVersion = turnStartBundle.PipelineVersion
+	}
+	if err := in.SnapshotProvenance.Validate(); err != nil {
+		in.SnapshotProvenance = turnStartBundle.SnapshotProvenance
+	}
+	if len(in.ProviderInvocationOutcomes) == 0 {
+		attempts := a.baselineRecorder.ProviderAttemptEntriesForTurn(in.SessionID, in.TurnID)
+		synthesized, err := timeline.InvocationOutcomesFromProviderAttempts(attempts)
+		if err != nil {
+			return err
+		}
+		if len(synthesized) > 0 {
+			in.ProviderInvocationOutcomes = synthesized
+		}
+	}
+
+	evidence, err := buildBaselineEvidence(in, terminalOutcome, terminalReason, turnStartBundle.SnapshotProvenance)
 	if err != nil {
 		return err
 	}
 	return a.baselineRecorder.AppendBaseline(evidence)
 }
 
-func buildBaselineEvidence(in ActiveInput, terminalOutcome string, terminalReason string) (timeline.BaselineEvidence, error) {
+func buildBaselineEvidence(in ActiveInput, terminalOutcome string, terminalReason string, snapshotDefaults controlplane.SnapshotProvenance) (timeline.BaselineEvidence, error) {
 	eventID := in.EventID
 	if eventID == "" {
 		eventID = "evt-runtime-terminal"
 	}
 	pipelineVersion := defaultPipelineVersion(in.PipelineVersion)
+	if err := snapshotDefaults.Validate(); err != nil {
+		snapshotDefaults = defaultSnapshotProvenance()
+	}
+	snapshotProvenance := in.SnapshotProvenance
+	if err := snapshotProvenance.Validate(); err != nil {
+		snapshotProvenance = snapshotDefaults
+	}
 
 	decision := controlplane.DecisionOutcome{
 		OutcomeKind:        controlplane.OutcomeAdmit,
@@ -480,21 +622,14 @@ func buildBaselineEvidence(in ActiveInput, terminalOutcome string, terminalReaso
 		Reason:             "admission_capacity_allow",
 	}
 	evidence := timeline.BaselineEvidence{
-		SessionID:        in.SessionID,
-		TurnID:           in.TurnID,
-		PipelineVersion:  pipelineVersion,
-		EventID:          eventID,
-		EnvelopeSnapshot: "eventabi/v1",
-		PayloadTags:      []eventabi.PayloadClass{eventabi.PayloadMetadata},
-		PlanHash:         "plan/" + fallback(in.TurnID, "unknown"),
-		SnapshotProvenance: controlplane.SnapshotProvenance{
-			RoutingViewSnapshot:       "routing-view/v1",
-			AdmissionPolicySnapshot:   "admission-policy/v1",
-			ABICompatibilitySnapshot:  "abi-compat/v1",
-			VersionResolutionSnapshot: "version-resolution/v1",
-			PolicyResolutionSnapshot:  "policy-resolution/v1",
-			ProviderHealthSnapshot:    "provider-health/v1",
-		},
+		SessionID:          in.SessionID,
+		TurnID:             in.TurnID,
+		PipelineVersion:    pipelineVersion,
+		EventID:            eventID,
+		EnvelopeSnapshot:   "eventabi/v1",
+		PayloadTags:        []eventabi.PayloadClass{eventabi.PayloadMetadata},
+		PlanHash:           "plan/" + fallback(in.TurnID, "unknown"),
+		SnapshotProvenance: snapshotProvenance,
 		DecisionOutcomes:   []controlplane.DecisionOutcome{decision},
 		InvocationOutcomes: append([]timeline.InvocationOutcomeEvidence(nil), in.ProviderInvocationOutcomes...),
 		DeterminismSeed:    nonNegative(in.RuntimeSequence),
@@ -529,7 +664,7 @@ func buildBaselineEvidence(in ActiveInput, terminalOutcome string, terminalReaso
 		}
 	}
 
-	if err := normalizeBaselineEvidence(&evidence, in, terminalOutcome, terminalReason); err != nil {
+	if err := normalizeBaselineEvidence(&evidence, in, terminalOutcome, terminalReason, snapshotDefaults); err != nil {
 		return timeline.BaselineEvidence{}, err
 	}
 	if err := evidence.ValidateCompleteness(); err != nil {
@@ -538,7 +673,11 @@ func buildBaselineEvidence(in ActiveInput, terminalOutcome string, terminalReaso
 	return evidence, nil
 }
 
-func normalizeBaselineEvidence(evidence *timeline.BaselineEvidence, in ActiveInput, terminalOutcome string, terminalReason string) error {
+func normalizeBaselineEvidence(evidence *timeline.BaselineEvidence, in ActiveInput, terminalOutcome string, terminalReason string, snapshotDefaults controlplane.SnapshotProvenance) error {
+	if err := snapshotDefaults.Validate(); err != nil {
+		snapshotDefaults = defaultSnapshotProvenance()
+	}
+
 	evidence.SessionID = fallback(evidence.SessionID, in.SessionID)
 	evidence.TurnID = fallback(evidence.TurnID, in.TurnID)
 	evidence.PipelineVersion = fallback(evidence.PipelineVersion, defaultPipelineVersion(in.PipelineVersion))
@@ -554,12 +693,12 @@ func normalizeBaselineEvidence(evidence *timeline.BaselineEvidence, in ActiveInp
 	evidence.RedactionDecisions = decisions
 	evidence.PlanHash = fallback(evidence.PlanHash, "plan/"+fallback(in.TurnID, "unknown"))
 
-	evidence.SnapshotProvenance.RoutingViewSnapshot = fallback(evidence.SnapshotProvenance.RoutingViewSnapshot, "routing-view/v1")
-	evidence.SnapshotProvenance.AdmissionPolicySnapshot = fallback(evidence.SnapshotProvenance.AdmissionPolicySnapshot, "admission-policy/v1")
-	evidence.SnapshotProvenance.ABICompatibilitySnapshot = fallback(evidence.SnapshotProvenance.ABICompatibilitySnapshot, "abi-compat/v1")
-	evidence.SnapshotProvenance.VersionResolutionSnapshot = fallback(evidence.SnapshotProvenance.VersionResolutionSnapshot, "version-resolution/v1")
-	evidence.SnapshotProvenance.PolicyResolutionSnapshot = fallback(evidence.SnapshotProvenance.PolicyResolutionSnapshot, "policy-resolution/v1")
-	evidence.SnapshotProvenance.ProviderHealthSnapshot = fallback(evidence.SnapshotProvenance.ProviderHealthSnapshot, "provider-health/v1")
+	evidence.SnapshotProvenance.RoutingViewSnapshot = fallback(evidence.SnapshotProvenance.RoutingViewSnapshot, snapshotDefaults.RoutingViewSnapshot)
+	evidence.SnapshotProvenance.AdmissionPolicySnapshot = fallback(evidence.SnapshotProvenance.AdmissionPolicySnapshot, snapshotDefaults.AdmissionPolicySnapshot)
+	evidence.SnapshotProvenance.ABICompatibilitySnapshot = fallback(evidence.SnapshotProvenance.ABICompatibilitySnapshot, snapshotDefaults.ABICompatibilitySnapshot)
+	evidence.SnapshotProvenance.VersionResolutionSnapshot = fallback(evidence.SnapshotProvenance.VersionResolutionSnapshot, snapshotDefaults.VersionResolutionSnapshot)
+	evidence.SnapshotProvenance.PolicyResolutionSnapshot = fallback(evidence.SnapshotProvenance.PolicyResolutionSnapshot, snapshotDefaults.PolicyResolutionSnapshot)
+	evidence.SnapshotProvenance.ProviderHealthSnapshot = fallback(evidence.SnapshotProvenance.ProviderHealthSnapshot, snapshotDefaults.ProviderHealthSnapshot)
 
 	if len(evidence.DecisionOutcomes) == 0 {
 		decision := controlplane.DecisionOutcome{

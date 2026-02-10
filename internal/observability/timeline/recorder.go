@@ -14,13 +14,17 @@ var (
 	ErrBaselineCapacityExhausted = fmt.Errorf("timeline baseline stage-a capacity exhausted")
 	// ErrProviderAttemptCapacityExhausted indicates Stage-A provider attempt capacity is depleted.
 	ErrProviderAttemptCapacityExhausted = fmt.Errorf("timeline provider attempt stage-a capacity exhausted")
+	// ErrInvocationSnapshotCapacityExhausted indicates Stage-A invocation snapshot capacity is depleted.
+	ErrInvocationSnapshotCapacityExhausted = fmt.Errorf("timeline invocation snapshot stage-a capacity exhausted")
 )
 
 // StageAConfig defines bounded Stage-A append capacities.
 type StageAConfig struct {
-	BaselineCapacity int
-	DetailCapacity   int
-	AttemptCapacity  int
+	BaselineCapacity         int
+	DetailCapacity           int
+	AttemptCapacity          int
+	InvocationSnapshotCap    int
+	EnableInvocationSnapshot bool
 }
 
 // BaselineEvidence holds replay-critical OR-02 Stage-A evidence.
@@ -57,13 +61,15 @@ type BaselineEvidence struct {
 
 // InvocationOutcomeEvidence records normalized provider/external invocation outcomes.
 type InvocationOutcomeEvidence struct {
-	ProviderInvocationID string
-	Modality             string
-	ProviderID           string
-	OutcomeClass         string
-	Retryable            bool
-	RetryDecision        string
-	AttemptCount         int
+	ProviderInvocationID     string
+	Modality                 string
+	ProviderID               string
+	OutcomeClass             string
+	Retryable                bool
+	RetryDecision            string
+	AttemptCount             int
+	FinalAttemptLatencyMS    int64
+	TotalInvocationLatencyMS int64
 }
 
 // Validate enforces invocation evidence normalization fields.
@@ -83,6 +89,15 @@ func (e InvocationOutcomeEvidence) Validate() error {
 	if e.AttemptCount < 1 {
 		return fmt.Errorf("invocation attempt_count must be >=1")
 	}
+	if e.FinalAttemptLatencyMS < 0 {
+		return fmt.Errorf("invocation final_attempt_latency_ms must be >=0")
+	}
+	if e.TotalInvocationLatencyMS < 0 {
+		return fmt.Errorf("invocation total_invocation_latency_ms must be >=0")
+	}
+	if e.TotalInvocationLatencyMS < e.FinalAttemptLatencyMS {
+		return fmt.Errorf("invocation total_invocation_latency_ms must be >= final_attempt_latency_ms")
+	}
 	return nil
 }
 
@@ -99,6 +114,7 @@ type ProviderAttemptEvidence struct {
 	OutcomeClass         string
 	Retryable            bool
 	RetryDecision        string
+	AttemptLatencyMS     int64
 	TransportSequence    int64
 	RuntimeSequence      int64
 	AuthorityEpoch       int64
@@ -123,6 +139,9 @@ func (e ProviderAttemptEvidence) Validate() error {
 	if !inStringSet(e.RetryDecision, []string{"none", "retry", "provider_switch", "fallback"}) {
 		return fmt.Errorf("invalid provider attempt retry_decision: %s", e.RetryDecision)
 	}
+	if e.AttemptLatencyMS < 0 {
+		return fmt.Errorf("provider attempt latency_ms must be >=0")
+	}
 	if e.Attempt < 1 {
 		return fmt.Errorf("provider attempt must be >=1")
 	}
@@ -131,6 +150,50 @@ func (e ProviderAttemptEvidence) Validate() error {
 	}
 	if e.RuntimeTimestampMS < 0 || e.WallClockTimestampMS < 0 {
 		return fmt.Errorf("provider attempt timestamps must be >=0")
+	}
+	return nil
+}
+
+// InvocationSnapshotEvidence captures optional non-terminal invocation snapshots.
+type InvocationSnapshotEvidence struct {
+	SessionID                string
+	TurnID                   string
+	PipelineVersion          string
+	EventID                  string
+	ProviderInvocationID     string
+	Modality                 string
+	ProviderID               string
+	OutcomeClass             string
+	Retryable                bool
+	RetryDecision            string
+	AttemptCount             int
+	FinalAttemptLatencyMS    int64
+	TotalInvocationLatencyMS int64
+	RuntimeTimestampMS       int64
+	WallClockTimestampMS     int64
+}
+
+// Validate enforces invocation snapshot invariants.
+func (e InvocationSnapshotEvidence) Validate() error {
+	if e.SessionID == "" || e.PipelineVersion == "" || e.EventID == "" {
+		return fmt.Errorf("session_id, pipeline_version, and event_id are required")
+	}
+	invocation := InvocationOutcomeEvidence{
+		ProviderInvocationID:     e.ProviderInvocationID,
+		Modality:                 e.Modality,
+		ProviderID:               e.ProviderID,
+		OutcomeClass:             e.OutcomeClass,
+		Retryable:                e.Retryable,
+		RetryDecision:            e.RetryDecision,
+		AttemptCount:             e.AttemptCount,
+		FinalAttemptLatencyMS:    e.FinalAttemptLatencyMS,
+		TotalInvocationLatencyMS: e.TotalInvocationLatencyMS,
+	}
+	if err := invocation.Validate(); err != nil {
+		return err
+	}
+	if e.RuntimeTimestampMS < 0 || e.WallClockTimestampMS < 0 {
+		return fmt.Errorf("invocation snapshot timestamps must be >=0")
 	}
 	return nil
 }
@@ -288,6 +351,7 @@ type Recorder struct {
 	baselineEntries []BaselineEvidence
 	detailEntries   []DetailEvent
 	attemptEntries  []ProviderAttemptEvidence
+	snapshotEntries []InvocationSnapshotEvidence
 	droppedDetails  int
 	downgradeByTurn map[string]bool
 }
@@ -302,6 +366,9 @@ func NewRecorder(cfg StageAConfig) Recorder {
 	}
 	if cfg.AttemptCapacity < 1 {
 		cfg.AttemptCapacity = 1024
+	}
+	if cfg.InvocationSnapshotCap < 1 {
+		cfg.InvocationSnapshotCap = 1024
 	}
 	return Recorder{
 		cfg:             cfg,
@@ -344,6 +411,25 @@ func (r *Recorder) AppendProviderInvocationAttempts(attempts []ProviderAttemptEv
 		return ErrProviderAttemptCapacityExhausted
 	}
 	r.attemptEntries = append(r.attemptEntries, attempts...)
+	return nil
+}
+
+// AppendInvocationSnapshot appends optional non-terminal invocation snapshot evidence.
+func (r *Recorder) AppendInvocationSnapshot(snapshot InvocationSnapshotEvidence) error {
+	if !r.cfg.EnableInvocationSnapshot {
+		return nil
+	}
+	if err := snapshot.Validate(); err != nil {
+		return err
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if len(r.snapshotEntries) >= r.cfg.InvocationSnapshotCap {
+		return ErrInvocationSnapshotCapacityExhausted
+	}
+	r.snapshotEntries = append(r.snapshotEntries, snapshot)
 	return nil
 }
 
@@ -462,6 +548,59 @@ func (r *Recorder) ProviderAttemptEntries() []ProviderAttemptEvidence {
 	return out
 }
 
+// ProviderAttemptEntriesForTurn returns provider attempts for one session/turn pair.
+func (r *Recorder) ProviderAttemptEntriesForTurn(sessionID, turnID string) []ProviderAttemptEvidence {
+	if sessionID == "" {
+		return nil
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	filtered := make([]ProviderAttemptEvidence, 0)
+	for _, entry := range r.attemptEntries {
+		if entry.SessionID != sessionID {
+			continue
+		}
+		if turnID != "" && entry.TurnID != turnID {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	return filtered
+}
+
+// InvocationSnapshotEntries returns a stable copy of invocation snapshots.
+func (r *Recorder) InvocationSnapshotEntries() []InvocationSnapshotEvidence {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]InvocationSnapshotEvidence, len(r.snapshotEntries))
+	copy(out, r.snapshotEntries)
+	return out
+}
+
+// InvocationSnapshotEntriesForTurn returns invocation snapshots for one session/turn pair.
+func (r *Recorder) InvocationSnapshotEntriesForTurn(sessionID, turnID string) []InvocationSnapshotEvidence {
+	if sessionID == "" {
+		return nil
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	filtered := make([]InvocationSnapshotEvidence, 0)
+	for _, entry := range r.snapshotEntries {
+		if entry.SessionID != sessionID {
+			continue
+		}
+		if turnID != "" && entry.TurnID != turnID {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	return filtered
+}
+
 // DroppedDetailCount reports deterministic detail drop count.
 func (r *Recorder) DroppedDetailCount() int {
 	r.mu.Lock()
@@ -490,4 +629,107 @@ func BaselineCompleteness(entries []BaselineEvidence) CompletenessReport {
 		report.CompletenessRatio = float64(report.CompleteAcceptedTurns) / float64(report.TotalAcceptedTurns)
 	}
 	return report
+}
+
+// InvocationOutcomesFromProviderAttempts synthesizes OR-02 invocation outcomes from RK-11 attempt evidence.
+func InvocationOutcomesFromProviderAttempts(attempts []ProviderAttemptEvidence) ([]InvocationOutcomeEvidence, error) {
+	if len(attempts) == 0 {
+		return nil, nil
+	}
+
+	byInvocationID := make(map[string][]ProviderAttemptEvidence, len(attempts))
+	for _, attempt := range attempts {
+		if err := attempt.Validate(); err != nil {
+			return nil, err
+		}
+		byInvocationID[attempt.ProviderInvocationID] = append(byInvocationID[attempt.ProviderInvocationID], attempt)
+	}
+
+	ids := make([]string, 0, len(byInvocationID))
+	for providerInvocationID := range byInvocationID {
+		ids = append(ids, providerInvocationID)
+	}
+	sort.Strings(ids)
+
+	outcomes := make([]InvocationOutcomeEvidence, 0, len(ids))
+	for _, providerInvocationID := range ids {
+		group := append([]ProviderAttemptEvidence(nil), byInvocationID[providerInvocationID]...)
+		sort.SliceStable(group, func(i, j int) bool {
+			return providerAttemptLess(group[i], group[j])
+		})
+		final := group[len(group)-1]
+		retryDecision := final.RetryDecision
+		if retryDecision == "" {
+			retryDecision = "none"
+		}
+
+		outcome := InvocationOutcomeEvidence{
+			ProviderInvocationID:     providerInvocationID,
+			Modality:                 final.Modality,
+			ProviderID:               final.ProviderID,
+			OutcomeClass:             final.OutcomeClass,
+			Retryable:                final.Retryable,
+			RetryDecision:            retryDecision,
+			AttemptCount:             len(group),
+			FinalAttemptLatencyMS:    deriveFinalAttemptLatencyMS(group),
+			TotalInvocationLatencyMS: deriveTotalInvocationLatencyMS(group),
+		}
+		if err := outcome.Validate(); err != nil {
+			return nil, err
+		}
+		outcomes = append(outcomes, outcome)
+	}
+	return outcomes, nil
+}
+
+func providerAttemptLess(a, b ProviderAttemptEvidence) bool {
+	if a.RuntimeTimestampMS != b.RuntimeTimestampMS {
+		return a.RuntimeTimestampMS < b.RuntimeTimestampMS
+	}
+	if a.WallClockTimestampMS != b.WallClockTimestampMS {
+		return a.WallClockTimestampMS < b.WallClockTimestampMS
+	}
+	if a.RuntimeSequence != b.RuntimeSequence {
+		return a.RuntimeSequence < b.RuntimeSequence
+	}
+	if a.TransportSequence != b.TransportSequence {
+		return a.TransportSequence < b.TransportSequence
+	}
+	if a.Attempt != b.Attempt {
+		return a.Attempt < b.Attempt
+	}
+	if a.ProviderID != b.ProviderID {
+		return a.ProviderID < b.ProviderID
+	}
+	return a.EventID < b.EventID
+}
+
+func deriveFinalAttemptLatencyMS(group []ProviderAttemptEvidence) int64 {
+	if len(group) == 0 {
+		return 0
+	}
+	final := group[len(group)-1]
+	if final.AttemptLatencyMS > 0 {
+		return final.AttemptLatencyMS
+	}
+	if len(group) == 1 {
+		return 0
+	}
+	prev := group[len(group)-2]
+	if final.WallClockTimestampMS > prev.WallClockTimestampMS {
+		return final.WallClockTimestampMS - prev.WallClockTimestampMS
+	}
+	return 0
+}
+
+func deriveTotalInvocationLatencyMS(group []ProviderAttemptEvidence) int64 {
+	if len(group) == 0 {
+		return 0
+	}
+	first := group[0]
+	last := group[len(group)-1]
+	if last.WallClockTimestampMS > first.WallClockTimestampMS {
+		return last.WallClockTimestampMS - first.WallClockTimestampMS
+	}
+	return 0
 }

@@ -5,9 +5,11 @@
 Define and track the implemented conformance baseline for contract correctness, deterministic replay behavior, cancellation fencing, authority safety, and merge/drop lineage guarantees.
 
 Status snapshot:
-- Baseline reflects repository behavior as of `2026-02-08`.
+- Baseline reflects repository behavior as of `2026-02-10`.
 - This document is synchronized with current gate execution in `Makefile`, `scripts/verify.sh`, and `cmd/rspp-cli`.
-- This documentation pass closes MVP item `10.2.3` from `docs/MVP_ImplementationSlice.md`.
+- This document is synchronized with the closed MVP `10.2` state and current post-MVP follow-up tracking in `docs/MVP_ImplementationSlice.md`.
+- CP bundle provenance integration coverage now includes partial-backend fallback and stale-snapshot deterministic pre-turn handling scenarios, plus CP-03 graph compile output propagation, CP-05 pre-turn decision shaping (`CP-05` emitter outcomes), CP-07 lease-authority gating paths, and HTTP distribution hardening coverage (ordered failover chains, retry/backoff, and bounded stale refresh behavior); replay invocation-latency threshold enforcement is implemented in the current baseline.
+- OR-03 replay access path now includes durable JSONL audit-backend adapter coverage plus backend-resolver failure-mode assertions.
 
 ## 2. Suite structure and current coverage
 
@@ -30,6 +32,7 @@ Status snapshot:
 | `CT-003` | `test/contract/fixtures/turn_transition/*`, `internal/runtime/turnarbiter/arbiter_test.go`, `test/integration/runtime_chain_test.go` | quick + full | legal transitions accepted, illegal/pre-turn failure paths remain pre-turn with no invalid lifecycle emissions |
 | `CT-004` | `internal/runtime/planresolver/resolver_test.go`, `test/contract/fixtures/resolved_turn_plan/*` | quick + full | frozen fields/provenance are present and deterministic for identical inputs |
 | `CT-005` | `api/controlplane/types_test.go`, `test/contract/fixtures/decision_outcome/*`, `test/integration/runtime_chain_test.go` | quick + full | emitter/phase/scope constraints for decision outcomes are enforced |
+| `CT-006` | `internal/runtime/turnarbiter/controlplane_backends_test.go`, `internal/runtime/turnarbiter/arbiter_test.go`, `internal/controlplane/distribution/file_adapter_test.go`, `internal/controlplane/distribution/http_adapter_test.go`, `test/integration/runtime_chain_test.go` | quick + full | CP turn-start backend path preserves deterministic behavior under partial backend availability (per-service fallback) and stale snapshot fetch failures (deterministic pre-turn handling), while CP-03/CP-05/CP-07 seams deterministically propagate compiled graph outputs, pre-turn reject/defer decisions, and lease-authority gate outcomes across file/env/http distribution adapters, including ordered HTTP endpoint failover, deterministic retry/backoff, and bounded stale refresh behavior. |
 
 ## 3.2 Replay determinism tests (`RD`)
 
@@ -39,6 +42,7 @@ Status snapshot:
 | `RD-002` | `test/replay/rd002_rd003_rd004_test.go` | quick + full | recompute path timing divergence is tolerated only within fixture tolerance |
 | `RD-003` | `test/replay/rd002_rd003_rd004_test.go`, `cmd/rspp-cli slo-gates-report` | quick + full | OR-02 completeness for accepted turns is enforced |
 | `RD-004` | `test/replay/rd002_rd003_rd004_test.go`, replay metadata entry `rd-004-snapshot-provenance-plan` | quick + full tests, full replay-regression artifact | snapshot provenance mismatch yields `PLAN_DIVERGENCE` and must be explicitly expected in metadata |
+| `RD-005` | `cmd/rspp-cli/main.go`, `cmd/rspp-cli/main_test.go`, `internal/tooling/regression/divergence_test.go`, replay metadata fields `final_attempt_latency_threshold_ms` + `total_invocation_latency_threshold_ms` | full | invocation latency threshold breaches fail replay regression with deterministic timing-divergence scopes derived from runtime baseline artifact invocation outcomes |
 
 ## 3.3 Cancellation fencing tests (`CF`)
 
@@ -87,13 +91,16 @@ Metadata file:
 Per-fixture fields in use:
 1. `gate`: `quick`, `full`, or `both` (default behavior when omitted is `full`).
 2. `timing_tolerance_ms`: per-fixture timing tolerance used by divergence evaluation.
-3. `expected_divergences`: expected class/scope entries; `ORDERING_DIVERGENCE` requires `approved: true`.
+3. `final_attempt_latency_threshold_ms`: optional max for OR-02 invocation `final_attempt_latency_ms`.
+4. `total_invocation_latency_threshold_ms`: optional max for OR-02 invocation `total_invocation_latency_ms`.
+5. `expected_divergences`: expected class/scope entries; `ORDERING_DIVERGENCE` requires `approved: true`.
 
 Policy invariants:
 1. `AUTHORITY_DIVERGENCE` is always failing.
 2. Missing expected divergences are failing.
 3. `PLAN_DIVERGENCE` and `OUTCOME_DIVERGENCE` are failing unless explicitly expected.
 4. `TIMING_DIVERGENCE` is failing when `diff_ms` is missing or exceeds tolerance.
+5. Invocation latency timing scopes (`invocation_latency_final:*`, `invocation_latency_total:*`) emitted by threshold checks are always failing regardless of timing tolerance.
 
 ## 6. Conformance exit criteria for baseline
 
@@ -102,10 +109,10 @@ Policy invariants:
 3. Replay and SLO report artifacts are produced at expected `.codex/` paths.
 4. No unresolved contract ambiguity remains for MVP baseline artifacts.
 
-## 7. Expansion backlog (outside this doc-sync pass)
+## 7. Expansion backlog (post-MVP)
 
-1. MVP `10.2.1`: CI artifact publication and merge/release blocker wiring.
-2. MVP `10.2.2`: replay regression expansion beyond current fixture-backed baseline.
+1. Extend CP distribution hardening beyond current baseline (authn/authz hardening, endpoint discovery/rotation, push invalidation, and live-provider/failover chain joins).
+2. Extend artifact-derived invocation-latency extraction beyond baseline fixture scopes to additional replay fixtures as coverage grows.
 
 ## 8. Consistency references
 

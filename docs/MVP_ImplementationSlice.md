@@ -1,13 +1,17 @@
 # RSPP MVP First Implementation Slice
 
-## Status snapshot (2026-02-08)
+## Status snapshot (2026-02-10, post retention-sweep operational hardening + replay-latency + CP distribution hardening)
 
 This document remains the normative MVP contract and now includes an implementation snapshot.
 
-Current milestone state (from `.codex/sessions/2026-02-08-scaffold-contract-verify-20260208.tmp` and current repository state):
-- Contract/schema validation, verify wiring, and runtime arbiter/guard path were completed.
-- Full failure matrix slices (`F1`-`F8`) and replay divergence gating paths were completed.
+Current milestone state (from current local workspace on `main` at commit `58aa676`):
+- Contract/schema validation, runtime arbiter/guard path, full failure matrix slices (`F1`-`F8`), and replay divergence gating paths are implemented.
+- `RK-10`/`RK-11` provider contracts plus deterministic invocation/retry-switch/fallback behavior are implemented, including startup+CI provider-count enforcement (3-5 per modality), non-terminal attempt evidence promotion into terminal OR-02 baseline evidence, per-attempt/invocation latency fields in OR-02 invocation outcomes, optional non-terminal invocation snapshot append support (config-gated), and live-provider switch/fallback smoke coverage.
+- Replay invocation-latency threshold gating is implemented with runtime-baseline-artifact extraction in replay regression (`cmd/rspp-cli replay-regression-report`), replacing synthetic threshold sample inputs.
+- CP turn-start bundle seam is implemented for deterministic CP-derived plan inputs and snapshot provenance (`CP-01/02/03/04/05/07/08/09/10` services + runtime seam wiring in arbiter), including backend bootstrap wiring (`turnarbiter.NewWithControlPlaneBackends`), file/env/http-backed distribution adapter loading, per-service partial-backend fallback defaults, stale-snapshot error classification, CP-03 graph compile output threading, CP-05 pre-turn admission decision shaping, CP-07 lease authority gating, and integration coverage for custom/partial/stale pipeline-version/snapshot propagation.
+- Security/data-handling baseline is implemented, including replay access controls, immutable replay-audit durable JSONL backend resolver path (resolver-backed sink adapter), tenant policy-resolver-backed retention enforcement seams, retention/deletion contract coverage with backend resolver wiring, concrete scheduled retention sweep entrypoint (`rspp-runtime retention-sweep`), deterministic per-run/per-tenant/per-class sweep counters, and fail-fast policy-artifact validation with stable error taxonomy.
 - `make verify-quick` and `make verify-full` invoke `scripts/verify.sh` with replay and SLO artifacts.
+- CI enforces blocking `codex-artifact-policy`, `verify-quick`, `verify-full`, and `security-baseline` jobs; `live-provider-smoke` and `a2-runtime-live` remain non-blocking.
 
 Normative requirements in sections 1-10 remain in force unless explicitly superseded in this file.
 
@@ -152,7 +156,7 @@ Status note:
 Status note:
 - Smoke and full failure matrices are covered by `test/failover/failure_smoke_test.go` and `test/failover/failure_full_test.go`.
 
-## 10. Execution sequence for remaining MVP closure
+## 10. Execution sequence and closure log
 
 ### 10.1 Completed (evidence-linked)
 
@@ -204,7 +208,7 @@ Status note:
    - full CI uploads per-fixture replay artifacts.
 
 10. Enforce repository required checks (external settings):
-   - `main` branch protection requires `verify-quick` and `verify-full` (strict mode, admins enforced).
+   - `main` branch protection requires `codex-artifact-policy`, `verify-quick`, and `verify-full` (strict mode, admins enforced).
    - `release/*` branch-protection rule requires `verify-full` (strict mode, admins enforced).
 
 11. Implement RK-10/RK-11 provider manager + invocation slice:
@@ -234,11 +238,41 @@ Status note:
    - `scripts/security-check.sh`, `Makefile` target `security-baseline-check`
    - `.github/workflows/verify.yml` blocking `security-baseline` job with artifacts
 
-### 10.2 Remaining (ordered, post doc-sync 2026-02-09)
+15. Enforce `.codex` generated artifact tracking policy:
+   - `.gitignore` tracks only `.codex/skills/**` and `.codex/rules/**`.
+   - `scripts/check-codex-artifact-policy.sh` and `Makefile` target `codex-artifact-policy-check`.
+   - `.github/workflows/verify.yml` blocking `codex-artifact-policy` job, required before quick/full/security/live jobs.
+
+16. Close prior 10.2 follow-up bundle (sync pass 2026-02-10):
+   - Provider follow-up closure items were completed and reflected in A.2/A.3 evidence mappings.
+   - CP turn-start seam/backend bootstrap plus file/env/http distribution adapter support were completed with deterministic fallback + stale-snapshot handling coverage.
+   - Replay retention sweep entrypoint and replay invocation-latency threshold gating were completed and documented.
+
+17. Harden service-client CP distribution beyond baseline adapters (2026-02-10):
+   - added authenticated HTTP fetch path with bearer-token and client-identity headers (`RSPP_CP_DISTRIBUTION_HTTP_AUTH_BEARER_TOKEN`, `RSPP_CP_DISTRIBUTION_HTTP_CLIENT_ID`).
+   - added ordered multi-endpoint failover (`RSPP_CP_DISTRIBUTION_HTTP_URLS`) with deterministic per-endpoint retry/backoff controls.
+   - added on-demand TTL cache refresh with bounded stale-serving fallback (`cache_ttl` + `max_staleness`) and failover orchestration coverage for degraded/stale endpoint chains.
+
+### 10.2 Remaining (open, ordered as of 2026-02-10)
 
 Status update:
-- Documentation synchronization follow-up is complete and tracked in Appendix B.
-- No open remaining items in section 10.2 as of the 2026-02-09 closure pass.
+- This section tracks unfinished/partially finished/unstarted next-step work only.
+- Completed closure items were moved to section `10.1`.
+
+1. Productionize replay durability and policy distribution backends:
+   - replace/augment local JSONL durable sink with distributed durable backend implementation,
+   - move retention policy sourcing from static artifact paths to distributed CP policy snapshots,
+   - add integration coverage for backend outage/recovery and deterministic fallback behavior.
+
+2. Expand replay invocation-latency evidence coverage:
+   - extend artifact-derived latency extraction beyond current baseline fixture scope,
+   - add replay fixtures that assert latency thresholds across more runtime chains,
+   - keep threshold-failure divergence output deterministic across fixture sets.
+
+3. Promote partial CP modules toward `implemented` gate:
+   - define and satisfy promotion gate criteria for CP-01/03/04/05/07/08/09/10,
+   - require service-client backend parity + failure-injection coverage + conformance evidence updates,
+   - update A.1 status rows only after those gates are met.
 
 ## Appendix A. MVP module status map (CP/RK/OR/DX)
 
@@ -252,15 +286,15 @@ Status values:
 
 | Module | Status | Evidence | Notes/Gap |
 | --- | --- | --- | --- |
-| CP-01 | scaffold-only | `internal/controlplane/registry/.gitkeep` | Contract/types exist under `api/`, but registry implementation is not built out. |
-| CP-02 | scaffold-only | `internal/controlplane/normalizer/.gitkeep` | Normalization behavior is represented in docs/tests, not full CP service implementation. |
-| CP-03 | scaffold-only | `internal/controlplane/graphcompiler/.gitkeep` | Compiler module remains scaffold. |
-| CP-04 | scaffold-only | `internal/controlplane/policy/.gitkeep` | Policy engine runtime stubs only. |
-| CP-05 | scaffold-only | `internal/controlplane/admission/.gitkeep` | Runtime local admission (RK-25) exists; CP policy service remains scaffold. |
-| CP-07 | scaffold-only | `internal/controlplane/lease/.gitkeep` | Lease authority service remains scaffold. |
-| CP-08 | scaffold-only | `internal/controlplane/routingview/.gitkeep` | Routing view publisher remains scaffold. |
-| CP-09 | scaffold-only | `internal/controlplane/rollout/.gitkeep` | Rollout/version resolver remains scaffold. |
-| CP-10 | scaffold-only | `internal/controlplane/providerhealth/.gitkeep` | Provider health aggregator remains scaffold. |
+| CP-01 | partial | `internal/controlplane/registry/registry.go`, `internal/controlplane/registry/registry_test.go`, `internal/controlplane/distribution/file_adapter.go`, `internal/controlplane/distribution/file_adapter_test.go`, `internal/controlplane/distribution/http_adapter.go`, `internal/controlplane/distribution/http_adapter_test.go`, `internal/runtime/turnarbiter/controlplane_bundle.go`, `internal/runtime/turnarbiter/controlplane_backends.go`, `internal/runtime/turnarbiter/controlplane_backends_test.go`, `test/integration/runtime_chain_test.go` | Deterministic pipeline registry resolver is implemented with backend interface seams, file/env/http-backed distribution adapter paths, authenticated fetch, retry/backoff, bounded stale refresh, and runtime backend wiring with per-service fallback; advanced endpoint discovery/rotation and push invalidation remain deferred. |
+| CP-02 | partial | `internal/controlplane/normalizer/normalizer.go`, `internal/controlplane/normalizer/normalizer_test.go`, `internal/runtime/turnarbiter/controlplane_bundle.go` | Baseline turn-start normalization/defaulting is implemented through runtime seam; full control-plane normalization service pipeline remains deferred. |
+| CP-03 | partial | `internal/controlplane/graphcompiler/graphcompiler.go`, `internal/controlplane/graphcompiler/graphcompiler_test.go`, `internal/controlplane/distribution/file_adapter.go`, `internal/controlplane/distribution/http_adapter.go`, `internal/runtime/turnarbiter/controlplane_bundle.go`, `internal/runtime/turnarbiter/controlplane_backends.go`, `internal/runtime/turnarbiter/controlplane_backends_test.go`, `test/integration/runtime_chain_test.go` | Deterministic graph compiler service is implemented with backend interface seams, file/env/http-backed distribution adapter loading, and runtime bundle integration; production distributed compiler backend hardening remains deferred. |
+| CP-04 | partial | `internal/controlplane/policy/policy.go`, `internal/controlplane/policy/policy_test.go`, `internal/controlplane/distribution/file_adapter.go`, `internal/controlplane/distribution/file_adapter_test.go`, `internal/controlplane/distribution/http_adapter.go`, `internal/controlplane/distribution/http_adapter_test.go`, `internal/runtime/turnarbiter/controlplane_bundle.go`, `internal/runtime/turnarbiter/controlplane_backends.go`, `internal/runtime/turnarbiter/controlplane_backends_test.go`, `test/integration/runtime_chain_test.go` | Deterministic policy snapshot/action gating defaults are implemented with backend evaluation seams, file/env/http-backed distribution adapter loading, stale-snapshot classification, and runtime backend wiring with per-service fallback; dynamic policy rollout controls remain deferred. |
+| CP-05 | partial | `internal/controlplane/admission/admission.go`, `internal/controlplane/admission/admission_test.go`, `internal/controlplane/distribution/file_adapter.go`, `internal/controlplane/distribution/http_adapter.go`, `internal/runtime/turnarbiter/controlplane_bundle.go`, `internal/runtime/turnarbiter/arbiter.go`, `internal/runtime/turnarbiter/arbiter_test.go`, `test/integration/runtime_chain_test.go` | Deterministic CP admission service is implemented with backend seams and runtime pre-turn decision shaping (`CP-05` emitter paths for reject/defer), including file/env/http-backed distribution adapter paths; dynamic distributed policy controls remain deferred. |
+| CP-07 | partial | `internal/controlplane/lease/lease.go`, `internal/controlplane/lease/lease_test.go`, `internal/controlplane/distribution/file_adapter.go`, `internal/controlplane/distribution/http_adapter.go`, `internal/runtime/turnarbiter/controlplane_bundle.go`, `internal/runtime/turnarbiter/arbiter.go`, `internal/runtime/turnarbiter/arbiter_test.go`, `test/integration/runtime_chain_test.go` | Deterministic lease authority resolver is implemented with backend seams and runtime RK-24 pre-turn authority gating integration, including file/env/http-backed distribution adapter paths; distributed lease orchestration hardening remains deferred. |
+| CP-08 | partial | `internal/controlplane/routingview/routingview.go`, `internal/controlplane/routingview/routingview_test.go`, `internal/controlplane/distribution/file_adapter.go`, `internal/controlplane/distribution/file_adapter_test.go`, `internal/controlplane/distribution/http_adapter.go`, `internal/controlplane/distribution/http_adapter_test.go`, `internal/runtime/turnarbiter/controlplane_bundle.go`, `internal/runtime/turnarbiter/controlplane_backends.go`, `internal/runtime/turnarbiter/controlplane_backends_test.go`, `test/integration/runtime_chain_test.go` | Deterministic routing/admission/ABI snapshot references are emitted with backend snapshot seams, file/env/http-backed distribution adapter loading, runtime partial-backend fallback behavior, and stale snapshot handling coverage; live snapshot publisher integration remains deferred. |
+| CP-09 | partial | `internal/controlplane/rollout/rollout.go`, `internal/controlplane/rollout/rollout_test.go`, `internal/controlplane/distribution/file_adapter.go`, `internal/controlplane/distribution/file_adapter_test.go`, `internal/controlplane/distribution/http_adapter.go`, `internal/controlplane/distribution/http_adapter_test.go`, `internal/runtime/turnarbiter/controlplane_bundle.go`, `internal/runtime/turnarbiter/controlplane_backends.go`, `internal/runtime/turnarbiter/controlplane_backends_test.go`, `test/integration/runtime_chain_test.go` | Deterministic turn-start version resolution is implemented with backend resolver seams, file/env/http-backed distribution adapter loading, and runtime backend wiring with per-service fallback and stale snapshot classification; rollout policy/canary controls remain deferred. |
+| CP-10 | partial | `internal/controlplane/providerhealth/providerhealth.go`, `internal/controlplane/providerhealth/providerhealth_test.go`, `internal/controlplane/distribution/file_adapter.go`, `internal/controlplane/distribution/file_adapter_test.go`, `internal/controlplane/distribution/http_adapter.go`, `internal/controlplane/distribution/http_adapter_test.go`, `internal/runtime/turnarbiter/controlplane_bundle.go`, `internal/runtime/turnarbiter/controlplane_backends.go`, `internal/runtime/turnarbiter/controlplane_backends_test.go`, `test/integration/runtime_chain_test.go` | Deterministic provider-health snapshot reference resolution is implemented with backend snapshot seams, file/env/http-backed distribution adapter loading, and runtime backend wiring with per-service fallback and stale snapshot classification; live health aggregation backend remains deferred. |
 
 ### A.2 Runtime
 
@@ -272,7 +306,7 @@ Real-provider validation coverage:
 | --- | --- | --- | --- |
 | RK-02 | implemented | `internal/runtime/prelude/engine.go`, `internal/runtime/prelude/engine_test.go`, `test/integration/runtime_chain_test.go` | Session prelude emits deterministic non-authoritative `turn_open_proposed` intents for arbiter turn-open gating. |
 | RK-03 | implemented | `internal/runtime/turnarbiter/arbiter.go`, `internal/runtime/turnarbiter/arbiter_test.go` | Deterministic lifecycle path is present. |
-| RK-04 | implemented | `internal/runtime/planresolver/resolver.go`, `internal/runtime/planresolver/resolver_test.go` | Turn-plan materialization checks present. |
+| RK-04 | implemented | `internal/runtime/planresolver/resolver.go`, `internal/runtime/planresolver/resolver_test.go`, `internal/runtime/turnarbiter/controlplane_bundle.go`, `internal/runtime/turnarbiter/controlplane_bundle_test.go` | Turn-plan materialization checks are present and now consume CP-resolved turn-start bundle defaults/provenance through the arbiter seam. |
 | RK-05 | implemented | `api/eventabi/types.go`, `api/eventabi/types_test.go`, `internal/runtime/eventabi/gateway.go`, `internal/runtime/eventabi/gateway_test.go`, `internal/runtime/transport/fence.go`, `internal/runtime/nodehost/failure.go` | Runtime-side EventRecord/ControlSignal normalization and sequencing validation gateway is implemented and enforces payload-class presence at ABI boundary. |
 | RK-06 | implemented | `internal/runtime/lanes/router.go`, `internal/runtime/lanes/router_test.go` | Deterministic lane router and route validation are implemented. |
 | RK-07 | implemented | `internal/runtime/executor/scheduler.go`, `internal/runtime/executor/plan.go`, `internal/runtime/executor/scheduler_test.go`, `test/integration/runtime_chain_test.go` | Deterministic multi-node execution-plan ordering, lane dispatch, terminal reasoning, and failure-shaped continuation/stop behavior are implemented. |
@@ -297,8 +331,8 @@ Real-provider validation coverage:
 | Module | Status | Evidence | Notes/Gap |
 | --- | --- | --- | --- |
 | OR-01 | scaffold-only | `internal/observability/telemetry/.gitkeep` | Telemetry pipeline module is not implemented in this slice. |
-| OR-02 | implemented | `internal/observability/timeline/recorder.go`, `internal/observability/timeline/redaction.go`, `internal/observability/timeline/artifact.go`, tests | Baseline timeline recording includes payload classification tags plus persisted redaction decisions per recorded class. |
-| OR-03 | implemented | `internal/observability/replay/comparator.go`, `internal/observability/replay/access.go`, `internal/observability/replay/retention.go`, `internal/observability/replay/service.go`, `api/observability/types.go`, `test/replay/*`, `cmd/rspp-cli/main.go` | Replay divergence comparison/reporting is implemented, with deny-by-default replay access schema, immutable audit sink backend path scaffold, and baseline retention/deletion contract coverage. |
+| OR-02 | implemented | `internal/observability/timeline/recorder.go`, `internal/observability/timeline/redaction.go`, `internal/observability/timeline/artifact.go`, `internal/runtime/turnarbiter/arbiter.go`, tests | Baseline timeline recording includes payload classification tags, persisted redaction decisions, terminal baseline promotion of invocation outcomes synthesized from non-terminal provider attempt evidence, deterministic invocation latency fields (`final_attempt_latency_ms`, `total_invocation_latency_ms`), and optional non-terminal invocation snapshot append path (config-gated). |
+| OR-03 | implemented | `internal/observability/replay/comparator.go`, `internal/observability/replay/access.go`, `internal/observability/replay/retention.go`, `internal/observability/replay/retention_backend.go`, `internal/observability/replay/service.go`, `internal/observability/replay/audit_backend.go`, `api/observability/types.go`, `test/replay/*`, `cmd/rspp-cli/main.go`, `cmd/rspp-cli/main_test.go`, `cmd/rspp-runtime/main.go`, `cmd/rspp-runtime/main_test.go` | Replay divergence comparison/reporting is implemented, with deny-by-default replay access schema, immutable audit sink durable JSONL backend resolver path, backend-policy resolver seams for retention enforcement, artifact-derived invocation-latency threshold gating in replay regression, and a concrete scheduled retention sweep command path (`retention-sweep`) for baseline operational enforcement. |
 
 ### A.4 Tooling and DevEx
 
@@ -310,7 +344,9 @@ Real-provider validation coverage:
 | DX-04 | partial | `cmd/rspp-cli/main.go`, `internal/tooling/release/.gitkeep` | CLI release/report commands exist; release module remains scaffold. |
 | DX-05 | implemented | `internal/tooling/ops/slo.go`, `cmd/rspp-cli slo-gates-report`, `Makefile` verify targets | SLO report generation is present and wired into quick/full verify flows. |
 
-## Appendix B. Known follow-ups outside this pass
+## Appendix B. Follow-up references (mapped to section 10.2)
 
-1. `docs/CIValidationGates.md` and `docs/ConformanceTestPlan.md` were synchronized in the 2026-02-09 doc pass; keep them aligned with command/test changes in future slices.
-2. Initial retention/deletion contract and immutable replay-audit backend path scaffold from `docs/SecurityDataHandlingBaseline.md` section 7 are implemented (`internal/observability/replay/retention.go`, `internal/observability/replay/service.go` and tests); durable backend integration and control-plane policy distribution remain follow-up work.
+1. Keep `docs/CIValidationGates.md` and `docs/ConformanceTestPlan.md` synchronized with `Makefile`, `.github/workflows/verify.yml`, and `.codex` artifact policy changes as `10.2` items progress.
+2. Replay durability/policy distribution backend productionization scope is tracked in `10.2.1` (distributed durable sink + distributed policy snapshots).
+3. Replay invocation-latency evidence expansion scope is tracked in `10.2.2` (artifact-derived extraction coverage growth).
+4. CP module promotion-to-implemented gate scope is tracked in `10.2.3` (backend parity + failure-injection + conformance evidence updates).

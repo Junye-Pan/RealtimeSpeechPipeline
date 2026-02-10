@@ -234,6 +234,170 @@ func TestWriteReplayRegressionReportWritesFixtureArtifactsOnFailure(t *testing.T
 	}
 }
 
+func TestWriteReplayRegressionReportInvocationLatencyThresholdPass(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	metadataPath := filepath.Join(tmp, "metadata.json")
+	outputPath := filepath.Join(tmp, "regression.json")
+	metadata := replayFixtureMetadata{
+		Fixtures: map[string]replayFixturePolicy{
+			"rd-003-baseline-completeness": {
+				Gate:                              "full",
+				TimingToleranceMS:                 int64Ptr(15),
+				FinalAttemptLatencyThresholdMS:    int64Ptr(20),
+				TotalInvocationLatencyThresholdMS: int64Ptr(40),
+			},
+		},
+	}
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatalf("unexpected marshal error: %v", err)
+	}
+	if err := osWriteFile(metadataPath, data); err != nil {
+		t.Fatalf("unexpected write error: %v", err)
+	}
+
+	if err := writeReplayRegressionReport(outputPath, metadataPath, "full"); err != nil {
+		t.Fatalf("expected invocation latency thresholds within limits to pass, got %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(tmp, replayFixtureReportsDirName, "rd-003-baseline-completeness.json"))
+	if err != nil {
+		t.Fatalf("unexpected fixture artifact read error: %v", err)
+	}
+	var fixtureReport replayFixtureArtifact
+	if err := json.Unmarshal(raw, &fixtureReport); err != nil {
+		t.Fatalf("unexpected fixture artifact decode error: %v", err)
+	}
+	if fixtureReport.InvocationLatencyBreaches != 0 || fixtureReport.FailingCount != 0 {
+		t.Fatalf("unexpected pass fixture report: %+v", fixtureReport)
+	}
+}
+
+func TestWriteReplayRegressionReportInvocationLatencyThresholdFail(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	metadataPath := filepath.Join(tmp, "metadata.json")
+	outputPath := filepath.Join(tmp, "regression.json")
+	metadata := replayFixtureMetadata{
+		Fixtures: map[string]replayFixturePolicy{
+			"rd-003-baseline-completeness": {
+				Gate:                              "full",
+				TimingToleranceMS:                 int64Ptr(15),
+				FinalAttemptLatencyThresholdMS:    int64Ptr(5),
+				TotalInvocationLatencyThresholdMS: int64Ptr(10),
+			},
+		},
+	}
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatalf("unexpected marshal error: %v", err)
+	}
+	if err := osWriteFile(metadataPath, data); err != nil {
+		t.Fatalf("unexpected write error: %v", err)
+	}
+
+	if err := writeReplayRegressionReport(outputPath, metadataPath, "full"); err == nil {
+		t.Fatalf("expected invocation latency threshold breach to fail replay regression report")
+	}
+
+	raw, err := os.ReadFile(filepath.Join(tmp, replayFixtureReportsDirName, "rd-003-baseline-completeness.json"))
+	if err != nil {
+		t.Fatalf("unexpected fixture artifact read error: %v", err)
+	}
+	var fixtureReport replayFixtureArtifact
+	if err := json.Unmarshal(raw, &fixtureReport); err != nil {
+		t.Fatalf("unexpected fixture artifact decode error: %v", err)
+	}
+	if fixtureReport.InvocationLatencyBreaches == 0 || fixtureReport.FailingCount == 0 || fixtureReport.ByClass[string(obs.TimingDivergence)] == 0 {
+		t.Fatalf("expected timing divergence failures from latency threshold breach, got %+v", fixtureReport)
+	}
+}
+
+func TestWriteReplayRegressionReportInvocationLatencyThresholdMissingEvidenceFail(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	metadataPath := filepath.Join(tmp, "metadata.json")
+	outputPath := filepath.Join(tmp, "regression.json")
+	metadata := replayFixtureMetadata{
+		Fixtures: map[string]replayFixturePolicy{
+			"rd-002-recompute-within-tolerance": {
+				Gate:                              "full",
+				TimingToleranceMS:                 int64Ptr(15),
+				FinalAttemptLatencyThresholdMS:    int64Ptr(20),
+				TotalInvocationLatencyThresholdMS: int64Ptr(40),
+			},
+		},
+	}
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatalf("unexpected marshal error: %v", err)
+	}
+	if err := osWriteFile(metadataPath, data); err != nil {
+		t.Fatalf("unexpected write error: %v", err)
+	}
+
+	if err := writeReplayRegressionReport(outputPath, metadataPath, "full"); err == nil {
+		t.Fatalf("expected missing invocation latency evidence to fail replay regression report")
+	}
+
+	raw, err := os.ReadFile(filepath.Join(tmp, replayFixtureReportsDirName, "rd-002-recompute-within-tolerance.json"))
+	if err != nil {
+		t.Fatalf("unexpected fixture artifact read error: %v", err)
+	}
+	var fixtureReport replayFixtureArtifact
+	if err := json.Unmarshal(raw, &fixtureReport); err != nil {
+		t.Fatalf("unexpected fixture artifact decode error: %v", err)
+	}
+	if fixtureReport.InvocationLatencyBreaches == 0 || fixtureReport.FailingCount == 0 {
+		t.Fatalf("expected missing evidence breaches to be recorded, got %+v", fixtureReport)
+	}
+}
+
+func TestInvocationLatencySamplesFromBaselineEntriesAggregatesByTurn(t *testing.T) {
+	t.Parallel()
+
+	entries := []timeline.BaselineEvidence{
+		{
+			TurnID: "turn-rd-003",
+			InvocationOutcomes: []timeline.InvocationOutcomeEvidence{
+				{
+					ProviderInvocationID:     "inv-1",
+					Modality:                 "llm",
+					ProviderID:               "llm-a",
+					OutcomeClass:             "success",
+					RetryDecision:            "none",
+					AttemptCount:             1,
+					FinalAttemptLatencyMS:    8,
+					TotalInvocationLatencyMS: 21,
+				},
+				{
+					ProviderInvocationID:     "inv-2",
+					Modality:                 "llm",
+					ProviderID:               "llm-b",
+					OutcomeClass:             "success",
+					RetryDecision:            "none",
+					AttemptCount:             1,
+					FinalAttemptLatencyMS:    12,
+					TotalInvocationLatencyMS: 27,
+				},
+			},
+		},
+	}
+
+	samples := invocationLatencySamplesFromBaselineEntries(entries)
+	sample, ok := samples["turn:turn-rd-003"]
+	if !ok {
+		t.Fatalf("expected turn sample to exist, got %+v", samples)
+	}
+	if sample.FinalAttemptLatencyMS != 12 || sample.TotalInvocationLatencyMS != 27 {
+		t.Fatalf("expected max latencies per turn sample, got %+v", sample)
+	}
+}
+
 func TestToTurnMetricsComputesCompleteness(t *testing.T) {
 	t.Parallel()
 

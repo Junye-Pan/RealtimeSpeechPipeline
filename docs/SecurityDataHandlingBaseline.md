@@ -150,12 +150,104 @@ Any missing attribute => deny.
 
 ### 7.2 Baseline backend path and behavior
 
-1. Retention/deletion scaffold contract and in-memory baseline implementation live in `internal/observability/replay/retention.go`.
-2. Immutable replay-audit sink interface and backend access path wrapper live in `internal/observability/replay/service.go`.
+1. Retention/deletion scaffold contract and in-memory baseline implementation live in `internal/observability/replay/retention.go`, with backend-policy resolver wiring in `internal/observability/replay/retention_backend.go`.
+2. Immutable replay-audit sink interface and backend access path wrappers live in `internal/observability/replay/service.go`, with durable JSONL backend adapter/resolver implementations in `internal/observability/replay/audit_backend.go`.
 3. Replay access authorization must fail closed when immutable audit append fails or audit sink is unavailable.
 4. `hard_delete` removes matching replay artifacts for the requested tenant/session-or-turn scope.
 5. `crypto_inaccessible` keeps matching replay artifacts but makes reads fail with an inaccessible outcome.
 6. Deleting replay artifacts does not delete immutable audit log entries.
+7. Scheduled retention enforcement entrypoint is available via `cmd/rspp-runtime` subcommand `retention-sweep`, which composes backend+fallback policy resolvers through `EnforceTenantRetentionWithResolver`.
+
+### 7.3 Production scheduling guidance (implemented 2026-02-10)
+
+1. Operators should run `rspp-runtime retention-sweep` on a fixed schedule with explicit:
+   - `-store` artifact path
+   - `-policy` artifact path (when policy distribution is configured)
+   - `-tenants` scope list
+   - `-runs` and `-interval-ms` values
+2. Policy artifacts are validated before sweep execution. Invalid/malformed artifacts fail fast with deterministic error codes:
+   - `RETENTION_POLICY_READ_ERROR`
+   - `RETENTION_POLICY_DECODE_ERROR`
+   - `RETENTION_POLICY_ARTIFACT_INVALID`
+   - `RETENTION_POLICY_TENANT_MISMATCH`
+   - `RETENTION_POLICY_VALIDATION_ERROR`
+3. Sweep reports include deterministic per-run, per-tenant, and per-class deletion counters (`deleted_by_class`) for operational audits.
+
+#### Example: cron
+
+```cron
+*/15 * * * * /usr/local/bin/rspp-runtime retention-sweep \
+  -store /var/lib/rspp/replay/store.json \
+  -policy /etc/rspp/replay/policy.json \
+  -tenants tenant-a,tenant-b \
+  -runs 1 \
+  -interval-ms 0 \
+  -report /var/log/rspp/retention/retention-sweep-report.json
+```
+
+#### Example: systemd service + timer
+
+```ini
+# /etc/systemd/system/rspp-retention-sweep.service
+[Unit]
+Description=RSPP retention sweep
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/rspp-runtime retention-sweep \
+  -store /var/lib/rspp/replay/store.json \
+  -policy /etc/rspp/replay/policy.json \
+  -tenants tenant-a,tenant-b \
+  -runs 1 \
+  -interval-ms 0 \
+  -report /var/log/rspp/retention/retention-sweep-report.json
+```
+
+```ini
+# /etc/systemd/system/rspp-retention-sweep.timer
+[Unit]
+Description=Run RSPP retention sweep every 15 minutes
+
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+#### Example: Kubernetes CronJob
+
+```yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: rspp-retention-sweep
+spec:
+  schedule: "*/15 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: retention-sweep
+              image: ghcr.io/tiger/rspp-runtime:latest
+              args:
+                - retention-sweep
+                - -store
+                - /data/replay/store.json
+                - -policy
+                - /config/replay/policy.json
+                - -tenants
+                - tenant-a,tenant-b
+                - -runs
+                - "1"
+                - -interval-ms
+                - "0"
+                - -report
+                - /var/log/rspp/retention/retention-sweep-report.json
+```
 
 ## 8. Pre-code acceptance checklist (status: implemented 2026-02-09)
 

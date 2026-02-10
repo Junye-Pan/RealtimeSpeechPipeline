@@ -10,11 +10,41 @@ import (
 
 var (
 	ErrImmutableReplayAuditSinkRequired = errors.New("immutable replay audit sink is required")
+	ErrReplayAuditBackendResolverNil    = errors.New("immutable replay audit backend resolver is required")
+	ErrReplayAuditBackendNil            = errors.New("immutable replay audit backend is required")
 )
 
 // ImmutableReplayAuditSink is an append-only audit sink for replay access events.
 type ImmutableReplayAuditSink interface {
 	AppendReplayAuditEvent(event obs.ReplayAuditEvent) error
+}
+
+// ImmutableReplayAuditBackendResolver resolves tenant-scoped immutable replay-audit backends.
+type ImmutableReplayAuditBackendResolver interface {
+	ResolveReplayAuditBackend(tenantID string) (ImmutableReplayAuditSink, error)
+}
+
+// ResolverBackedAuditSink wraps a backend resolver as an immutable replay-audit sink.
+type ResolverBackedAuditSink struct {
+	Resolver ImmutableReplayAuditBackendResolver
+}
+
+// AppendReplayAuditEvent resolves a backend by tenant and appends an immutable audit event.
+func (s ResolverBackedAuditSink) AppendReplayAuditEvent(event obs.ReplayAuditEvent) error {
+	if s.Resolver == nil {
+		return ErrReplayAuditBackendResolverNil
+	}
+	backend, err := s.Resolver.ResolveReplayAuditBackend(event.Request.TenantID)
+	if err != nil {
+		return fmt.Errorf("resolve replay audit backend: %w", err)
+	}
+	if backend == nil {
+		return ErrReplayAuditBackendNil
+	}
+	if err := backend.AppendReplayAuditEvent(event); err != nil {
+		return fmt.Errorf("append replay audit event to backend: %w", err)
+	}
+	return nil
 }
 
 // AccessService wires replay authorization decisions with immutable audit logging.

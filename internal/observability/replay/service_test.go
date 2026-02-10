@@ -2,6 +2,9 @@ package replay
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	obs "github.com/tiger/realtime-speech-pipeline/api/observability"
@@ -89,6 +92,158 @@ func TestAccessServiceAuthorizeReplayAccessRequiresAuditSink(t *testing.T) {
 	}
 }
 
+func TestAccessServiceAuthorizeReplayAccessWithResolverBackedAuditSink(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join(t.TempDir(), "audit")
+	service := AccessService{
+		Policy: DefaultAccessPolicy("tenant-a"),
+		AuditSink: ResolverBackedAuditSink{
+			Resolver: JSONLFileAuditBackendResolver{RootDir: root},
+		},
+		NowMS: func() int64 { return 456 },
+	}
+
+	decision, err := service.AuthorizeReplayAccess(obs.ReplayAccessRequest{
+		TenantID:          "tenant-a",
+		PrincipalID:       "user-1",
+		Role:              "oncall",
+		Purpose:           "incident",
+		RequestedScope:    "turn:1",
+		RequestedFidelity: obs.ReplayFidelityL0,
+	})
+	if err != nil {
+		t.Fatalf("expected resolver-backed service authorization to pass, got %v", err)
+	}
+	if !decision.Allowed {
+		t.Fatalf("expected allowed decision, got %+v", decision)
+	}
+
+	resolver := JSONLFileAuditBackendResolver{RootDir: root}
+	path, err := resolver.TenantLogPath("tenant-a")
+	if err != nil {
+		t.Fatalf("unexpected resolver path error: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("unexpected audit log read error: %v", err)
+	}
+	if !strings.Contains(string(raw), "\"timestamp_ms\":456") {
+		t.Fatalf("expected persisted deterministic replay audit event, got %q", string(raw))
+	}
+}
+
+func TestAccessServiceAuthorizeReplayAccessFailClosedOnResolverError(t *testing.T) {
+	t.Parallel()
+
+	service := AccessService{
+		Policy: DefaultAccessPolicy("tenant-a"),
+		AuditSink: ResolverBackedAuditSink{
+			Resolver: stubReplayAuditBackendResolver{
+				resolveFn: func(string) (ImmutableReplayAuditSink, error) {
+					return nil, errors.New("resolver unavailable")
+				},
+			},
+		},
+	}
+
+	decision, err := service.AuthorizeReplayAccess(obs.ReplayAccessRequest{
+		TenantID:          "tenant-a",
+		PrincipalID:       "user-1",
+		Role:              "oncall",
+		Purpose:           "incident",
+		RequestedScope:    "turn:1",
+		RequestedFidelity: obs.ReplayFidelityL0,
+	})
+	if err == nil {
+		t.Fatalf("expected resolver error")
+	}
+	if decision.Allowed || decision.DenyReason != "audit_sink_write_failed" {
+		t.Fatalf("expected fail-closed decision on resolver error, got %+v", decision)
+	}
+}
+
+func TestResolverBackedAuditSinkAppendResolvesTenantBackend(t *testing.T) {
+	t.Parallel()
+
+	tenantSink := &captureAuditSink{}
+	sink := ResolverBackedAuditSink{
+		Resolver: stubReplayAuditBackendResolver{
+			resolveFn: func(tenantID string) (ImmutableReplayAuditSink, error) {
+				if tenantID != "tenant-a" {
+					t.Fatalf("expected tenant-a backend resolution, got %s", tenantID)
+				}
+				return tenantSink, nil
+			},
+		},
+	}
+
+	err := sink.AppendReplayAuditEvent(obs.ReplayAuditEvent{
+		TimestampMS: 1,
+		Request: obs.ReplayAccessRequest{
+			TenantID:          "tenant-a",
+			PrincipalID:       "user-1",
+			Role:              "oncall",
+			Purpose:           "incident",
+			RequestedScope:    "turn:1",
+			RequestedFidelity: obs.ReplayFidelityL0,
+		},
+		Decision: obs.ReplayAccessDecision{Allowed: true},
+	})
+	if err != nil {
+		t.Fatalf("unexpected resolver-backed append error: %v", err)
+	}
+	if len(tenantSink.events) != 1 {
+		t.Fatalf("expected one backend append event, got %d", len(tenantSink.events))
+	}
+}
+
+func TestResolverBackedAuditSinkFailsWithoutResolver(t *testing.T) {
+	t.Parallel()
+
+	sink := ResolverBackedAuditSink{}
+	err := sink.AppendReplayAuditEvent(obs.ReplayAuditEvent{
+		Request: obs.ReplayAccessRequest{
+			TenantID:          "tenant-a",
+			PrincipalID:       "user-1",
+			Role:              "oncall",
+			Purpose:           "incident",
+			RequestedScope:    "turn:1",
+			RequestedFidelity: obs.ReplayFidelityL0,
+		},
+		Decision: obs.ReplayAccessDecision{Allowed: true},
+	})
+	if !errors.Is(err, ErrReplayAuditBackendResolverNil) {
+		t.Fatalf("expected missing resolver error, got %v", err)
+	}
+}
+
+func TestResolverBackedAuditSinkFailsWhenResolverReturnsNilBackend(t *testing.T) {
+	t.Parallel()
+
+	sink := ResolverBackedAuditSink{
+		Resolver: stubReplayAuditBackendResolver{
+			resolveFn: func(string) (ImmutableReplayAuditSink, error) {
+				return nil, nil
+			},
+		},
+	}
+	err := sink.AppendReplayAuditEvent(obs.ReplayAuditEvent{
+		Request: obs.ReplayAccessRequest{
+			TenantID:          "tenant-a",
+			PrincipalID:       "user-1",
+			Role:              "oncall",
+			Purpose:           "incident",
+			RequestedScope:    "turn:1",
+			RequestedFidelity: obs.ReplayFidelityL0,
+		},
+		Decision: obs.ReplayAccessDecision{Allowed: true},
+	})
+	if !errors.Is(err, ErrReplayAuditBackendNil) {
+		t.Fatalf("expected nil backend error, got %v", err)
+	}
+}
+
 type captureAuditSink struct {
 	events    []obs.ReplayAuditEvent
 	appendErr error
@@ -100,4 +255,12 @@ func (s *captureAuditSink) AppendReplayAuditEvent(event obs.ReplayAuditEvent) er
 	}
 	s.events = append(s.events, event)
 	return nil
+}
+
+type stubReplayAuditBackendResolver struct {
+	resolveFn func(tenantID string) (ImmutableReplayAuditSink, error)
+}
+
+func (s stubReplayAuditBackendResolver) ResolveReplayAuditBackend(tenantID string) (ImmutableReplayAuditSink, error) {
+	return s.resolveFn(tenantID)
 }
