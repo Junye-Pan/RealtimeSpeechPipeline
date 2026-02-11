@@ -283,13 +283,19 @@ Status note:
    - instrumented deterministic runtime chains (`turnarbiter`, `scheduler`, `provider invocation`, `transport fence`) for OTel-friendly `turn_span -> node_span -> provider_invocation_span`, plus stable metrics/log payload emission (`cancel_latency_ms`, `provider_rtt_ms`, `shed_rate`).
    - added focused telemetry coverage tests in `internal/observability/telemetry/*_test.go`, `internal/runtime/*/*_test.go`, and `cmd/rspp-runtime/main_test.go`, and promoted OR-01 into quick-gate package coverage (`Makefile`).
 
+23. Implement DX-04 release/readiness workflow baseline (2026-02-11):
+   - implemented concrete release module (`internal/tooling/release/release.go`) replacing scaffold-only DX-04 state with rollout config validation, artifact-based readiness evaluation, and deterministic release manifest generation.
+   - added `rspp-cli validate-contracts-report` to persist contract gate artifacts (`.codex/ops/contracts-report.json|.md`) and promoted this into quick/full verify chains.
+   - added `rspp-cli publish-release` with explicit rollback-posture enforcement and fail-closed readiness checks against contracts/replay/SLO artifacts before manifest publishing.
+   - added DX-04 coverage tests (`internal/tooling/release/release_test.go`, `cmd/rspp-cli/main_test.go`) and synchronized CI/conformance docs for new gate artifacts and closure state.
+
 ### 10.2 Remaining (open, ordered as of 2026-02-11)
 
 Status update:
 - This section tracks unfinished/partially finished/unstarted next-step work only.
 - Completed closure items were moved to section `10.1`.
 
-1. No open section-10 follow-up items remain after `10.1.22`; future post-MVP work should be tracked as new entries when scoped.
+1. No open section-10 follow-up items remain after `10.1.23`; future post-MVP work should be tracked as new entries when scoped.
 
 ## Appendix A. MVP module status map (CP/RK/OR/DX)
 
@@ -358,7 +364,7 @@ Real-provider validation coverage:
 | DX-01 | implemented | `cmd/rspp-local-runner/main.go` | Local runner entrypoint exists for MVP workflow. |
 | DX-02 | implemented | `internal/tooling/validation/contracts.go`, `test/contract/*`, `cmd/rspp-cli validate-contracts` | Contract validation harness is active. |
 | DX-03 | implemented | `internal/tooling/regression/divergence.go`, `test/replay/*`, `cmd/rspp-cli replay-*` | Replay regression harness is active. |
-| DX-04 | partial | `cmd/rspp-cli/main.go`, `internal/tooling/release/.gitkeep` | CLI release/report commands exist; release module remains scaffold. |
+| DX-04 | implemented | `internal/tooling/release/release.go`, `internal/tooling/release/release_test.go`, `cmd/rspp-cli/main.go`, `cmd/rspp-cli/main_test.go`, `Makefile` | Release/readiness CLI baseline is implemented with explicit rollback-posture rollout config validation, artifact-based release gate enforcement (`contracts-report`, replay regression, SLO gates), deterministic release manifest publishing, and verify-chain integration. |
 | DX-05 | implemented | `internal/tooling/ops/slo.go`, `cmd/rspp-cli slo-gates-report`, `Makefile` verify targets | SLO report generation is present and wired into quick/full verify flows. |
 
 ## Appendix B. Follow-up references (mapped to section 10)
@@ -368,3 +374,4 @@ Real-provider validation coverage:
 3. Replay invocation-latency evidence expansion scope is closed in `10.1.19` (artifact-derived extraction coverage growth beyond baseline fixture scope + deterministic threshold behavior across expanded fixture sets).
 4. CP module promotion-to-implemented gate scope is closed in `10.1.20` + `10.1.21` (CP-01/02/03/04/05/07/08/09/10: defined promotion criteria + backend parity + deterministic failure-path coverage + conformance evidence synchronization).
 5. OR-01 telemetry pipeline implementation scope is closed in `10.1.22` (bounded non-blocking telemetry pipeline + runtime instrumentation + env-wired runtime bootstrap + targeted coverage and gate synchronization).
+6. DX-04 release/readiness workflow scope is closed in `10.1.23` (release module implementation + artifact-based readiness gates + publish-release manifest flow + verify/docs synchronization).

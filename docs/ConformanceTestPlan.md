@@ -7,10 +7,11 @@ Define and track the implemented conformance baseline for contract correctness, 
 Status snapshot:
 - Baseline reflects repository behavior as of `2026-02-11`.
 - This document is synchronized with current gate execution in `Makefile`, `scripts/verify.sh`, and `cmd/rspp-cli`.
-- This document is synchronized with the current MVP section-10 closure state in `docs/MVP_ImplementationSlice.md` (`10.1.22` closed; `10.2` currently has no open items).
+- This document is synchronized with the current MVP section-10 closure state in `docs/MVP_ImplementationSlice.md` (`10.1.23` closed; `10.2` currently has no open items).
 - CP promotion-to-implemented scope for `CP-01/02/03/04/05/07/08/09/10` is closed at MVP scope: module behavior + file/env/http parity + deterministic backend-failure fallback/stale handling + conformance evidence synchronization are now covered in baseline tests/docs.
 - CP bundle provenance integration coverage includes partial-backend fallback and stale-snapshot deterministic pre-turn handling scenarios, CP-02 simple-mode normalization enforcement with unsupported-profile deterministic pre-turn handling, CP-03 graph compile output propagation, CP-05 pre-turn decision shaping (`CP-05` emitter outcomes), CP-07 lease-authority gating paths, and rollout/policy/provider-health fallback determinism under backend outages.
 - OR-01 telemetry pipeline baseline coverage is implemented for non-blocking telemetry behavior, deterministic sampling, runtime env wiring, and runtime instrumentation paths (`turnarbiter`, `scheduler`, `provider invocation`, `transport fence`).
+- DX-04 release/readiness baseline is implemented with artifact-backed release gate checks (`contracts-report`, replay regression, SLO gates) and deterministic publish manifest workflow coverage.
 - OR-03 replay access path now includes distributed HTTP replay-audit backend coverage with deterministic JSONL fallback behavior, plus backend-resolver failure-mode assertions; retention-sweep coverage now includes CP distribution snapshot-first policy sourcing with deterministic outage fallback and recovery behavior.
 
 ## 2. Suite structure and current coverage
@@ -119,4 +120,4 @@ Policy invariants:
 ## 8. Consistency references
 
 1. `docs/CIValidationGates.md`
-2. `docs/MVP_ImplementationSlice.md` section `10` (`10.1.22` closure + no current open `10.2` items)
+2. `docs/MVP_ImplementationSlice.md` section `10` (`10.1.23` closure + no current open `10.2` items)
