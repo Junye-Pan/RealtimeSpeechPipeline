@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tiger/realtime-speech-pipeline/internal/observability/telemetry"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/contracts"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/registry"
 )
@@ -308,5 +309,71 @@ func TestInvokePolicyEnvelopePassedToAdapter(t *testing.T) {
 	}
 	if received.CandidateProviderCount != 1 {
 		t.Fatalf("expected candidate provider count 1, got %d", received.CandidateProviderCount)
+	}
+}
+
+func TestInvokeEmitsTelemetryEvents(t *testing.T) {
+	catalog, err := registry.NewCatalog([]contracts.Adapter{
+		contracts.StaticAdapter{
+			ID:   "stt-telemetry",
+			Mode: contracts.ModalitySTT,
+			InvokeFn: func(req contracts.InvocationRequest) (contracts.Outcome, error) {
+				return contracts.Outcome{Class: contracts.OutcomeSuccess}, nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected catalog error: %v", err)
+	}
+
+	sink := telemetry.NewMemorySink()
+	pipeline := telemetry.NewPipeline(sink, telemetry.Config{QueueCapacity: 16})
+	previous := telemetry.DefaultEmitter()
+	telemetry.SetDefaultEmitter(pipeline)
+	t.Cleanup(func() {
+		telemetry.SetDefaultEmitter(previous)
+		_ = pipeline.Close()
+	})
+
+	controller := NewController(catalog)
+	_, err = controller.Invoke(InvocationInput{
+		SessionID:            "sess-rk11-telemetry-1",
+		TurnID:               "turn-rk11-telemetry-1",
+		PipelineVersion:      "pipeline-v1",
+		EventID:              "evt-rk11-telemetry-1",
+		Modality:             contracts.ModalitySTT,
+		PreferredProvider:    "stt-telemetry",
+		TransportSequence:    1,
+		RuntimeSequence:      1,
+		AuthorityEpoch:       1,
+		RuntimeTimestampMS:   10,
+		WallClockTimestampMS: 10,
+	})
+	if err != nil {
+		t.Fatalf("unexpected invoke error: %v", err)
+	}
+	if err := pipeline.Close(); err != nil {
+		t.Fatalf("unexpected pipeline close error: %v", err)
+	}
+
+	var metricFound bool
+	var spanFound bool
+	var logFound bool
+	for _, event := range sink.Events() {
+		if event.Correlation.SessionID != "sess-rk11-telemetry-1" {
+			continue
+		}
+		if event.Kind == telemetry.EventKindMetric && event.Metric != nil && event.Metric.Name == telemetry.MetricProviderRTTMS {
+			metricFound = true
+		}
+		if event.Kind == telemetry.EventKindSpan && event.Span != nil && event.Span.Name == "provider_invocation_span" {
+			spanFound = true
+		}
+		if event.Kind == telemetry.EventKindLog && event.Log != nil && event.Log.Name == "provider_invocation_attempt" {
+			logFound = true
+		}
+	}
+	if !metricFound || !spanFound || !logFound {
+		t.Fatalf("expected provider invocation telemetry events, got metric=%v span=%v log=%v", metricFound, spanFound, logFound)
 	}
 }

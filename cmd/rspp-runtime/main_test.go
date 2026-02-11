@@ -14,6 +14,7 @@ import (
 	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
 	"github.com/tiger/realtime-speech-pipeline/internal/controlplane/distribution"
 	"github.com/tiger/realtime-speech-pipeline/internal/observability/replay"
+	"github.com/tiger/realtime-speech-pipeline/internal/observability/telemetry"
 )
 
 func TestRunRetentionSweepUsesBackendPolicyResolver(t *testing.T) {
@@ -374,6 +375,29 @@ func TestRunRetentionSweepUsesCPDistributionHTTPPolicySnapshot(t *testing.T) {
 	report := mustReadSweepReport(t, reportPath)
 	if report.PolicySource != string(retentionPolicySourceCPDistributionHTTP) || report.PolicyFallbackReason != "" {
 		t.Fatalf("expected cp distribution http policy source, got source=%q fallback=%q", report.PolicySource, report.PolicyFallbackReason)
+	}
+}
+
+func TestSetupRuntimeTelemetryRejectsInvalidConfig(t *testing.T) {
+	t.Setenv(telemetry.EnvTelemetryQueueCapacity, "0")
+	cleanup, err := setupRuntimeTelemetry()
+	if cleanup != nil {
+		cleanup()
+	}
+	if err == nil {
+		t.Fatalf("expected invalid telemetry config error")
+	}
+}
+
+func TestRunBootstrapProvidersWithTelemetryDisabled(t *testing.T) {
+	t.Setenv(telemetry.EnvTelemetryEnabled, "false")
+
+	var stdout bytes.Buffer
+	if err := run([]string{"bootstrap-providers"}, &stdout, &bytes.Buffer{}, fixedNow()); err != nil {
+		t.Fatalf("unexpected run error with telemetry disabled: %v", err)
+	}
+	if stdout.Len() == 0 {
+		t.Fatalf("expected bootstrap output")
 	}
 }
 

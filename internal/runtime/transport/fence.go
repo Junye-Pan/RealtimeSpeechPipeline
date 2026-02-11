@@ -2,8 +2,10 @@ package transport
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
+	"github.com/tiger/realtime-speech-pipeline/internal/observability/telemetry"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/cancellation"
 	runtimeeventabi "github.com/tiger/realtime-speech-pipeline/internal/runtime/eventabi"
 )
@@ -56,6 +58,17 @@ func (f *OutputFence) EvaluateOutput(in OutputAttempt) (OutputDecision, error) {
 	if in.SessionID == "" || in.TurnID == "" || in.PipelineVersion == "" || in.EventID == "" {
 		return OutputDecision{}, fmt.Errorf("session_id, turn_id, pipeline_version, and event_id are required")
 	}
+	correlation := telemetry.Correlation{
+		SessionID:            in.SessionID,
+		TurnID:               in.TurnID,
+		EventID:              in.EventID,
+		PipelineVersion:      in.PipelineVersion,
+		AuthorityEpoch:       safeNonNegativeTransport(in.AuthorityEpoch),
+		Lane:                 string(eventabi.LaneTelemetry),
+		EmittedBy:            "OR-01",
+		RuntimeTimestampMS:   safeNonNegativeTransport(in.RuntimeTimestampMS),
+		WallClockTimestampMS: safeNonNegativeTransport(in.WallClockTimestampMS),
+	}
 
 	if in.CancelAccepted {
 		if err := f.turnFence.Accept(in.SessionID, in.TurnID); err != nil {
@@ -72,6 +85,44 @@ func (f *OutputFence) EvaluateOutput(in OutputAttempt) (OutputDecision, error) {
 		reason = "cancel_fence_applied"
 		accepted = false
 	}
+	logSeverity := "info"
+	if !accepted {
+		logSeverity = "warn"
+	}
+	if in.CancelAccepted {
+		telemetry.DefaultEmitter().EmitMetric(
+			telemetry.MetricCancelLatencyMS,
+			0,
+			"ms",
+			map[string]string{
+				"accepted": strconv.FormatBool(accepted),
+				"scope":    "turn",
+			},
+			correlation,
+		)
+	}
+	telemetry.DefaultEmitter().EmitLog(
+		"output_fence_decision",
+		logSeverity,
+		"output fence decision emitted",
+		map[string]string{
+			"accepted": strconv.FormatBool(accepted),
+			"signal":   signalName,
+			"reason":   reason,
+		},
+		correlation,
+	)
+	telemetry.DefaultEmitter().EmitSpan(
+		"node_span",
+		"node_span",
+		safeNonNegativeTransport(in.RuntimeTimestampMS),
+		safeNonNegativeTransport(in.RuntimeTimestampMS)+1,
+		map[string]string{
+			"node_type": "transport_fence",
+			"accepted":  strconv.FormatBool(accepted),
+		},
+		correlation,
+	)
 
 	signal := eventabi.ControlSignal{
 		SchemaVersion:      "v1.0",
