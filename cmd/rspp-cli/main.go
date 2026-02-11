@@ -17,6 +17,7 @@ import (
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/turnarbiter"
 	"github.com/tiger/realtime-speech-pipeline/internal/tooling/ops"
 	"github.com/tiger/realtime-speech-pipeline/internal/tooling/regression"
+	toolingrelease "github.com/tiger/realtime-speech-pipeline/internal/tooling/release"
 	"github.com/tiger/realtime-speech-pipeline/internal/tooling/validation"
 )
 
@@ -28,6 +29,8 @@ const (
 	defaultReplayRegressionReportPath        = ".codex/replay/regression-report.json"
 	replayFixtureReportsDirName              = "fixtures"
 	defaultRuntimeBaselineArtifactPath       = ".codex/replay/runtime-baseline.json"
+	defaultContractsReportPath               = ".codex/ops/contracts-report.json"
+	defaultSLOGatesReportPath                = ".codex/ops/slo-gates-report.json"
 )
 
 func main() {
@@ -51,6 +54,22 @@ func main() {
 		if summary.Failed > 0 {
 			os.Exit(1)
 		}
+	case "validate-contracts-report":
+		fixtureRoot := filepath.Join("test", "contract", "fixtures")
+		outputPath := defaultContractsReportPath
+		if len(os.Args) >= 3 {
+			fixtureRoot = os.Args[2]
+		}
+		if len(os.Args) >= 4 {
+			outputPath = os.Args[3]
+		}
+		if err := writeContractsReport(outputPath, fixtureRoot); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to write contracts report: %v\n", err)
+			os.Exit(1)
+		}
+		summaryPath := strings.TrimSuffix(outputPath, filepath.Ext(outputPath)) + ".md"
+		fmt.Printf("contracts report written: %s\n", outputPath)
+		fmt.Printf("contracts summary written: %s\n", summaryPath)
 	case "replay-smoke-report":
 		outputPath := filepath.Join(".codex", "replay", "smoke-report.json")
 		metadataPath := defaultReplayMetadataPath
@@ -98,7 +117,7 @@ func main() {
 		}
 		fmt.Printf("runtime baseline artifact written: %s\n", outputPath)
 	case "slo-gates-report":
-		outputPath := filepath.Join(".codex", "ops", "slo-gates-report.json")
+		outputPath := defaultSLOGatesReportPath
 		baselineArtifactPath := defaultRuntimeBaselineArtifactPath
 		if len(os.Args) >= 3 {
 			outputPath = os.Args[2]
@@ -113,6 +132,47 @@ func main() {
 		summaryPath := strings.TrimSuffix(outputPath, filepath.Ext(outputPath)) + ".md"
 		fmt.Printf("slo gates report written: %s\n", outputPath)
 		fmt.Printf("slo gates summary written: %s\n", summaryPath)
+	case "publish-release":
+		if len(os.Args) < 4 {
+			fmt.Fprintln(os.Stderr, "publish-release requires spec_ref and rollout_cfg_path")
+			printUsage()
+			os.Exit(2)
+		}
+		specRef := os.Args[2]
+		rolloutConfigPath := os.Args[3]
+		outputPath := toolingrelease.DefaultReleaseManifestPath
+		contractsReportPath := defaultContractsReportPath
+		replayRegressionReportPath := defaultReplayRegressionReportPath
+		sloGatesReportPath := defaultSLOGatesReportPath
+		if len(os.Args) >= 5 {
+			outputPath = os.Args[4]
+		}
+		if len(os.Args) >= 6 {
+			contractsReportPath = os.Args[5]
+		}
+		if len(os.Args) >= 7 {
+			replayRegressionReportPath = os.Args[6]
+		}
+		if len(os.Args) >= 8 {
+			sloGatesReportPath = os.Args[7]
+		}
+		manifest, err := writeReleaseManifest(
+			outputPath,
+			specRef,
+			rolloutConfigPath,
+			contractsReportPath,
+			replayRegressionReportPath,
+			sloGatesReportPath,
+			time.Now(),
+		)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to publish release: %v\n", err)
+			os.Exit(1)
+		}
+		summaryPath := strings.TrimSuffix(outputPath, filepath.Ext(outputPath)) + ".md"
+		fmt.Printf("release manifest written: %s\n", outputPath)
+		fmt.Printf("release summary written: %s\n", summaryPath)
+		fmt.Printf("release id: %s\n", manifest.ReleaseID)
 	default:
 		printUsage()
 		os.Exit(2)
@@ -122,10 +182,12 @@ func main() {
 func printUsage() {
 	fmt.Println("rspp-cli usage:")
 	fmt.Println("  rspp-cli validate-contracts [fixture_root]")
+	fmt.Println("  rspp-cli validate-contracts-report [fixture_root] [output_path]")
 	fmt.Println("  rspp-cli replay-smoke-report [output_path] [metadata_path]")
 	fmt.Println("  rspp-cli replay-regression-report [output_path] [metadata_path] [gate]")
 	fmt.Println("  rspp-cli generate-runtime-baseline [output_path]")
 	fmt.Println("  rspp-cli slo-gates-report [output_path] [baseline_artifact_path]")
+	fmt.Println("  rspp-cli publish-release <spec_ref> <rollout_cfg_path> [output_path] [contracts_report_path] [replay_report_path] [slo_report_path]")
 }
 
 type replaySmokeReport struct {
@@ -1012,6 +1074,13 @@ type sloGateArtifact struct {
 	Report               ops.MVPSLOGateReport `json:"report"`
 }
 
+type contractsReportArtifact struct {
+	GeneratedAtUTC string                               `json:"generated_at_utc"`
+	FixtureRoot    string                               `json:"fixture_root"`
+	Summary        validation.ContractValidationSummary `json:"summary"`
+	Passed         bool                                 `json:"passed"`
+}
+
 func writeSLOGatesReport(outputPath string, baselineArtifactPath string) error {
 	entries, effectiveArtifactPath, err := loadRuntimeBaselineEntries(baselineArtifactPath)
 	if err != nil {
@@ -1047,6 +1116,134 @@ func writeSLOGatesReport(outputPath string, baselineArtifactPath string) error {
 		return fmt.Errorf("mvp slo gate failed: %v", artifact.Report.Violations)
 	}
 	return nil
+}
+
+func writeContractsReport(outputPath string, fixtureRoot string) error {
+	if fixtureRoot == "" {
+		fixtureRoot = filepath.Join("test", "contract", "fixtures")
+	}
+	resolvedFixtureRoot, err := resolveProjectRelativePath(fixtureRoot)
+	if err != nil {
+		return err
+	}
+	schemaPath, err := resolveProjectRelativePath(filepath.Join("docs", "ContractArtifacts.schema.json"))
+	if err != nil {
+		return err
+	}
+
+	summary, err := validation.ValidateContractFixturesWithSchema(schemaPath, resolvedFixtureRoot)
+	if err != nil {
+		return err
+	}
+	artifact := contractsReportArtifact{
+		GeneratedAtUTC: time.Now().UTC().Format(time.RFC3339),
+		FixtureRoot:    resolvedFixtureRoot,
+		Summary:        summary,
+		Passed:         summary.Failed == 0,
+	}
+
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(artifact, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(outputPath, data, 0o644); err != nil {
+		return err
+	}
+
+	summaryPath := strings.TrimSuffix(outputPath, filepath.Ext(outputPath)) + ".md"
+	if err := os.WriteFile(summaryPath, []byte(renderContractsReportSummary(artifact)), 0o644); err != nil {
+		return err
+	}
+	if !artifact.Passed {
+		return fmt.Errorf("contract fixtures failed: %d failures", artifact.Summary.Failed)
+	}
+	return nil
+}
+
+func resolveProjectRelativePath(path string) (string, error) {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return "", fmt.Errorf("path is required")
+	}
+	if filepath.IsAbs(trimmed) {
+		return trimmed, nil
+	}
+	if _, err := os.Stat(trimmed); err == nil {
+		return trimmed, nil
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	dir := wd
+	for {
+		candidate := filepath.Join(dir, trimmed)
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return "", fmt.Errorf("path not found: %s", trimmed)
+}
+
+func writeReleaseManifest(
+	outputPath string,
+	specRef string,
+	rolloutConfigPath string,
+	contractsReportPath string,
+	replayRegressionReportPath string,
+	sloGatesReportPath string,
+	now time.Time,
+) (toolingrelease.ReleaseManifest, error) {
+	rolloutCfg, rolloutSource, err := toolingrelease.LoadRolloutConfig(rolloutConfigPath)
+	if err != nil {
+		return toolingrelease.ReleaseManifest{}, err
+	}
+
+	readiness, sources := toolingrelease.EvaluateReadiness(toolingrelease.ReadinessInput{
+		ContractsReportPath:        contractsReportPath,
+		ReplayRegressionReportPath: replayRegressionReportPath,
+		SLOGatesReportPath:         sloGatesReportPath,
+		Now:                        now,
+		MaxArtifactAge:             toolingrelease.DefaultMaxArtifactAge,
+	})
+	if !readiness.Passed {
+		return toolingrelease.ReleaseManifest{}, fmt.Errorf("release readiness failed: %v", readiness.Violations)
+	}
+
+	if sources == nil {
+		sources = make(map[string]toolingrelease.ArtifactSource, 4)
+	}
+	sources["rollout_config"] = rolloutSource
+
+	manifest, err := toolingrelease.BuildReleaseManifest(specRef, rolloutCfg, readiness, sources, now)
+	if err != nil {
+		return toolingrelease.ReleaseManifest{}, err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+		return toolingrelease.ReleaseManifest{}, err
+	}
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return toolingrelease.ReleaseManifest{}, err
+	}
+	if err := os.WriteFile(outputPath, data, 0o644); err != nil {
+		return toolingrelease.ReleaseManifest{}, err
+	}
+
+	summaryPath := strings.TrimSuffix(outputPath, filepath.Ext(outputPath)) + ".md"
+	if err := os.WriteFile(summaryPath, []byte(renderReleaseManifestSummary(manifest)), 0o644); err != nil {
+		return toolingrelease.ReleaseManifest{}, err
+	}
+	return manifest, nil
 }
 
 func writeRuntimeBaselineArtifact(outputPath string) error {
@@ -1433,6 +1630,84 @@ func renderSLOGatesSummary(artifact sloGateArtifact) string {
 		lines = append(lines, "", "Status: FAIL", "## Violations")
 		for _, violation := range report.Violations {
 			lines = append(lines, "- "+violation)
+		}
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
+func renderContractsReportSummary(artifact contractsReportArtifact) string {
+	lines := []string{
+		"# Contract Validation Report",
+		"",
+		"Generated at (UTC): " + artifact.GeneratedAtUTC,
+		"Fixture root: " + artifact.FixtureRoot,
+		fmt.Sprintf("Total fixtures: %d", artifact.Summary.Total),
+		fmt.Sprintf("Failed fixtures: %d", artifact.Summary.Failed),
+	}
+	if artifact.Passed {
+		lines = append(lines, "", "Status: PASS")
+	} else {
+		lines = append(lines, "", "Status: FAIL")
+		if len(artifact.Summary.Failures) > 0 {
+			lines = append(lines, "## Failures")
+			for _, failure := range artifact.Summary.Failures {
+				lines = append(lines, "- "+failure)
+			}
+		}
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
+func renderReleaseManifestSummary(manifest toolingrelease.ReleaseManifest) string {
+	lines := []string{
+		"# Release Manifest",
+		"",
+		"Generated at (UTC): " + manifest.GeneratedAtUTC,
+		"Release ID: " + manifest.ReleaseID,
+		"Spec ref: " + manifest.SpecRef,
+		"Pipeline version: " + manifest.RolloutConfig.PipelineVersion,
+		"Strategy: " + manifest.RolloutConfig.Strategy,
+		"Rollback mode: " + manifest.RolloutConfig.RollbackPosture.Mode,
+		"Rollback trigger: " + manifest.RolloutConfig.RollbackPosture.Trigger,
+		"",
+		"## Readiness Checks",
+	}
+	for _, check := range manifest.Readiness.Checks {
+		status := "PASS"
+		if !check.Passed {
+			status = "FAIL"
+		}
+		line := fmt.Sprintf("- %s: %s (%s)", check.Name, status, check.Path)
+		if check.Reason != "" {
+			line += " - " + check.Reason
+		}
+		lines = append(lines, line)
+	}
+
+	lines = append(lines, "", "## Source Artifacts")
+	keys := make([]string, 0, len(manifest.SourceArtifacts))
+	for key := range manifest.SourceArtifacts {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		source := manifest.SourceArtifacts[key]
+		line := fmt.Sprintf("- %s: %s (sha256=%s)", key, source.Path, source.SHA256)
+		if source.GeneratedAtUTC != "" {
+			line += " generated_at_utc=" + source.GeneratedAtUTC
+		}
+		lines = append(lines, line)
+	}
+
+	if manifest.Readiness.Passed {
+		lines = append(lines, "", "Status: PASS")
+	} else {
+		lines = append(lines, "", "Status: FAIL")
+		if len(manifest.Readiness.Violations) > 0 {
+			lines = append(lines, "## Violations")
+			for _, violation := range manifest.Readiness.Violations {
+				lines = append(lines, "- "+violation)
+			}
 		}
 	}
 	return strings.Join(lines, "\n") + "\n"

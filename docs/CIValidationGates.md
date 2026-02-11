@@ -12,7 +12,7 @@ Status snapshot:
 - Runtime CP backend bootstrap integration is now hardened with file/env/http-backed distribution adapters, authenticated HTTP fetch (`Authorization` + client identity), ordered endpoint failover, deterministic retry/backoff, on-demand TTL refresh with bounded stale-serving fallback, per-service partial-backend fallback, and stale-snapshot deterministic handling coverage.
 - CP promotion-to-implemented gate scope for `CP-01/02/03/04/05/07/08/09/10` is closed at MVP scope with evidence for module behavior, service-client backend parity (`file`/`env`/`http`), backend-failure deterministic fallback handling, and synchronized conformance mappings.
 - `.codex` generated artifact tracking policy is finalized and enforced in CI.
-- This document is synchronized with the current MVP section-10 closure state in `docs/MVP_ImplementationSlice.md` (`10.1.22` closed; `10.2` currently has no open items).
+- This document is synchronized with the current MVP section-10 closure state in `docs/MVP_ImplementationSlice.md` (`10.1.23` closed; `10.2` currently has no open items).
 
 ## 2. Source of truth files
 
@@ -25,18 +25,19 @@ Status snapshot:
 7. `cmd/rspp-cli/main.go`
 8. `internal/tooling/regression/divergence.go`
 9. `internal/tooling/ops/slo.go`
-10. `test/replay/fixtures/metadata.json`
-11. `internal/runtime/turnarbiter/controlplane_backends.go`
-12. `internal/observability/replay/audit_backend.go`
-13. `internal/observability/replay/audit_backend_http.go`
-14. `internal/controlplane/distribution/retention_snapshot.go`
-15. `internal/controlplane/distribution/file_adapter.go`
-16. `internal/controlplane/distribution/http_adapter.go`
-17. `internal/controlplane/graphcompiler/graphcompiler.go`
-18. `internal/controlplane/admission/admission.go`
-19. `internal/controlplane/lease/lease.go`
-20. `internal/runtime/turnarbiter/controlplane_bundle.go`
-21. `internal/runtime/turnarbiter/arbiter.go`
+10. `internal/tooling/release/release.go`
+11. `test/replay/fixtures/metadata.json`
+12. `internal/runtime/turnarbiter/controlplane_backends.go`
+13. `internal/observability/replay/audit_backend.go`
+14. `internal/observability/replay/audit_backend_http.go`
+15. `internal/controlplane/distribution/retention_snapshot.go`
+16. `internal/controlplane/distribution/file_adapter.go`
+17. `internal/controlplane/distribution/http_adapter.go`
+18. `internal/controlplane/graphcompiler/graphcompiler.go`
+19. `internal/controlplane/admission/admission.go`
+20. `internal/controlplane/lease/lease.go`
+21. `internal/runtime/turnarbiter/controlplane_bundle.go`
+22. `internal/runtime/turnarbiter/arbiter.go`
 
 ## 3. Verify entrypoint behavior (`scripts/verify.sh`)
 
@@ -58,10 +59,11 @@ Implemented command chain:
 
 ```bash
 go run ./cmd/rspp-cli validate-contracts &&
+go run ./cmd/rspp-cli validate-contracts-report &&
 go run ./cmd/rspp-cli replay-smoke-report &&
 go run ./cmd/rspp-cli generate-runtime-baseline &&
 go run ./cmd/rspp-cli slo-gates-report &&
-go test ./api/controlplane ./api/eventabi ./internal/runtime/planresolver ./internal/runtime/turnarbiter ./internal/runtime/executor ./internal/runtime/buffering ./internal/runtime/guard ./internal/runtime/transport ./internal/observability/replay ./internal/observability/timeline ./internal/observability/telemetry ./internal/tooling/regression ./internal/tooling/ops ./test/contract ./test/integration ./test/replay &&
+go test ./api/controlplane ./api/eventabi ./internal/runtime/planresolver ./internal/runtime/turnarbiter ./internal/runtime/executor ./internal/runtime/buffering ./internal/runtime/guard ./internal/runtime/transport ./internal/observability/replay ./internal/observability/timeline ./internal/observability/telemetry ./internal/tooling/regression ./internal/tooling/ops ./internal/tooling/release ./test/contract ./test/integration ./test/replay &&
 go test ./test/failover -run 'TestF[137]'
 ```
 
@@ -73,6 +75,7 @@ Coverage summary:
 5. Failure smoke subset `F1`, `F3`, `F7`.
 6. CP turn-start service integration checks for promoted modules `CP-01/02/03/04/05/07/08/09/10` through `turnarbiter` and distribution-backed resolver tests, including CP-02 simple-mode profile enforcement with deterministic unsupported-profile pre-turn handling and rollout/policy/provider-health fallback defaults under backend failure.
 7. OR-01 telemetry module behavior coverage via targeted telemetry package tests and runtime instrumentation-path assertions.
+8. DX-04 artifact-backed release-readiness prerequisites are generated (`contracts-report` plus replay/SLO artifacts) for publish-release gating, and release-module tests run in quick gate (`internal/tooling/release`).
 
 ## 4.2 Full gate (`make verify-full`)
 
@@ -80,6 +83,7 @@ Implemented command chain:
 
 ```bash
 go run ./cmd/rspp-cli validate-contracts &&
+go run ./cmd/rspp-cli validate-contracts-report &&
 go run ./cmd/rspp-cli replay-regression-report &&
 go run ./cmd/rspp-cli generate-runtime-baseline &&
 go run ./cmd/rspp-cli slo-gates-report &&
@@ -91,6 +95,7 @@ Coverage summary:
 2. Replay regression artifact generation and divergence enforcement for fixtures enabled for gate `full`.
 3. Runtime baseline + SLO gate evaluation.
 4. Full conformance coverage for CP turn-start resolver seams, including CP-01/02/03/04/05/07/08/09/10 parity and failure-path determinism (CP-02 unsupported-profile pre-turn handling, CP-03 compile output propagation, CP-05 reject/defer shaping, CP-07 lease-authority gating, CP-09/04/10 fallback defaults under backend outage).
+5. DX-04 release-readiness artifact prerequisites (`contracts-report`, replay regression, SLO gates) are generated for protected-branch release publishing workflows.
 
 ## 4.3 Live provider smoke (`make live-provider-smoke`)
 
@@ -203,8 +208,10 @@ Quick run artifacts:
 1. `.codex/replay/smoke-report.json`
 2. `.codex/replay/smoke-report.md`
 3. `.codex/replay/runtime-baseline.json`
-4. `.codex/ops/slo-gates-report.json`
-5. `.codex/ops/slo-gates-report.md`
+4. `.codex/ops/contracts-report.json`
+5. `.codex/ops/contracts-report.md`
+6. `.codex/ops/slo-gates-report.json`
+7. `.codex/ops/slo-gates-report.md`
 
 Full run artifacts:
 1. `.codex/replay/regression-report.json`
@@ -212,8 +219,10 @@ Full run artifacts:
 3. `.codex/replay/fixtures/*.json`
 4. `.codex/replay/fixtures/*.md`
 5. `.codex/replay/runtime-baseline.json`
-6. `.codex/ops/slo-gates-report.json`
-7. `.codex/ops/slo-gates-report.md`
+6. `.codex/ops/contracts-report.json`
+7. `.codex/ops/contracts-report.md`
+8. `.codex/ops/slo-gates-report.json`
+9. `.codex/ops/slo-gates-report.md`
 
 Security baseline artifacts:
 1. `.codex/ops/security-baseline-check.log`
@@ -241,4 +250,4 @@ Repository policy action (outside repo code):
 ## 8. Consistency references
 
 1. `docs/ConformanceTestPlan.md` maps conformance IDs and suite coverage to concrete tests/fixtures.
-2. `docs/MVP_ImplementationSlice.md` section `10` records closure state and post-MVP follow-ups (`10.1.22` closure + no current open `10.2` items).
+2. `docs/MVP_ImplementationSlice.md` section `10` records closure state and post-MVP follow-ups (`10.1.23` closure + no current open `10.2` items).

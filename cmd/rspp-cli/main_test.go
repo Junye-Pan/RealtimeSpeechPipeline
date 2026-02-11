@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tiger/realtime-speech-pipeline/api/controlplane"
 	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
@@ -13,6 +14,7 @@ import (
 	"github.com/tiger/realtime-speech-pipeline/internal/observability/timeline"
 	"github.com/tiger/realtime-speech-pipeline/internal/tooling/ops"
 	"github.com/tiger/realtime-speech-pipeline/internal/tooling/regression"
+	toolingrelease "github.com/tiger/realtime-speech-pipeline/internal/tooling/release"
 )
 
 func TestLoadReplayFixturePolicy(t *testing.T) {
@@ -575,6 +577,142 @@ func TestWriteSLOGatesReportFromRuntimeArtifact(t *testing.T) {
 	}
 	if err := writeSLOGatesReport(outputPath, artifactPath); err != nil {
 		t.Fatalf("expected slo report generation from runtime artifact to pass, got %v", err)
+	}
+}
+
+func TestWriteContractsReport(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	outputPath := filepath.Join(tmp, "contracts-report.json")
+	fixtureRoot := filepath.Join("test", "contract", "fixtures")
+
+	if err := writeContractsReport(outputPath, fixtureRoot); err != nil {
+		t.Fatalf("expected contracts report generation to pass, got %v", err)
+	}
+
+	raw, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("unexpected contracts report read error: %v", err)
+	}
+	var report contractsReportArtifact
+	if err := json.Unmarshal(raw, &report); err != nil {
+		t.Fatalf("unexpected contracts report decode error: %v", err)
+	}
+	if !report.Passed || report.Summary.Failed != 0 || report.Summary.Total == 0 {
+		t.Fatalf("unexpected contracts report content: %+v", report)
+	}
+
+	summaryPath := strings.TrimSuffix(outputPath, filepath.Ext(outputPath)) + ".md"
+	if _, err := os.Stat(summaryPath); err != nil {
+		t.Fatalf("expected contracts summary markdown artifact, got %v", err)
+	}
+}
+
+func TestWriteReleaseManifest(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	now := time.Date(2026, 2, 11, 12, 0, 0, 0, time.UTC)
+	outputPath := filepath.Join(tmp, "release-manifest.json")
+	rolloutCfgPath := filepath.Join(tmp, "rollout.json")
+	contractsPath := filepath.Join(tmp, "contracts.json")
+	replayPath := filepath.Join(tmp, "replay.json")
+	sloPath := filepath.Join(tmp, "slo.json")
+
+	if err := osWriteFile(rolloutCfgPath, []byte(`{
+  "pipeline_version": "pipeline-v2",
+  "strategy": "canary",
+  "rollback_posture": {
+    "mode": "automatic",
+    "trigger": "replay_or_slo_failure"
+  }
+}`)); err != nil {
+		t.Fatalf("unexpected rollout config write error: %v", err)
+	}
+	if err := osWriteFile(contractsPath, []byte(`{"generated_at_utc":"2026-02-11T11:00:00Z","passed":true}`)); err != nil {
+		t.Fatalf("unexpected contracts artifact write error: %v", err)
+	}
+	if err := osWriteFile(replayPath, []byte(`{"generated_at_utc":"2026-02-11T11:10:00Z","failing_count":0}`)); err != nil {
+		t.Fatalf("unexpected replay artifact write error: %v", err)
+	}
+	if err := osWriteFile(sloPath, []byte(`{"generated_at_utc":"2026-02-11T11:20:00Z","report":{"passed":true}}`)); err != nil {
+		t.Fatalf("unexpected slo artifact write error: %v", err)
+	}
+
+	manifest, err := writeReleaseManifest(
+		outputPath,
+		"specs/pipeline-v2.json",
+		rolloutCfgPath,
+		contractsPath,
+		replayPath,
+		sloPath,
+		now,
+	)
+	if err != nil {
+		t.Fatalf("expected release manifest generation to pass, got %v", err)
+	}
+	if !manifest.Readiness.Passed {
+		t.Fatalf("expected readiness pass in release manifest, got %+v", manifest.Readiness)
+	}
+	if manifest.RolloutConfig.PipelineVersion != "pipeline-v2" {
+		t.Fatalf("unexpected release manifest rollout config: %+v", manifest.RolloutConfig)
+	}
+
+	raw, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("unexpected release manifest read error: %v", err)
+	}
+	var artifact toolingrelease.ReleaseManifest
+	if err := json.Unmarshal(raw, &artifact); err != nil {
+		t.Fatalf("unexpected release manifest decode error: %v", err)
+	}
+	if artifact.ReleaseID == "" || len(artifact.SourceArtifacts) != 4 {
+		t.Fatalf("unexpected release manifest artifact: %+v", artifact)
+	}
+}
+
+func TestWriteReleaseManifestFailsWhenReadinessFails(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	now := time.Date(2026, 2, 11, 12, 0, 0, 0, time.UTC)
+	outputPath := filepath.Join(tmp, "release-manifest.json")
+	rolloutCfgPath := filepath.Join(tmp, "rollout.json")
+	contractsPath := filepath.Join(tmp, "contracts.json")
+	replayPath := filepath.Join(tmp, "replay.json")
+	sloPath := filepath.Join(tmp, "slo.json")
+
+	if err := osWriteFile(rolloutCfgPath, []byte(`{
+  "pipeline_version": "pipeline-v2",
+  "strategy": "canary",
+  "rollback_posture": {
+    "mode": "automatic",
+    "trigger": "replay_or_slo_failure"
+  }
+}`)); err != nil {
+		t.Fatalf("unexpected rollout config write error: %v", err)
+	}
+	if err := osWriteFile(contractsPath, []byte(`{"generated_at_utc":"2026-02-11T11:00:00Z","passed":true}`)); err != nil {
+		t.Fatalf("unexpected contracts artifact write error: %v", err)
+	}
+	if err := osWriteFile(replayPath, []byte(`{"generated_at_utc":"2026-02-11T11:10:00Z","failing_count":2}`)); err != nil {
+		t.Fatalf("unexpected replay artifact write error: %v", err)
+	}
+	if err := osWriteFile(sloPath, []byte(`{"generated_at_utc":"2026-02-11T11:20:00Z","report":{"passed":true}}`)); err != nil {
+		t.Fatalf("unexpected slo artifact write error: %v", err)
+	}
+
+	if _, err := writeReleaseManifest(
+		outputPath,
+		"specs/pipeline-v2.json",
+		rolloutCfgPath,
+		contractsPath,
+		replayPath,
+		sloPath,
+		now,
+	); err == nil {
+		t.Fatalf("expected release manifest generation to fail when readiness fails")
 	}
 }
 
