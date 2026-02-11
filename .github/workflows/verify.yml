@@ -168,6 +168,45 @@ jobs:
           path: .codex/providers/live-provider-smoke.log
           if-no-files-found: warn
 
+  livekit-smoke:
+    name: livekit-smoke
+    runs-on: ubuntu-latest
+    needs:
+      - codex-artifact-policy
+      - quick
+    continue-on-error: true
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'run-livekit-smoke'))
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run LiveKit smoke suite (non-blocking)
+        env:
+          RSPP_LIVEKIT_SMOKE: "1"
+          RSPP_LIVEKIT_URL: ${{ secrets.RSPP_LIVEKIT_URL }}
+          RSPP_LIVEKIT_API_KEY: ${{ secrets.RSPP_LIVEKIT_API_KEY }}
+          RSPP_LIVEKIT_API_SECRET: ${{ secrets.RSPP_LIVEKIT_API_SECRET }}
+          RSPP_LIVEKIT_ROOM: ${{ secrets.RSPP_LIVEKIT_ROOM }}
+          RSPP_LIVEKIT_SMOKE_REPORT_PATH: ".codex/providers/livekit-smoke-report.json"
+        run: |
+          mkdir -p .codex/providers
+          make livekit-smoke | tee .codex/providers/livekit-smoke.log
+
+      - name: Upload LiveKit smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: livekit-smoke-artifacts
+          path: |
+            .codex/providers/livekit-smoke.log
+            .codex/providers/livekit-smoke-report.json
+          if-no-files-found: warn
+
   a2-runtime-live:
     name: a2-runtime-live
     runs-on: ubuntu-latest

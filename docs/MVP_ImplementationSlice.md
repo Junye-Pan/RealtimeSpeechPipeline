@@ -1,17 +1,18 @@
 # RSPP MVP First Implementation Slice
 
-## Status snapshot (2026-02-10, post retention-sweep operational hardening + replay-latency + CP distribution hardening)
+## Status snapshot (2026-02-11, post LiveKit transport-path closure)
 
 This document remains the normative MVP contract and now includes an implementation snapshot.
 
-Current milestone state (from current local workspace on `main` at commit `4d9bf2e`):
+Current milestone state (from current local workspace on `main` at commit `6d61e34`):
 - Contract/schema validation, runtime arbiter/guard path, full failure matrix slices (`F1`-`F8`), and replay divergence gating paths are implemented.
 - `RK-10`/`RK-11` provider contracts plus deterministic invocation/retry-switch/fallback behavior are implemented, including startup+CI provider-count enforcement (3-5 per modality), non-terminal attempt evidence promotion into terminal OR-02 baseline evidence, per-attempt/invocation latency fields in OR-02 invocation outcomes, optional non-terminal invocation snapshot append support (config-gated), and live-provider switch/fallback smoke coverage.
 - Replay invocation-latency threshold gating is implemented with runtime-baseline-artifact extraction in replay regression (`cmd/rspp-cli replay-regression-report`), replacing synthetic threshold sample inputs.
 - CP turn-start bundle seam is implemented for deterministic CP-derived plan inputs and snapshot provenance (`CP-01/02/03/04/05/07/08/09/10` services + runtime seam wiring in arbiter), including backend bootstrap wiring (`turnarbiter.NewWithControlPlaneBackends`), file/env/http-backed distribution adapter loading, per-service partial-backend fallback defaults, stale-snapshot error classification, CP-03 graph compile output threading, CP-05 pre-turn admission decision shaping, CP-07 lease authority gating, and integration coverage for custom/partial/stale pipeline-version/snapshot propagation.
 - Security/data-handling baseline is implemented, including replay access controls, immutable replay-audit durable backend resolver paths (HTTP backend with ordered retry/failover plus JSONL fallback), tenant policy-resolver-backed retention enforcement seams, retention/deletion contract coverage with backend resolver wiring, distributed CP snapshot-sourced retention policy loading for `retention-sweep` (with deterministic fallback defaults), deterministic per-run/per-tenant/per-class sweep counters, and fail-fast policy-artifact validation with stable error taxonomy.
+- LiveKit transport-path closure is implemented through `transports/livekit` adapter/event mapping, runtime command wiring (`rspp-runtime livekit`), local-runner wiring (`rspp-local-runner`), deterministic transport integration evidence, and non-blocking real LiveKit smoke artifacts.
 - `make verify-quick` and `make verify-full` invoke `scripts/verify.sh` with replay and SLO artifacts.
-- CI enforces blocking `codex-artifact-policy`, `verify-quick`, `verify-full`, and `security-baseline` jobs; `live-provider-smoke` and `a2-runtime-live` remain non-blocking.
+- CI enforces blocking `codex-artifact-policy`, `verify-quick`, `verify-full`, and `security-baseline` jobs; `live-provider-smoke`, `livekit-smoke`, and `a2-runtime-live` remain non-blocking.
 
 Normative requirements in sections 1-10 remain in force unless explicitly superseded in this file.
 
@@ -289,13 +290,20 @@ Status note:
    - added `rspp-cli publish-release` with explicit rollback-posture enforcement and fail-closed readiness checks against contracts/replay/SLO artifacts before manifest publishing.
    - added DX-04 coverage tests (`internal/tooling/release/release_test.go`, `cmd/rspp-cli/main_test.go`) and synchronized CI/conformance docs for new gate artifacts and closure state.
 
-### 10.2 Remaining (open, ordered as of 2026-02-11)
+24. Close LiveKit transport-path objective and DX-01 local runner gap (2026-02-11):
+   - implemented concrete LiveKit transport adapter package (`transports/livekit`) with deterministic event mapping through RK-22/RK-23 boundaries (ingress classification + connection lifecycle normalization + output fencing + authority/cancel terminalization integration).
+   - added runtime operator command surface `rspp-runtime livekit` with deterministic report artifact generation and optional LiveKit RoomService probe path.
+   - promoted `cmd/rspp-local-runner` from scaffold-only to runnable local path by delegating to shared LiveKit command workflow.
+   - added deterministic transport-path evidence coverage (`transports/livekit/*_test.go`, `test/integration/livekit_transport_integration_test.go`, runtime/local-runner command tests) and optional non-blocking real LiveKit smoke evidence (`make livekit-smoke`, CI job `livekit-smoke`).
+   - added closure acceptance criteria + operator runbook (`docs/LiveKitTransportClosure.md`) and synchronized CI/conformance gate docs.
+
+### 10.2 Remaining (open tracker, currently empty as of 2026-02-11)
 
 Status update:
 - This section tracks unfinished/partially finished/unstarted next-step work only.
 - Completed closure items were moved to section `10.1`.
 
-1. No open section-10 follow-up items remain after `10.1.23`; future post-MVP work should be tracked as new entries when scoped.
+- No open items currently.
 
 ## Appendix A. MVP module status map (CP/RK/OR/DX)
 
@@ -304,6 +312,10 @@ Status values:
 - `partial`: some MVP behavior is implemented, but full module boundary/coverage is incomplete.
 - `scaffold-only`: directory/entrypoint exists with no substantive module logic.
 - `deferred`: intentionally not implemented in this MVP slice.
+
+Interpretation note:
+- Appendix A is module-scoped and does not by itself prove end-to-end section-2 objective closure.
+- Any row whose objective requires cross-module integration/runtime packaging (for example LiveKit transport-path operation) must include that integration status explicitly in `Notes/Gap` and may remain `partial` even when core module internals are implemented.
 
 ### A.1 Control plane
 
@@ -343,8 +355,8 @@ Real-provider validation coverage:
 | RK-17 | implemented | `internal/runtime/budget/manager.go`, `internal/runtime/budget/manager_test.go`, `internal/runtime/nodehost/failure.go`, `internal/runtime/nodehost/failure_test.go` | Budget manager provides deterministic continue/degrade/fallback/terminate decisions and is integrated into node-failure shaping. |
 | RK-19 | implemented | `internal/runtime/determinism/service.go`, `internal/runtime/determinism/service_test.go`, `internal/runtime/planresolver/resolver.go`, `internal/runtime/planresolver/resolver_test.go` | Determinism service issues and validates deterministic context (seed/order markers/merge rule) for resolved turn plans. |
 | RK-21 | implemented | `internal/runtime/identity/context.go`, `internal/runtime/identity/context_test.go`, `internal/runtime/executor/scheduler.go`, `internal/runtime/executor/scheduler_test.go` | Identity/correlation/idempotency context service is implemented and used for deterministic event-id generation in scheduler paths. |
-| RK-22 | implemented | `internal/runtime/transport/fence.go`, `internal/runtime/transport/fence_test.go`, `internal/runtime/transport/classification.go`, `internal/runtime/transport/classification_test.go`, `test/integration/cf_full_conformance_test.go`, `test/integration/runtime_chain_test.go` | Transport boundary behavior includes deterministic ingress payload classification tagging plus output fencing guarantees. |
-| RK-23 | implemented | `internal/runtime/transport/signals.go`, `internal/runtime/transport/signals_test.go`, `test/integration/cf_full_conformance_test.go`, `test/integration/ml_conformance_test.go` | Connection and transport signal handling present. |
+| RK-22 | implemented | `internal/runtime/transport/fence.go`, `internal/runtime/transport/fence_test.go`, `internal/runtime/transport/classification.go`, `internal/runtime/transport/classification_test.go`, `transports/livekit/adapter.go`, `transports/livekit/adapter_test.go`, `test/integration/livekit_transport_integration_test.go` | Deterministic ingress classification and output-fence semantics are now wired through concrete LiveKit adapter mapping and runtime command surfaces (`rspp-runtime livekit`, `rspp-local-runner`). |
+| RK-23 | implemented | `internal/runtime/transport/signals.go`, `internal/runtime/transport/signals_test.go`, `transports/livekit/adapter.go`, `transports/livekit/adapter_test.go`, `test/integration/livekit_transport_integration_test.go` | Deterministic connection-signal normalization is now wired through concrete LiveKit adapter integration with end-to-end runtime entrypoint exposure and transport closure evidence. |
 | RK-24 | implemented | `internal/runtime/guard/guard.go`, `internal/runtime/guard/enrichment.go`, `internal/runtime/guard/enrichment_test.go`, `internal/runtime/guard/migration.go`, `internal/runtime/guard/migration_test.go`, `test/integration/runtime_chain_test.go` | Authority checks and migration guard behavior present. |
 | RK-25 | implemented | `internal/runtime/localadmission/localadmission.go`, `internal/runtime/localadmission/localadmission_test.go`, `internal/runtime/executor/scheduler_test.go`, `test/integration/runtime_chain_test.go` | Deterministic local admission outcomes are implemented. |
 | RK-26 | implemented | `internal/runtime/executionpool/pool.go`, `internal/runtime/executionpool/pool_test.go`, `internal/runtime/executor/plan.go`, `internal/runtime/executor/scheduler_test.go` | Deterministic bounded FIFO execution pool manager is implemented with optional executor dispatch integration. |
@@ -361,7 +373,7 @@ Real-provider validation coverage:
 
 | Module | Status | Evidence | Notes/Gap |
 | --- | --- | --- | --- |
-| DX-01 | implemented | `cmd/rspp-local-runner/main.go` | Local runner entrypoint exists for MVP workflow. |
+| DX-01 | implemented | `cmd/rspp-local-runner/main.go`, `cmd/rspp-local-runner/main_test.go`, `transports/livekit/command.go`, `docs/LiveKitTransportClosure.md` | Local runner now starts a runnable single-node runtime + minimal control-plane stub workflow by delegating to the shared LiveKit adapter command path. |
 | DX-02 | implemented | `internal/tooling/validation/contracts.go`, `test/contract/*`, `cmd/rspp-cli validate-contracts` | Contract validation harness is active. |
 | DX-03 | implemented | `internal/tooling/regression/divergence.go`, `test/replay/*`, `cmd/rspp-cli replay-*` | Replay regression harness is active. |
 | DX-04 | implemented | `internal/tooling/release/release.go`, `internal/tooling/release/release_test.go`, `cmd/rspp-cli/main.go`, `cmd/rspp-cli/main_test.go`, `Makefile` | Release/readiness CLI baseline is implemented with explicit rollback-posture rollout config validation, artifact-based release gate enforcement (`contracts-report`, replay regression, SLO gates), deterministic release manifest publishing, and verify-chain integration. |
@@ -375,3 +387,70 @@ Real-provider validation coverage:
 4. CP module promotion-to-implemented gate scope is closed in `10.1.20` + `10.1.21` (CP-01/02/03/04/05/07/08/09/10: defined promotion criteria + backend parity + deterministic failure-path coverage + conformance evidence synchronization).
 5. OR-01 telemetry pipeline implementation scope is closed in `10.1.22` (bounded non-blocking telemetry pipeline + runtime instrumentation + env-wired runtime bootstrap + targeted coverage and gate synchronization).
 6. DX-04 release/readiness workflow scope is closed in `10.1.23` (release module implementation + artifact-based readiness gates + publish-release manifest flow + verify/docs synchronization).
+7. LiveKit transport-path closure + DX-01 local runner scope is closed in `10.1.24` (adapter implementation + runtime/local-runner wiring + operator runbook + deterministic and live-smoke evidence synchronization).
+
+## Appendix C. MVP objective compliance and feature experience
+
+This appendix evaluates the exact MVP standards from section `2. Fixed decisions for MVP` and then shows how to use the current framework surfaces to experience each objective.
+
+### C.1 Objective scorecard (section-2 standards)
+
+| Standard (from section 2) | Objective met? | Evidence in current repo | How to experience it now |
+| --- | --- | --- | --- |
+| Transport path: LiveKit only (through RK-22/RK-23 boundaries). | Met | RK-22/RK-23 transport-boundary contracts are now wired through concrete adapter implementation in `transports/livekit/*`, runtime command wiring in `cmd/rspp-runtime/main.go`, local-runner wiring in `cmd/rspp-local-runner/main.go`, and deterministic + smoke evidence (`test/integration/livekit_transport_integration_test.go`, `test/integration/livekit_live_smoke_test.go`). | Run: `go run ./cmd/rspp-runtime livekit -dry-run=true -probe=false` (deterministic report path) or `go run ./cmd/rspp-local-runner` for local-runner UX. For real endpoint validation, set `RSPP_LIVEKIT_*` credentials and add `-probe=true`. |
+| Provider set: deterministic multi-provider catalog per modality (3-5 STT, 3-5 LLM, 3-5 TTS) with pre-authorized retry/switch behavior. STT: Deepgram, Google Speech-to-Text, AssemblyAI. LLM: Anthropic, Google Gemini, Cohere. TTS: ElevenLabs, Google Cloud Text-to-Speech, Amazon Polly. | Met | Canonical 3x3x3 provider bootstrap with deterministic coverage enforcement is implemented in `internal/runtime/provider/bootstrap/bootstrap.go` and adapter packages under `providers/stt/*`, `providers/llm/*`, `providers/tts/*`. | Run: `go run ./cmd/rspp-runtime` (or `go run ./cmd/rspp-runtime bootstrap-providers`). You should see provider bootstrap summary (`stt=3 llm=3 tts=3`). |
+| Mode: Simple mode only (ExecutionProfile defaults required; advanced overrides deferred). | Met | CP normalization enforces MVP simple-only profile and rejects unsupported profiles in `internal/controlplane/normalizer/normalizer.go`; turn-start bundle/runtime seams thread this in `internal/runtime/turnarbiter/controlplane_bundle.go`. | In the current framework, this is experienced as a built-in invariant: runtime turn-start resolution accepts simple profile semantics and blocks unsupported advanced profile records before turn open. There is no dedicated standalone CLI switch to toggle advanced mode (by design in this MVP). |
+| Authority model: single-region execution authority with lease/epoch checks. | Met | Lease/epoch authority gates and deterministic outcomes (`stale_epoch_reject`, `deauthorized_drain`) are implemented in `internal/runtime/guard/*`, `internal/runtime/turnarbiter/*`, and contract/event schemas (`api/controlplane`, `api/eventabi`). | Use framework runtime flows where turn-open/active-turn handling runs through arbiter+guard; authority decisions are emitted as deterministic control outcomes and reflected in replay baseline evidence. |
+| Replay scope: OR-02 baseline replay evidence (L0 baseline contract) is mandatory. | Met | OR-02 baseline recorder/completeness paths are implemented in `internal/observability/timeline/recorder.go`; replay and SLO gates consume baseline evidence (`cmd/rspp-cli generate-runtime-baseline`, `cmd/rspp-cli replay-regression-report`, `cmd/rspp-cli slo-gates-report`). | Run: `go run ./cmd/rspp-cli generate-runtime-baseline` then `go run ./cmd/rspp-cli replay-regression-report` and `go run ./cmd/rspp-cli slo-gates-report`. Inspect `.codex/replay/runtime-baseline.json` and gate reports to experience OR-02 evidence enforcement. |
+
+### C.2 Practical usage path to experience met objectives
+
+Use these steps in order to exercise currently exposed framework capabilities (without relying on test-file execution as the primary UX).
+
+1. Provider-catalog objective (met):
+
+```bash
+go run ./cmd/rspp-runtime
+```
+
+Expected:
+- runtime provider bootstrap summary is printed,
+- provider catalog is initialized with deterministic 3-per-modality baseline.
+
+2. OR-02 replay-evidence objective (met):
+
+```bash
+go run ./cmd/rspp-cli generate-runtime-baseline
+go run ./cmd/rspp-cli replay-regression-report
+go run ./cmd/rspp-cli slo-gates-report
+```
+
+Expected artifacts:
+- `.codex/replay/runtime-baseline.json`
+- `.codex/replay/regression-report.json`
+- `.codex/ops/slo-gates-report.json`
+
+Expected behavior:
+- replay/SLO gating consumes baseline evidence and enforces MVP replay-quality constraints.
+
+3. Simple-mode-only objective (met) and single-region authority objective (met):
+- These are enforced inside runtime turn-start and active-turn control paths (`turnarbiter` + `guard` + CP services).
+- In this MVP, there is no separate operator CLI command that toggles execution profile or manually drives lease/epoch events; these behaviors are framework invariants exercised when embedding runtime modules in a host service.
+
+4. LiveKit-only transport objective (met):
+
+```bash
+go run ./cmd/rspp-runtime livekit -dry-run=true -probe=false
+go run ./cmd/rspp-local-runner
+```
+
+Expected artifacts:
+- `.codex/transports/livekit-report.json`
+- `.codex/transports/livekit-local-runner-report.json`
+
+Expected behavior:
+- RK-22 ingress classification + egress fence decisions and RK-23 connection normalization are emitted through a concrete adapter path and operator-visible command surfaces.
+
+### C.3 Bottom-line assessment for section-2 standards
+
+- Met: provider set, simple mode only, single-region lease/epoch authority model, OR-02 mandatory replay baseline scope, LiveKit transport-path objective.

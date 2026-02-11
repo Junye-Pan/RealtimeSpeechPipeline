@@ -7,12 +7,13 @@ Define and track the implemented conformance baseline for contract correctness, 
 Status snapshot:
 - Baseline reflects repository behavior as of `2026-02-11`.
 - This document is synchronized with current gate execution in `Makefile`, `scripts/verify.sh`, and `cmd/rspp-cli`.
-- This document is synchronized with the current MVP section-10 closure state in `docs/MVP_ImplementationSlice.md` (`10.1.23` closed; `10.2` currently has no open items).
+- This document is synchronized with the current MVP section-10 closure state in `docs/MVP_ImplementationSlice.md` (`10.1.24` closed; `10.2` currently has no open items).
 - CP promotion-to-implemented scope for `CP-01/02/03/04/05/07/08/09/10` is closed at MVP scope: module behavior + file/env/http parity + deterministic backend-failure fallback/stale handling + conformance evidence synchronization are now covered in baseline tests/docs.
 - CP bundle provenance integration coverage includes partial-backend fallback and stale-snapshot deterministic pre-turn handling scenarios, CP-02 simple-mode normalization enforcement with unsupported-profile deterministic pre-turn handling, CP-03 graph compile output propagation, CP-05 pre-turn decision shaping (`CP-05` emitter outcomes), CP-07 lease-authority gating paths, and rollout/policy/provider-health fallback determinism under backend outages.
 - OR-01 telemetry pipeline baseline coverage is implemented for non-blocking telemetry behavior, deterministic sampling, runtime env wiring, and runtime instrumentation paths (`turnarbiter`, `scheduler`, `provider invocation`, `transport fence`).
 - DX-04 release/readiness baseline is implemented with artifact-backed release gate checks (`contracts-report`, replay regression, SLO gates) and deterministic publish manifest workflow coverage.
 - OR-03 replay access path now includes distributed HTTP replay-audit backend coverage with deterministic JSONL fallback behavior, plus backend-resolver failure-mode assertions; retention-sweep coverage now includes CP distribution snapshot-first policy sourcing with deterministic outage fallback and recovery behavior.
+- LiveKit transport-path closure evidence is implemented via `transports/livekit` deterministic adapter coverage, runtime/local-runner command wiring, and non-blocking real LiveKit smoke artifacts (`docs/LiveKitTransportClosure.md`).
 
 ## 2. Suite structure and current coverage
 
@@ -23,6 +24,7 @@ Status snapshot:
 | `CF` | Cancellation fencing tests | implemented | `test/integration/quick_conformance_test.go`, `test/integration/cf_full_conformance_test.go`, `internal/runtime/transport/fence_test.go` |
 | `AE` | Authority epoch tests | implemented | `test/integration/quick_conformance_test.go`, `test/integration/ae004_enrichment_test.go`, `test/failover/failure_smoke_test.go`, `test/failover/failure_full_test.go` |
 | `ML` | Merge/drop lineage tests | implemented | `internal/runtime/buffering/drop_notice_test.go`, `test/integration/ml_conformance_test.go`, replay fixture metadata |
+| `LK` | LiveKit transport closure tests | implemented | `transports/livekit/*_test.go`, `test/integration/livekit_transport_integration_test.go`, `cmd/rspp-runtime/main_test.go`, `cmd/rspp-local-runner/main_test.go` |
 
 ## 3. Implemented test matrix
 
@@ -75,6 +77,14 @@ Status snapshot:
 | `ML-003` | `test/integration/ml_conformance_test.go`, replay metadata entry `ml-003-replay-absence-classification` | quick + full tests, full replay-regression artifact | replay distinguishes deterministic drop from unexplained upstream absence |
 | `ML-004` | `test/integration/ml_conformance_test.go` | quick + full | sync-domain discontinuity and reset markers are deterministic |
 
+## 3.6 LiveKit transport closure tests (`LK`)
+
+| Test ID | Current evidence | Gate participation | Pass criteria |
+| --- | --- | --- | --- |
+| `LK-001` | `transports/livekit/adapter_test.go`, `test/integration/livekit_transport_integration_test.go` | quick + full | RK-22 ingress classification + RK-22 output fencing + RK-23 connection lifecycle normalization are preserved through adapter flow. |
+| `LK-002` | `cmd/rspp-runtime/main_test.go`, `cmd/rspp-local-runner/main_test.go`, `transports/livekit/command_test.go` | quick + full | operator-facing command surfaces (`rspp-runtime livekit`, `rspp-local-runner`) produce deterministic report artifacts and fail closed on invalid runtime/probe config. |
+| `LK-003` | `test/integration/livekit_live_smoke_test.go` (`-tags=livekitproviders`), `.github/workflows/verify.yml` job `livekit-smoke` | non-blocking | real LiveKit RoomService probe + deterministic adapter flow execute with credentials and emit smoke log/report artifacts. |
+
 ## 4. Gate execution map (implemented)
 
 | Gate | Implemented command owner | Conformance scope | Failure matrix scope | Replay report mode |
@@ -120,4 +130,5 @@ Policy invariants:
 ## 8. Consistency references
 
 1. `docs/CIValidationGates.md`
-2. `docs/MVP_ImplementationSlice.md` section `10` (`10.1.23` closure + no current open `10.2` items)
+2. `docs/MVP_ImplementationSlice.md` section `10` (`10.1.24` closure + no current open `10.2` items)
+3. `docs/LiveKitTransportClosure.md`

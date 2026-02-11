@@ -2,7 +2,7 @@
 
 ## 1. Purpose and status
 
-Define the currently implemented quick/full validation gates for this repository, plus optional non-blocking live-provider smoke checks and `.codex` artifact policy enforcement.
+Define the currently implemented quick/full validation gates for this repository, plus optional non-blocking live-provider and LiveKit smoke checks and `.codex` artifact policy enforcement.
 
 Status snapshot:
 - Baseline reflects repository behavior as of `2026-02-11`.
@@ -12,7 +12,8 @@ Status snapshot:
 - Runtime CP backend bootstrap integration is now hardened with file/env/http-backed distribution adapters, authenticated HTTP fetch (`Authorization` + client identity), ordered endpoint failover, deterministic retry/backoff, on-demand TTL refresh with bounded stale-serving fallback, per-service partial-backend fallback, and stale-snapshot deterministic handling coverage.
 - CP promotion-to-implemented gate scope for `CP-01/02/03/04/05/07/08/09/10` is closed at MVP scope with evidence for module behavior, service-client backend parity (`file`/`env`/`http`), backend-failure deterministic fallback handling, and synchronized conformance mappings.
 - `.codex` generated artifact tracking policy is finalized and enforced in CI.
-- This document is synchronized with the current MVP section-10 closure state in `docs/MVP_ImplementationSlice.md` (`10.1.23` closed; `10.2` currently has no open items).
+- LiveKit transport closure (`RK-22`/`RK-23`) and DX-01 local-runner command wiring are now represented in deterministic quick/full tests and optional non-blocking LiveKit smoke checks.
+- This document is synchronized with the current MVP section-10 closure state in `docs/MVP_ImplementationSlice.md` (`10.1.24` closed; `10.2` currently has no open items).
 
 ## 2. Source of truth files
 
@@ -38,6 +39,11 @@ Status snapshot:
 20. `internal/controlplane/lease/lease.go`
 21. `internal/runtime/turnarbiter/controlplane_bundle.go`
 22. `internal/runtime/turnarbiter/arbiter.go`
+23. `transports/livekit/adapter.go`
+24. `transports/livekit/command.go`
+25. `transports/livekit/probe.go`
+26. `cmd/rspp-runtime/main.go`
+27. `cmd/rspp-local-runner/main.go`
 
 ## 3. Verify entrypoint behavior (`scripts/verify.sh`)
 
@@ -63,7 +69,7 @@ go run ./cmd/rspp-cli validate-contracts-report &&
 go run ./cmd/rspp-cli replay-smoke-report &&
 go run ./cmd/rspp-cli generate-runtime-baseline &&
 go run ./cmd/rspp-cli slo-gates-report &&
-go test ./api/controlplane ./api/eventabi ./internal/runtime/planresolver ./internal/runtime/turnarbiter ./internal/runtime/executor ./internal/runtime/buffering ./internal/runtime/guard ./internal/runtime/transport ./internal/observability/replay ./internal/observability/timeline ./internal/observability/telemetry ./internal/tooling/regression ./internal/tooling/ops ./internal/tooling/release ./test/contract ./test/integration ./test/replay &&
+go test ./api/controlplane ./api/eventabi ./internal/runtime/planresolver ./internal/runtime/turnarbiter ./internal/runtime/executor ./internal/runtime/buffering ./internal/runtime/guard ./internal/runtime/transport ./internal/observability/replay ./internal/observability/timeline ./internal/observability/telemetry ./internal/tooling/regression ./internal/tooling/ops ./internal/tooling/release ./transports/livekit ./test/contract ./test/integration ./test/replay &&
 go test ./test/failover -run 'TestF[137]'
 ```
 
@@ -76,6 +82,7 @@ Coverage summary:
 6. CP turn-start service integration checks for promoted modules `CP-01/02/03/04/05/07/08/09/10` through `turnarbiter` and distribution-backed resolver tests, including CP-02 simple-mode profile enforcement with deterministic unsupported-profile pre-turn handling and rollout/policy/provider-health fallback defaults under backend failure.
 7. OR-01 telemetry module behavior coverage via targeted telemetry package tests and runtime instrumentation-path assertions.
 8. DX-04 artifact-backed release-readiness prerequisites are generated (`contracts-report` plus replay/SLO artifacts) for publish-release gating, and release-module tests run in quick gate (`internal/tooling/release`).
+9. RK-22/RK-23 LiveKit transport adapter deterministic mapping/command-wiring coverage is included (`transports/livekit`, `test/integration/livekit_transport_integration_test.go`, runtime/local-runner command tests).
 
 ## 4.2 Full gate (`make verify-full`)
 
@@ -131,7 +138,28 @@ Execution policy:
    - `.codex/providers/a2-runtime-live.log`
 4. Uses strict mode in CI (`RSPP_A2_RUNTIME_LIVE_STRICT=1`) so skipped A.2 scenarios are treated as failures for that non-blocking job.
 
-## 4.5 Security baseline gate (`make security-baseline-check`)
+## 4.5 LiveKit smoke (`make livekit-smoke`)
+
+Implemented command:
+
+```bash
+go test -tags=livekitproviders ./test/integration -run TestLiveKitSmoke -v
+```
+
+Execution policy:
+1. Runs in CI as a non-blocking job (`livekit-smoke`) in `.github/workflows/verify.yml`.
+2. Triggered on `schedule`, `workflow_dispatch`, and pull requests explicitly labeled `run-livekit-smoke`.
+3. Uses LiveKit secrets/env when present:
+   - `RSPP_LIVEKIT_URL`
+   - `RSPP_LIVEKIT_API_KEY`
+   - `RSPP_LIVEKIT_API_SECRET`
+   - `RSPP_LIVEKIT_ROOM`
+4. Produces smoke artifacts:
+   - `.codex/providers/livekit-smoke.log`
+   - `.codex/providers/livekit-smoke-report.json`
+5. Does not replace required merge gates `verify-quick` and `verify-full`.
+
+## 4.6 Security baseline gate (`make security-baseline-check`)
 
 Implemented command:
 
@@ -148,7 +176,7 @@ Execution policy:
    - `.codex/ops/security-baseline-report.json`
    - `.codex/ops/security-baseline-report.md`
 
-## 4.6 `.codex` artifact policy gate (`make codex-artifact-policy-check`)
+## 4.7 `.codex` artifact policy gate (`make codex-artifact-policy-check`)
 
 Implemented command:
 
@@ -164,7 +192,7 @@ Execution policy:
 3. Fails when any tracked `.codex` path is outside the allowlist.
 4. Enforces generated artifact policy:
    - `.codex/replay/**`, `.codex/ops/**`, `.codex/providers/**`, `.codex/checkpoints/**`, `.codex/checkpoints.log`, and `.codex/sessions/**` are CI-only outputs and must remain untracked.
-5. `verify-quick`, `verify-full`, `security-baseline`, `live-provider-smoke`, and `a2-runtime-live` depend on this policy gate.
+5. `verify-quick`, `verify-full`, `security-baseline`, `live-provider-smoke`, `livekit-smoke`, and `a2-runtime-live` depend on this policy gate.
 
 ## 5. Replay divergence fail policy (normative, implemented)
 
@@ -229,6 +257,10 @@ Security baseline artifacts:
 2. `.codex/ops/security-baseline-report.json`
 3. `.codex/ops/security-baseline-report.md`
 
+LiveKit smoke artifacts:
+1. `.codex/providers/livekit-smoke.log`
+2. `.codex/providers/livekit-smoke-report.json`
+
 ## 7. CI boundary status and remaining work
 
 Implemented now:
@@ -237,17 +269,19 @@ Implemented now:
 3. Replay and SLO artifacts are generated locally under `.codex/`.
 4. `.github/workflows/verify.yml` uploads quick/full artifacts with `if-no-files-found: error` so missing expected artifacts fail CI.
 5. `.github/workflows/verify.yml` includes a non-blocking `live-provider-smoke` job for real-provider integration checks.
-6. `.github/workflows/verify.yml` includes a non-blocking `a2-runtime-live` job with per-module A.2 runtime evidence artifacts.
-7. `.github/workflows/verify.yml` includes a blocking `security-baseline` job for security/data-handling baseline enforcement.
+6. `.github/workflows/verify.yml` includes a non-blocking `livekit-smoke` job for real LiveKit connectivity + adapter evidence checks.
+7. `.github/workflows/verify.yml` includes a non-blocking `a2-runtime-live` job with per-module A.2 runtime evidence artifacts.
+8. `.github/workflows/verify.yml` includes a blocking `security-baseline` job for security/data-handling baseline enforcement.
 
 Repository policy action (outside repo code):
 1. Configure branch protection required checks:
    - `codex-artifact-policy` required for PR merge.
    - `verify-quick` required for PR merge.
    - `verify-full` required for protected `main`/release promotion path.
-2. Keep `live-provider-smoke` non-required until flake/security posture is production-hardened.
+2. Keep `live-provider-smoke` and `livekit-smoke` non-required until flake/security posture is production-hardened.
 
 ## 8. Consistency references
 
 1. `docs/ConformanceTestPlan.md` maps conformance IDs and suite coverage to concrete tests/fixtures.
-2. `docs/MVP_ImplementationSlice.md` section `10` records closure state and post-MVP follow-ups (`10.1.23` closure + no current open `10.2` items).
+2. `docs/MVP_ImplementationSlice.md` section `10` records closure state and post-MVP follow-ups (`10.1.24` closure + no current open `10.2` items).
+3. `docs/LiveKitTransportClosure.md` defines transport closure acceptance criteria and operator runbook.

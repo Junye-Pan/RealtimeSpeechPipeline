@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -605,6 +606,41 @@ func TestRunRetentionSweepRequiresTenants(t *testing.T) {
 	}, &bytes.Buffer{}, &bytes.Buffer{}, fixedNow())
 	if err == nil {
 		t.Fatalf("expected tenant validation error")
+	}
+}
+
+func TestRunLiveKitCommand(t *testing.T) {
+	tmp := t.TempDir()
+	reportPath := filepath.Join(tmp, "livekit-report.json")
+
+	var stdout bytes.Buffer
+	if err := run([]string{
+		"livekit",
+		"-dry-run=true",
+		"-probe=false",
+		"-report", reportPath,
+		"-session-id", "sess-runtime-livekit",
+		"-turn-id", "turn-runtime-livekit",
+		"-pipeline-version", "pipeline-v1",
+		"-authority-epoch", "5",
+	}, &stdout, &bytes.Buffer{}, fixedNow()); err != nil {
+		t.Fatalf("unexpected livekit command error: %v", err)
+	}
+	if _, err := os.Stat(reportPath); err != nil {
+		t.Fatalf("expected livekit report at %s: %v", reportPath, err)
+	}
+	if !strings.Contains(stdout.String(), "livekit transport:") {
+		t.Fatalf("expected livekit summary output, got %q", stdout.String())
+	}
+}
+
+func TestRunUsageContainsLiveKitCommand(t *testing.T) {
+	var stdout bytes.Buffer
+	if err := run([]string{"help"}, &stdout, &bytes.Buffer{}, fixedNow()); err != nil {
+		t.Fatalf("unexpected help error: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "rspp-runtime livekit") {
+		t.Fatalf("expected livekit usage line, got %q", stdout.String())
 	}
 }
 
