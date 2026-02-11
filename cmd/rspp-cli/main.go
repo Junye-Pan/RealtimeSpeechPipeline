@@ -207,6 +207,7 @@ type replayFixturePolicy struct {
 	TimingToleranceMS                 *int64                          `json:"timing_tolerance_ms,omitempty"`
 	FinalAttemptLatencyThresholdMS    *int64                          `json:"final_attempt_latency_threshold_ms,omitempty"`
 	TotalInvocationLatencyThresholdMS *int64                          `json:"total_invocation_latency_threshold_ms,omitempty"`
+	InvocationLatencyScopes           []string                        `json:"invocation_latency_scopes,omitempty"`
 	ExpectedDivergences               []regression.ExpectedDivergence `json:"expected_divergences,omitempty"`
 }
 
@@ -551,7 +552,7 @@ func buildInvocationLatencyThresholdDivergences(
 		return appendMissingInvocationLatencyEvidenceDivergences(nil, fixtureIDScope(fixtureID), finalThreshold, totalThreshold, fmt.Sprintf("runtime baseline latency extraction failed: %v", samplesErr))
 	}
 
-	scopes := invocationLatencyScopesForFixture(fixtureID)
+	scopes := invocationLatencyScopesForFixture(fixtureID, policy)
 	if len(scopes) == 0 {
 		return appendMissingInvocationLatencyEvidenceDivergences(nil, fixtureIDScope(fixtureID), finalThreshold, totalThreshold, "latency evidence scope could not be derived from fixture id")
 	}
@@ -624,12 +625,47 @@ func invocationLatencySamplesFromBaselineEntries(entries []timeline.BaselineEvid
 	return samples
 }
 
-func invocationLatencyScopesForFixture(fixtureID string) []string {
-	parts := strings.Split(fixtureID, "-")
-	if len(parts) < 2 || !isDigits(parts[1]) {
+func invocationLatencyScopesForFixture(fixtureID string, policy replayFixturePolicy) []string {
+	metadataScopes := normalizeInvocationLatencyScopes(policy.InvocationLatencyScopes)
+	if len(metadataScopes) > 0 {
+		return metadataScopes
+	}
+
+	scope := derivedInvocationLatencyScopeForFixture(fixtureID)
+	if scope == "" {
 		return nil
 	}
-	return []string{"turn:turn-" + parts[0] + "-" + parts[1]}
+	return []string{scope}
+}
+
+func normalizeInvocationLatencyScopes(scopes []string) []string {
+	if len(scopes) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{}, len(scopes))
+	normalized := make([]string, 0, len(scopes))
+	for _, raw := range scopes {
+		scope := strings.TrimSpace(raw)
+		if scope == "" {
+			continue
+		}
+		if _, ok := seen[scope]; ok {
+			continue
+		}
+		seen[scope] = struct{}{}
+		normalized = append(normalized, scope)
+	}
+	sort.Strings(normalized)
+	return normalized
+}
+
+func derivedInvocationLatencyScopeForFixture(fixtureID string) string {
+	parts := strings.Split(fixtureID, "-")
+	if len(parts) < 2 || !isDigits(parts[1]) {
+		return ""
+	}
+	return "turn:turn-" + parts[0] + "-" + parts[1]
 }
 
 func fixtureIDScope(fixtureID string) string {
@@ -1047,12 +1083,73 @@ func generateRuntimeBaselineArtifact(baselineArtifactPath string) ([]timeline.Ba
 	first560 := int64(560)
 	open70 := int64(70)
 	first360 := int64(360)
-	open100 := int64(100)
-	first500 := int64(500)
 	cancelAccepted := int64(500)
 	cancelFence := int64(620)
 	cancelSent := int64(498)
 	cancelAck := int64(621)
+
+	invocationOutcome := func(invocationID string, providerID string, finalAttemptLatencyMS int64, totalInvocationLatencyMS int64) timeline.InvocationOutcomeEvidence {
+		return timeline.InvocationOutcomeEvidence{
+			ProviderInvocationID:     invocationID,
+			Modality:                 "llm",
+			ProviderID:               providerID,
+			OutcomeClass:             "success",
+			Retryable:                false,
+			RetryDecision:            "none",
+			AttemptCount:             1,
+			FinalAttemptLatencyMS:    finalAttemptLatencyMS,
+			TotalInvocationLatencyMS: totalInvocationLatencyMS,
+		}
+	}
+
+	invocationScenario := func(
+		sessionID string,
+		turnID string,
+		eventID string,
+		runtimeSequence int64,
+		runtimeTimestampMS int64,
+		turnOpenMS int64,
+		firstOutputMS int64,
+		invocationOutcomes []timeline.InvocationOutcomeEvidence,
+	) turnarbiter.ActiveInput {
+		openProposedMS := int64(0)
+		turnOpenAtMS := turnOpenMS
+		firstOutputAtMS := firstOutputMS
+		return turnarbiter.ActiveInput{
+			SessionID:            sessionID,
+			TurnID:               turnID,
+			EventID:              eventID,
+			PipelineVersion:      "pipeline-v1",
+			RuntimeSequence:      runtimeSequence,
+			RuntimeTimestampMS:   runtimeTimestampMS,
+			WallClockTimestampMS: runtimeTimestampMS,
+			AuthorityEpoch:       7,
+			TerminalSuccessReady: true,
+			BaselineEvidence: &timeline.BaselineEvidence{
+				SessionID:            sessionID,
+				TurnID:               turnID,
+				PipelineVersion:      "pipeline-v1",
+				EventID:              eventID,
+				EnvelopeSnapshot:     "eventabi/v1",
+				PayloadTags:          []eventabi.PayloadClass{eventabi.PayloadMetadata},
+				RedactionDecisions:   []eventabi.RedactionDecision{{PayloadClass: eventabi.PayloadMetadata, Action: eventabi.RedactionAllow}},
+				PlanHash:             "plan/" + turnID,
+				SnapshotProvenance:   defaultSnapshotProvenance(),
+				DecisionOutcomes:     []controlplane.DecisionOutcome{sloAdmitDecision(sessionID, turnID, eventID+"-admit", turnOpenMS)},
+				InvocationOutcomes:   invocationOutcomes,
+				DeterminismSeed:      runtimeSequence,
+				OrderingMarkers:      []string{fmt.Sprintf("runtime_sequence:%d", runtimeSequence)},
+				MergeRuleID:          "merge/default",
+				MergeRuleVersion:     "v1.0",
+				AuthorityEpoch:       7,
+				TerminalOutcome:      "commit",
+				CloseEmitted:         true,
+				TurnOpenProposedAtMS: &openProposedMS,
+				TurnOpenAtMS:         &turnOpenAtMS,
+				FirstOutputAtMS:      &firstOutputAtMS,
+			},
+		}
+	}
 
 	scenarios := []turnarbiter.ActiveInput{
 		{
@@ -1159,52 +1256,79 @@ func generateRuntimeBaselineArtifact(baselineArtifactPath string) ([]timeline.Ba
 				CancelAckAtMS:          &cancelAck,
 			},
 		},
-		{
-			SessionID:            "sess-rd-003-runtime",
-			TurnID:               "turn-rd-003",
-			EventID:              "evt-rd-003",
-			PipelineVersion:      "pipeline-v1",
-			RuntimeSequence:      130,
-			RuntimeTimestampMS:   510,
-			WallClockTimestampMS: 510,
-			AuthorityEpoch:       7,
-			TerminalSuccessReady: true,
-			BaselineEvidence: &timeline.BaselineEvidence{
-				SessionID:          "sess-rd-003-runtime",
-				TurnID:             "turn-rd-003",
-				PipelineVersion:    "pipeline-v1",
-				EventID:            "evt-rd-003",
-				EnvelopeSnapshot:   "eventabi/v1",
-				PayloadTags:        []eventabi.PayloadClass{eventabi.PayloadMetadata},
-				RedactionDecisions: []eventabi.RedactionDecision{{PayloadClass: eventabi.PayloadMetadata, Action: eventabi.RedactionAllow}},
-				PlanHash:           "plan/turn-rd-003",
-				SnapshotProvenance: defaultSnapshotProvenance(),
-				DecisionOutcomes:   []controlplane.DecisionOutcome{sloAdmitDecision("sess-rd-003-runtime", "turn-rd-003", "evt-rd-003-admit", 100)},
-				InvocationOutcomes: []timeline.InvocationOutcomeEvidence{
-					{
-						ProviderInvocationID:     "inv-rd-003-1",
-						Modality:                 "llm",
-						ProviderID:               "llm-a",
-						OutcomeClass:             "success",
-						Retryable:                false,
-						RetryDecision:            "none",
-						AttemptCount:             1,
-						FinalAttemptLatencyMS:    12,
-						TotalInvocationLatencyMS: 27,
-					},
-				},
-				DeterminismSeed:      130,
-				OrderingMarkers:      []string{"runtime_sequence:130"},
-				MergeRuleID:          "merge/default",
-				MergeRuleVersion:     "v1.0",
-				AuthorityEpoch:       7,
-				TerminalOutcome:      "commit",
-				CloseEmitted:         true,
-				TurnOpenProposedAtMS: &open0,
-				TurnOpenAtMS:         &open100,
-				FirstOutputAtMS:      &first500,
+		invocationScenario(
+			"sess-rd-002-runtime",
+			"turn-rd-002",
+			"evt-rd-002",
+			130,
+			512,
+			95,
+			500,
+			[]timeline.InvocationOutcomeEvidence{
+				invocationOutcome("inv-rd-002-1", "llm-a", 10, 24),
+				invocationOutcome("inv-rd-002-2", "llm-b", 14, 31),
 			},
-		},
+		),
+		invocationScenario(
+			"sess-rd-003-runtime",
+			"turn-rd-003",
+			"evt-rd-003",
+			140,
+			510,
+			100,
+			500,
+			[]timeline.InvocationOutcomeEvidence{
+				invocationOutcome("inv-rd-003-1", "llm-a", 12, 27),
+			},
+		),
+		invocationScenario(
+			"sess-ae-001-runtime",
+			"turn-ae-001",
+			"evt-ae-001",
+			150,
+			470,
+			90,
+			430,
+			[]timeline.InvocationOutcomeEvidence{
+				invocationOutcome("inv-ae-001-1", "llm-a", 9, 23),
+			},
+		),
+		invocationScenario(
+			"sess-cf-001-runtime",
+			"turn-cf-001",
+			"evt-cf-001",
+			160,
+			480,
+			90,
+			420,
+			[]timeline.InvocationOutcomeEvidence{
+				invocationOutcome("inv-cf-001-1", "llm-a", 11, 26),
+			},
+		),
+		invocationScenario(
+			"sess-ml-001-runtime",
+			"turn-ml-001",
+			"evt-ml-001",
+			170,
+			495,
+			90,
+			450,
+			[]timeline.InvocationOutcomeEvidence{
+				invocationOutcome("inv-ml-001-1", "llm-a", 13, 29),
+			},
+		),
+		invocationScenario(
+			"sess-ordering-runtime",
+			"turn-ordering-approved-1",
+			"evt-ordering-approved-1",
+			180,
+			505,
+			100,
+			490,
+			[]timeline.InvocationOutcomeEvidence{
+				invocationOutcome("inv-ordering-1", "llm-a", 8, 22),
+			},
+		),
 	}
 
 	for _, scenario := range scenarios {

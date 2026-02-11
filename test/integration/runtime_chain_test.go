@@ -462,6 +462,84 @@ func TestCPBackendPartialAvailabilityFallsBackDeterministically(t *testing.T) {
 	}
 }
 
+func TestCPBackendRolloutPolicyProviderHealthFailuresFallBackDeterministically(t *testing.T) {
+	t.Parallel()
+
+	recorder := timeline.NewRecorder(timeline.StageAConfig{BaselineCapacity: 8, DetailCapacity: 16, AttemptCapacity: 16})
+	arbiter := turnarbiter.NewWithControlPlaneBackends(&recorder, turnarbiter.ControlPlaneBackends{
+		Registry: integrationRegistryBackend{
+			resolveFn: func(string) (cpregistry.PipelineRecord, error) {
+				return cpregistry.PipelineRecord{
+					PipelineVersion:    "pipeline-integration-rollout-fallback",
+					GraphDefinitionRef: "graph/integration-rollout-fallback",
+					ExecutionProfile:   "simple",
+				}, nil
+			},
+		},
+		Rollout: integrationRolloutBackend{
+			resolveFn: func(cprollout.ResolveVersionInput) (cprollout.ResolveVersionOutput, error) {
+				return cprollout.ResolveVersionOutput{}, errors.New("rollout backend unavailable")
+			},
+		},
+		RoutingView: integrationRoutingBackend{
+			getFn: func(cproutingview.Input) (cproutingview.Snapshot, error) {
+				return cproutingview.Snapshot{
+					RoutingViewSnapshot:      "routing-view/integration-rollout-fallback",
+					AdmissionPolicySnapshot:  "admission-policy/integration-rollout-fallback",
+					ABICompatibilitySnapshot: "abi-compat/integration-rollout-fallback",
+				}, nil
+			},
+		},
+		Policy: integrationPolicyBackend{
+			evalFn: func(cppolicy.Input) (cppolicy.Output, error) {
+				return cppolicy.Output{}, errors.New("policy backend unavailable")
+			},
+		},
+		ProviderHealth: integrationProviderHealthBackend{
+			getFn: func(cpproviderhealth.Input) (cpproviderhealth.Output, error) {
+				return cpproviderhealth.Output{}, errors.New("provider health backend unavailable")
+			},
+		},
+	})
+
+	open, err := arbiter.HandleTurnOpenProposed(turnarbiter.OpenRequest{
+		SessionID:            "sess-integration-rollout-fallback-1",
+		TurnID:               "turn-integration-rollout-fallback-1",
+		EventID:              "evt-open-rollout-fallback-1",
+		RuntimeTimestampMS:   100,
+		WallClockTimestampMS: 100,
+		PipelineVersion:      "pipeline-requested",
+		AuthorityEpoch:       5,
+		SnapshotValid:        true,
+		AuthorityEpochValid:  true,
+		AuthorityAuthorized:  true,
+	})
+	if err != nil {
+		t.Fatalf("open path failed: %v", err)
+	}
+	if open.State != controlplane.TurnActive || open.Plan == nil {
+		t.Fatalf("expected active turn with resolved plan under rollout/policy/provider-health failure, got %+v", open)
+	}
+	if open.Plan.PipelineVersion != "pipeline-integration-rollout-fallback" || open.Plan.GraphDefinitionRef != "graph/integration-rollout-fallback" {
+		t.Fatalf("expected registry pipeline/graph values under rollout failure fallback, got %+v", open.Plan)
+	}
+	if !reflect.DeepEqual(open.Plan.AllowedAdaptiveActions, []string{"retry", "provider_switch", "fallback"}) {
+		t.Fatalf("expected policy fallback adaptive actions under backend failure, got %+v", open.Plan.AllowedAdaptiveActions)
+	}
+
+	expectedProvenance := controlplane.SnapshotProvenance{
+		RoutingViewSnapshot:       "routing-view/integration-rollout-fallback",
+		AdmissionPolicySnapshot:   "admission-policy/integration-rollout-fallback",
+		ABICompatibilitySnapshot:  "abi-compat/integration-rollout-fallback",
+		VersionResolutionSnapshot: "version-resolution/v1",
+		PolicyResolutionSnapshot:  "policy-resolution/v1",
+		ProviderHealthSnapshot:    "provider-health/v1",
+	}
+	if !reflect.DeepEqual(open.Plan.SnapshotProvenance, expectedProvenance) {
+		t.Fatalf("expected rollout/policy/provider-health fallback snapshots, got %+v", open.Plan.SnapshotProvenance)
+	}
+}
+
 func TestCPBackendGraphCompilerOutputPropagatesIntoResolvedPlan(t *testing.T) {
 	t.Parallel()
 
@@ -627,6 +705,68 @@ func TestCPBackendStaleSnapshotFetchTriggersDeterministicPreTurnHandling(t *test
 	}
 	if open.Decision.OutcomeKind != controlplane.OutcomeDefer || open.Decision.Reason != "turn_start_bundle_resolution_failed" {
 		t.Fatalf("unexpected stale snapshot pre-turn decision: %+v", open.Decision)
+	}
+}
+
+func TestCPBackendUnsupportedExecutionProfileTriggersDeterministicPreTurnHandling(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name              string
+		planFailurePolicy controlplane.OutcomeKind
+		wantOutcome       controlplane.OutcomeKind
+	}{
+		{
+			name:        "default defer",
+			wantOutcome: controlplane.OutcomeDefer,
+		},
+		{
+			name:              "explicit reject",
+			planFailurePolicy: controlplane.OutcomeReject,
+			wantOutcome:       controlplane.OutcomeReject,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			arbiter := turnarbiter.NewWithControlPlaneBackends(nil, turnarbiter.ControlPlaneBackends{
+				Registry: integrationRegistryBackend{
+					resolveFn: func(version string) (cpregistry.PipelineRecord, error) {
+						return cpregistry.PipelineRecord{
+							PipelineVersion:    version,
+							GraphDefinitionRef: "graph/integration-invalid-profile",
+							ExecutionProfile:   "advanced",
+						}, nil
+					},
+				},
+			})
+
+			open, err := arbiter.HandleTurnOpenProposed(turnarbiter.OpenRequest{
+				SessionID:            "sess-integration-invalid-profile-1",
+				TurnID:               "turn-integration-invalid-profile-1",
+				EventID:              "evt-open-invalid-profile-1",
+				RuntimeTimestampMS:   100,
+				WallClockTimestampMS: 100,
+				PipelineVersion:      "pipeline-requested",
+				AuthorityEpoch:       5,
+				SnapshotValid:        true,
+				AuthorityEpochValid:  true,
+				AuthorityAuthorized:  true,
+				PlanFailurePolicy:    tc.planFailurePolicy,
+			})
+			if err != nil {
+				t.Fatalf("open path failed: %v", err)
+			}
+			if open.State != controlplane.TurnIdle || open.Decision == nil {
+				t.Fatalf("expected deterministic pre-turn decision on unsupported execution profile, got %+v", open)
+			}
+			if open.Decision.OutcomeKind != tc.wantOutcome || open.Decision.Reason != "turn_start_bundle_resolution_failed" {
+				t.Fatalf("unexpected unsupported-profile pre-turn decision: %+v", open.Decision)
+			}
+		})
 	}
 }
 

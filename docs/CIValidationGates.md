@@ -5,13 +5,14 @@
 Define the currently implemented quick/full validation gates for this repository, plus optional non-blocking live-provider smoke checks and `.codex` artifact policy enforcement.
 
 Status snapshot:
-- Baseline reflects repository behavior as of `2026-02-10`.
+- Baseline reflects repository behavior as of `2026-02-11`.
 - Verification runs through `scripts/verify.sh` and command chains in `Makefile`.
 - Replay divergence and SLO gating behavior are enforced by `cmd/rspp-cli`.
 - Replay fixture metadata invocation-latency thresholds are now evaluated against runtime-baseline-artifact OR-02 invocation evidence in full replay regression.
-- Runtime CP backend bootstrap integration is now hardened with file/env/http-backed distribution adapters, authenticated HTTP fetch (`Authorization` + client identity), ordered endpoint failover, deterministic retry/backoff, on-demand TTL refresh with bounded stale-serving fallback, per-service partial-backend fallback, and stale-snapshot deterministic handling coverage; CP-03 graph compile output threading, CP-05 pre-turn admission decision shaping, CP-07 lease authority gating, distributed replay-audit durable backend paths (HTTP + JSONL fallback), and CP distribution snapshot-first retention policy sourcing for `retention-sweep` are implemented and test-covered in the current baseline.
+- Runtime CP backend bootstrap integration is now hardened with file/env/http-backed distribution adapters, authenticated HTTP fetch (`Authorization` + client identity), ordered endpoint failover, deterministic retry/backoff, on-demand TTL refresh with bounded stale-serving fallback, per-service partial-backend fallback, and stale-snapshot deterministic handling coverage.
+- CP promotion-to-implemented gate scope for `CP-01/02/03/04/05/07/08/09/10` is closed at MVP scope with evidence for module behavior, service-client backend parity (`file`/`env`/`http`), backend-failure deterministic fallback handling, and synchronized conformance mappings.
 - `.codex` generated artifact tracking policy is finalized and enforced in CI.
-- This document is synchronized with the current MVP `10.1` completion state and active `10.2` follow-up tracking in `docs/MVP_ImplementationSlice.md`.
+- This document is synchronized with the current MVP section-10 closure state in `docs/MVP_ImplementationSlice.md` (`10.1.21` closed; `10.2` currently has no open items).
 
 ## 2. Source of truth files
 
@@ -70,7 +71,7 @@ Coverage summary:
 3. Runtime baseline artifact generation and MVP SLO gate evaluation.
 4. Conformance package tests in `test/contract`, `test/integration`, and `test/replay`.
 5. Failure smoke subset `F1`, `F3`, `F7`.
-6. CP turn-start service integration checks for CP-03/CP-05/CP-07 behavior through `turnarbiter` and distribution-backed resolver tests.
+6. CP turn-start service integration checks for promoted modules `CP-01/02/03/04/05/07/08/09/10` through `turnarbiter` and distribution-backed resolver tests, including CP-02 simple-mode profile enforcement with deterministic unsupported-profile pre-turn handling and rollout/policy/provider-health fallback defaults under backend failure.
 
 ## 4.2 Full gate (`make verify-full`)
 
@@ -88,7 +89,7 @@ Coverage summary:
 1. Full repository test suite (`go test ./...`), including failure matrix coverage.
 2. Replay regression artifact generation and divergence enforcement for fixtures enabled for gate `full`.
 3. Runtime baseline + SLO gate evaluation.
-4. Full conformance coverage for CP turn-start resolver seams, including CP-03 compile output propagation, CP-05 reject/defer decision shaping, and CP-07 lease-authority gating paths.
+4. Full conformance coverage for CP turn-start resolver seams, including CP-01/02/03/04/05/07/08/09/10 parity and failure-path determinism (CP-02 unsupported-profile pre-turn handling, CP-03 compile output propagation, CP-05 reject/defer shaping, CP-07 lease-authority gating, CP-09/04/10 fallback defaults under backend outage).
 
 ## 4.3 Live provider smoke (`make live-provider-smoke`)
 
@@ -187,8 +188,9 @@ Current expected-divergence annotations in metadata:
 3. `ml-003-replay-absence-classification`: expected `OUTCOME_DIVERGENCE`.
 
 Current invocation-latency threshold annotations in metadata:
-1. `rd-003-baseline-completeness`: `final_attempt_latency_threshold_ms`, `total_invocation_latency_threshold_ms`.
-2. Threshold checks are evaluated from runtime baseline artifact invocation outcomes (not synthetic fixture constants).
+1. `rd-002-recompute-within-tolerance`, `rd-003-baseline-completeness`, `rd-ordering-approved-1`, `ae-001-preturn-stale-epoch`, `cf-001-cancel-fence`, and `ml-001-drop-under-pressure` define latency thresholds.
+2. `rd-ordering-approved-1` sets `invocation_latency_scopes` to decouple threshold scope from fixture-id derivation.
+3. Threshold checks are evaluated from runtime baseline artifact invocation outcomes (not synthetic fixture constants).
 
 ## 6. Artifact outputs and paths
 
@@ -238,4 +240,4 @@ Repository policy action (outside repo code):
 ## 8. Consistency references
 
 1. `docs/ConformanceTestPlan.md` maps conformance IDs and suite coverage to concrete tests/fixtures.
-2. `docs/MVP_ImplementationSlice.md` section `10.2` records closure state and post-MVP follow-ups.
+2. `docs/MVP_ImplementationSlice.md` section `10` records closure state and post-MVP follow-ups (`10.1.21` closure + no current open `10.2` items).
