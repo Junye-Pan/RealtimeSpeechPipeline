@@ -3,6 +3,7 @@ package turnarbiter
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/tiger/realtime-speech-pipeline/internal/controlplane/normalizer"
@@ -72,7 +73,7 @@ func TestResolveTurnStartBundleUsesInjectedServices(t *testing.T) {
 			return registry.PipelineRecord{
 				PipelineVersion:    version,
 				GraphDefinitionRef: "graph/backend",
-				ExecutionProfile:   "profile/backend",
+				ExecutionProfile:   "simple",
 			}, nil
 		},
 	}
@@ -136,7 +137,7 @@ func TestResolveTurnStartBundleUsesInjectedServices(t *testing.T) {
 	if bundle.PipelineVersion != "pipeline-rollout-backend" {
 		t.Fatalf("expected rollout backend version, got %+v", bundle)
 	}
-	if bundle.GraphDefinitionRef != "graph/backend" || bundle.ExecutionProfile != "profile/backend" {
+	if bundle.GraphDefinitionRef != "graph/backend" || bundle.ExecutionProfile != "simple" {
 		t.Fatalf("expected backend graph/profile from registry-normalizer path, got %+v", bundle)
 	}
 	if !reflect.DeepEqual(bundle.AllowedAdaptiveActions, []string{"retry", "fallback"}) {
@@ -149,6 +150,42 @@ func TestResolveTurnStartBundleUsesInjectedServices(t *testing.T) {
 		bundle.SnapshotProvenance.PolicyResolutionSnapshot != "policy-resolution/backend" ||
 		bundle.SnapshotProvenance.ProviderHealthSnapshot != "provider-health/backend" {
 		t.Fatalf("unexpected backend snapshot provenance: %+v", bundle.SnapshotProvenance)
+	}
+}
+
+func TestResolveTurnStartBundleRejectsUnsupportedExecutionProfile(t *testing.T) {
+	t.Parallel()
+
+	registryService := registry.NewService()
+	registryService.Backend = stubRegistryBackend{
+		resolveFn: func(version string) (registry.PipelineRecord, error) {
+			return registry.PipelineRecord{
+				PipelineVersion:    version,
+				GraphDefinitionRef: "graph/backend",
+				ExecutionProfile:   "advanced",
+			}, nil
+		},
+	}
+
+	resolver := NewControlPlaneBundleResolverWithServices(ControlPlaneBundleServices{
+		Registry:       registryService,
+		Normalizer:     normalizer.Service{},
+		Rollout:        rollout.NewService(),
+		RoutingView:    routingview.NewService(),
+		Policy:         policy.NewService(),
+		ProviderHealth: providerhealth.NewService(),
+	})
+
+	_, err := resolver.ResolveTurnStartBundle(TurnStartBundleInput{
+		SessionID:                "sess-invalid-profile-1",
+		TurnID:                   "turn-invalid-profile-1",
+		RequestedPipelineVersion: "pipeline-requested",
+	})
+	if err == nil {
+		t.Fatalf("expected unsupported execution profile error")
+	}
+	if got := err.Error(); got == "" || !containsAll(got, "normalize pipeline record", "unsupported in MVP") {
+		t.Fatalf("expected normalize unsupported-profile error, got %v", err)
 	}
 }
 
@@ -220,5 +257,14 @@ func (e staleSnapshotBundleTestError) Error() string {
 }
 
 func (e staleSnapshotBundleTestError) StaleSnapshot() bool {
+	return true
+}
+
+func containsAll(s string, substrings ...string) bool {
+	for _, sub := range substrings {
+		if !strings.Contains(s, sub) {
+			return false
+		}
+	}
 	return true
 }

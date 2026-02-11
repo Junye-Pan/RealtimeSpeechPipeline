@@ -275,6 +275,53 @@ func TestWriteReplayRegressionReportInvocationLatencyThresholdPass(t *testing.T)
 	}
 }
 
+func TestWriteReplayRegressionReportInvocationLatencyThresholdPassWithMetadataScope(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	metadataPath := filepath.Join(tmp, "metadata.json")
+	outputPath := filepath.Join(tmp, "regression.json")
+	metadata := replayFixtureMetadata{
+		Fixtures: map[string]replayFixturePolicy{
+			"rd-ordering-approved-1": {
+				Gate:                              "full",
+				TimingToleranceMS:                 int64Ptr(15),
+				FinalAttemptLatencyThresholdMS:    int64Ptr(20),
+				TotalInvocationLatencyThresholdMS: int64Ptr(40),
+				InvocationLatencyScopes:           []string{"turn:turn-ordering-approved-1"},
+				ExpectedDivergences: []regression.ExpectedDivergence{{
+					Class:    obs.OrderingDivergence,
+					Scope:    "turn:turn-ordering-approved-1",
+					Approved: true,
+				}},
+			},
+		},
+	}
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatalf("unexpected marshal error: %v", err)
+	}
+	if err := osWriteFile(metadataPath, data); err != nil {
+		t.Fatalf("unexpected write error: %v", err)
+	}
+
+	if err := writeReplayRegressionReport(outputPath, metadataPath, "full"); err != nil {
+		t.Fatalf("expected metadata-scoped invocation latency thresholds within limits to pass, got %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(tmp, replayFixtureReportsDirName, "rd-ordering-approved-1.json"))
+	if err != nil {
+		t.Fatalf("unexpected fixture artifact read error: %v", err)
+	}
+	var fixtureReport replayFixtureArtifact
+	if err := json.Unmarshal(raw, &fixtureReport); err != nil {
+		t.Fatalf("unexpected fixture artifact decode error: %v", err)
+	}
+	if fixtureReport.InvocationLatencyBreaches != 0 || fixtureReport.FailingCount != 0 {
+		t.Fatalf("unexpected pass fixture report: %+v", fixtureReport)
+	}
+}
+
 func TestWriteReplayRegressionReportInvocationLatencyThresholdFail(t *testing.T) {
 	t.Parallel()
 
@@ -324,11 +371,12 @@ func TestWriteReplayRegressionReportInvocationLatencyThresholdMissingEvidenceFai
 	outputPath := filepath.Join(tmp, "regression.json")
 	metadata := replayFixtureMetadata{
 		Fixtures: map[string]replayFixturePolicy{
-			"rd-002-recompute-within-tolerance": {
+			"rd-003-baseline-completeness": {
 				Gate:                              "full",
 				TimingToleranceMS:                 int64Ptr(15),
 				FinalAttemptLatencyThresholdMS:    int64Ptr(20),
 				TotalInvocationLatencyThresholdMS: int64Ptr(40),
+				InvocationLatencyScopes:           []string{"turn:turn-missing"},
 			},
 		},
 	}
@@ -344,7 +392,7 @@ func TestWriteReplayRegressionReportInvocationLatencyThresholdMissingEvidenceFai
 		t.Fatalf("expected missing invocation latency evidence to fail replay regression report")
 	}
 
-	raw, err := os.ReadFile(filepath.Join(tmp, replayFixtureReportsDirName, "rd-002-recompute-within-tolerance.json"))
+	raw, err := os.ReadFile(filepath.Join(tmp, replayFixtureReportsDirName, "rd-003-baseline-completeness.json"))
 	if err != nil {
 		t.Fatalf("unexpected fixture artifact read error: %v", err)
 	}
@@ -354,6 +402,70 @@ func TestWriteReplayRegressionReportInvocationLatencyThresholdMissingEvidenceFai
 	}
 	if fixtureReport.InvocationLatencyBreaches == 0 || fixtureReport.FailingCount == 0 {
 		t.Fatalf("expected missing evidence breaches to be recorded, got %+v", fixtureReport)
+	}
+}
+
+func TestInvocationLatencyScopesForFixturePrefersMetadataScopes(t *testing.T) {
+	t.Parallel()
+
+	scopes := invocationLatencyScopesForFixture("rd-ordering-approved-1", replayFixturePolicy{
+		InvocationLatencyScopes: []string{
+			"turn:turn-z",
+			"turn:turn-a",
+			"turn:turn-z",
+			" ",
+		},
+	})
+	want := []string{"turn:turn-a", "turn:turn-z"}
+	if len(scopes) != len(want) {
+		t.Fatalf("expected scopes %+v, got %+v", want, scopes)
+	}
+	for i := range want {
+		if scopes[i] != want[i] {
+			t.Fatalf("expected scopes %+v, got %+v", want, scopes)
+		}
+	}
+}
+
+func TestInvocationLatencyScopesForFixtureFallsBackToDerivedScope(t *testing.T) {
+	t.Parallel()
+
+	scopes := invocationLatencyScopesForFixture("cf-001-cancel-fence", replayFixturePolicy{})
+	if len(scopes) != 1 || scopes[0] != "turn:turn-cf-001" {
+		t.Fatalf("expected derived fixture scope, got %+v", scopes)
+	}
+}
+
+func TestBuildInvocationLatencyThresholdDivergencesDeterministicAcrossScopes(t *testing.T) {
+	t.Parallel()
+
+	policy := replayFixturePolicy{
+		FinalAttemptLatencyThresholdMS:    int64Ptr(11),
+		TotalInvocationLatencyThresholdMS: int64Ptr(30),
+		InvocationLatencyScopes:           []string{"turn:turn-z", "turn:turn-a", "turn:turn-z"},
+	}
+	samplesByScope := map[string]invocationLatencySample{
+		"turn:turn-a": {
+			Scope:                    "turn:turn-a",
+			FinalAttemptLatencyMS:    12,
+			TotalInvocationLatencyMS: 31,
+		},
+	}
+
+	divergences := buildInvocationLatencyThresholdDivergences("rd-ordering-approved-1", policy, samplesByScope, nil)
+	wantScopes := []string{
+		"invocation_latency_final:turn:turn-a",
+		"invocation_latency_total:turn:turn-a",
+		"invocation_latency_final:turn:turn-z",
+		"invocation_latency_total:turn:turn-z",
+	}
+	if len(divergences) != len(wantScopes) {
+		t.Fatalf("expected %d divergences, got %+v", len(wantScopes), divergences)
+	}
+	for i, wantScope := range wantScopes {
+		if divergences[i].Class != obs.TimingDivergence || divergences[i].Scope != wantScope {
+			t.Fatalf("unexpected divergence ordering/content at index %d: %+v", i, divergences)
+		}
 	}
 }
 

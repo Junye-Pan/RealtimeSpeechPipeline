@@ -31,7 +31,7 @@ func TestNewControlPlaneBundleResolverWithBackends(t *testing.T) {
 				return registry.PipelineRecord{
 					PipelineVersion:    version,
 					GraphDefinitionRef: "graph/backend-wired",
-					ExecutionProfile:   "profile/backend-wired",
+					ExecutionProfile:   "simple",
 				}, nil
 			},
 		},
@@ -108,7 +108,7 @@ func TestNewControlPlaneBundleResolverWithBackends(t *testing.T) {
 	}
 	if bundle.PipelineVersion != "pipeline/backend-wired" ||
 		bundle.GraphDefinitionRef != "graph/backend-compiled" ||
-		bundle.ExecutionProfile != "profile/backend-wired" {
+		bundle.ExecutionProfile != "simple" {
 		t.Fatalf("unexpected backend-wired bundle fields: %+v", bundle)
 	}
 	if !reflect.DeepEqual(bundle.AllowedAdaptiveActions, []string{"retry", "fallback"}) {

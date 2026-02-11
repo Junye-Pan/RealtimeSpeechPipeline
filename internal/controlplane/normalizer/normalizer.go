@@ -2,6 +2,7 @@ package normalizer
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/tiger/realtime-speech-pipeline/internal/controlplane/registry"
 )
@@ -30,8 +31,13 @@ func (Service) Normalize(in Input) (Output, error) {
 	if record.GraphDefinitionRef == "" {
 		record.GraphDefinitionRef = registry.DefaultGraphDefinitionRef
 	}
+	record.ExecutionProfile = strings.TrimSpace(record.ExecutionProfile)
 	if record.ExecutionProfile == "" {
 		record.ExecutionProfile = registry.DefaultExecutionProfile
+	}
+	// MVP scope only supports simple-mode execution profiles.
+	if record.ExecutionProfile != registry.DefaultExecutionProfile {
+		return Output{}, fmt.Errorf("execution_profile %q is unsupported in MVP; expected %q", record.ExecutionProfile, registry.DefaultExecutionProfile)
 	}
 	if err := record.Validate(); err != nil {
 		return Output{}, err

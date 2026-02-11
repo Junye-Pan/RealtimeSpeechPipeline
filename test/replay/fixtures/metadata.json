@@ -8,6 +8,8 @@
     "rd-002-recompute-within-tolerance": {
       "gate": "full",
       "timing_tolerance_ms": 15,
+      "final_attempt_latency_threshold_ms": 20,
+      "total_invocation_latency_threshold_ms": 40,
       "expected_divergences": []
     },
     "rd-003-baseline-completeness": {
@@ -30,6 +32,11 @@
     "rd-ordering-approved-1": {
       "gate": "full",
       "timing_tolerance_ms": 15,
+      "final_attempt_latency_threshold_ms": 20,
+      "total_invocation_latency_threshold_ms": 40,
+      "invocation_latency_scopes": [
+        "turn:turn-ordering-approved-1"
+      ],
       "expected_divergences": [
         {
           "class": "ORDERING_DIVERGENCE",
@@ -42,6 +49,8 @@
     "cf-001-cancel-fence": {
       "gate": "full",
       "timing_tolerance_ms": 15,
+      "final_attempt_latency_threshold_ms": 20,
+      "total_invocation_latency_threshold_ms": 40,
       "expected_divergences": []
     },
     "cf-002-provider-late-output": {
@@ -63,6 +72,8 @@
     "ae-001-preturn-stale-epoch": {
       "gate": "full",
       "timing_tolerance_ms": 15,
+      "final_attempt_latency_threshold_ms": 20,
+      "total_invocation_latency_threshold_ms": 40,
       "expected_divergences": []
     },
     "ae-002-inturn-authority-revoke": {
@@ -89,6 +100,8 @@
     "ml-001-drop-under-pressure": {
       "gate": "full",
       "timing_tolerance_ms": 15,
+      "final_attempt_latency_threshold_ms": 20,
+      "total_invocation_latency_threshold_ms": 40,
       "expected_divergences": []
     },
     "ml-002-deterministic-merge": {
