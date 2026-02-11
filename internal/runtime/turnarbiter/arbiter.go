@@ -2,9 +2,11 @@ package turnarbiter
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/tiger/realtime-speech-pipeline/api/controlplane"
 	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
+	"github.com/tiger/realtime-speech-pipeline/internal/observability/telemetry"
 	"github.com/tiger/realtime-speech-pipeline/internal/observability/timeline"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/guard"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/localadmission"
@@ -138,6 +140,7 @@ func (a Arbiter) Apply(in ApplyInput) (ApplyResult, error) {
 
 	if in.Open != nil {
 		out, err := a.HandleTurnOpenProposed(*in.Open)
+		emitOpenTelemetry(*in.Open, out, err)
 		if err != nil {
 			return ApplyResult{}, err
 		}
@@ -145,10 +148,110 @@ func (a Arbiter) Apply(in ApplyInput) (ApplyResult, error) {
 	}
 
 	out, err := a.HandleActive(*in.Active)
+	emitActiveTelemetry(*in.Active, out, err)
 	if err != nil {
 		return ApplyResult{}, err
 	}
 	return ApplyResult{Active: &out}, nil
+}
+
+func emitOpenTelemetry(in OpenRequest, out OpenResult, err error) {
+	correlation := telemetry.Correlation{
+		SessionID:            in.SessionID,
+		TurnID:               in.TurnID,
+		EventID:              in.EventID,
+		PipelineVersion:      defaultPipelineVersion(in.PipelineVersion),
+		AuthorityEpoch:       nonNegative(in.AuthorityEpoch),
+		Lane:                 string(eventabi.LaneTelemetry),
+		EmittedBy:            "OR-01",
+		RuntimeTimestampMS:   nonNegative(in.RuntimeTimestampMS),
+		WallClockTimestampMS: nonNegative(in.WallClockTimestampMS),
+	}
+	attrs := map[string]string{
+		"phase":       "pre_turn",
+		"state":       string(out.State),
+		"transitions": strconv.Itoa(len(out.Transitions)),
+		"error":       strconv.FormatBool(err != nil),
+	}
+	if out.Decision != nil {
+		attrs["decision"] = string(out.Decision.OutcomeKind)
+	}
+	if out.Plan != nil {
+		attrs["plan_hash"] = out.Plan.PlanHash
+	}
+	logSeverity := "info"
+	if err != nil || out.State != controlplane.TurnActive {
+		logSeverity = "warn"
+	}
+	telemetry.DefaultEmitter().EmitSpan(
+		"turn_span",
+		"turn_span",
+		nonNegative(in.RuntimeTimestampMS),
+		nonNegative(in.RuntimeTimestampMS)+1,
+		attrs,
+		correlation,
+	)
+	telemetry.DefaultEmitter().EmitLog(
+		"turn_open_result",
+		logSeverity,
+		"turn open proposal handled",
+		attrs,
+		correlation,
+	)
+}
+
+func emitActiveTelemetry(in ActiveInput, out ActiveResult, err error) {
+	correlation := telemetry.Correlation{
+		SessionID:            in.SessionID,
+		TurnID:               in.TurnID,
+		EventID:              in.EventID,
+		PipelineVersion:      defaultPipelineVersion(in.PipelineVersion),
+		AuthorityEpoch:       nonNegative(in.AuthorityEpoch),
+		Lane:                 string(eventabi.LaneTelemetry),
+		EmittedBy:            "OR-01",
+		RuntimeTimestampMS:   nonNegative(in.RuntimeTimestampMS),
+		WallClockTimestampMS: nonNegative(in.WallClockTimestampMS),
+	}
+	attrs := map[string]string{
+		"phase":       "active_turn",
+		"state":       string(out.State),
+		"transitions": strconv.Itoa(len(out.Transitions)),
+		"error":       strconv.FormatBool(err != nil),
+	}
+	terminalEvent := terminalLifecycleEvent(out.Events)
+	if terminalEvent != "" {
+		attrs["terminal_event"] = terminalEvent
+	}
+	if in.CancelAccepted {
+		telemetry.DefaultEmitter().EmitMetric(
+			telemetry.MetricCancelLatencyMS,
+			0,
+			"ms",
+			map[string]string{
+				"scope": "turn",
+			},
+			correlation,
+		)
+	}
+	logSeverity := "info"
+	if err != nil || terminalEvent == "abort" {
+		logSeverity = "warn"
+	}
+	telemetry.DefaultEmitter().EmitSpan(
+		"turn_span",
+		"turn_span",
+		nonNegative(in.RuntimeTimestampMS),
+		nonNegative(in.RuntimeTimestampMS)+1,
+		attrs,
+		correlation,
+	)
+	telemetry.DefaultEmitter().EmitLog(
+		"turn_active_result",
+		logSeverity,
+		"active turn step handled",
+		attrs,
+		correlation,
+	)
 }
 
 // HandleTurnOpenProposed executes deterministic pre-turn gating and plan freeze.
@@ -781,6 +884,16 @@ func sanitizeOrderingMarkers(markers []string) []string {
 		out = append(out, marker)
 	}
 	return out
+}
+
+func terminalLifecycleEvent(events []LifecycleEvent) string {
+	for _, event := range events {
+		switch event.Name {
+		case "abort", "commit":
+			return event.Name
+		}
+	}
+	return ""
 }
 
 func fallback(value string, defaultValue string) string {

@@ -2,8 +2,10 @@ package invocation
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
+	"github.com/tiger/realtime-speech-pipeline/internal/observability/telemetry"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/contracts"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/registry"
 )
@@ -96,6 +98,26 @@ func (c Controller) Invoke(in InvocationInput) (InvocationResult, error) {
 			Retryable: false,
 			Reason:    "cancel_requested_before_invoke",
 		}
+		telemetry.DefaultEmitter().EmitLog(
+			"provider_invocation_cancelled",
+			"info",
+			"provider invocation cancelled before attempt",
+			map[string]string{
+				"provider_id": result.SelectedProvider,
+				"modality":    string(in.Modality),
+				"outcome":     string(result.Outcome.Class),
+			},
+			telemetry.Correlation{
+				SessionID:          in.SessionID,
+				TurnID:             in.TurnID,
+				EventID:            in.EventID,
+				PipelineVersion:    in.PipelineVersion,
+				AuthorityEpoch:     nonNegative(in.AuthorityEpoch),
+				Lane:               string(eventabi.LaneTelemetry),
+				EmittedBy:          "OR-01",
+				RuntimeTimestampMS: nonNegative(in.RuntimeTimestampMS),
+			},
+		)
 		return result, nil
 	}
 
@@ -135,6 +157,78 @@ func (c Controller) Invoke(in InvocationInput) (InvocationResult, error) {
 			if err := outcome.Validate(); err != nil {
 				return InvocationResult{}, err
 			}
+			attemptStartMS := nonNegative(in.RuntimeTimestampMS) + int64(attempt-1)
+			attemptLatencyMS := nonNegative(outcome.BackoffMS)
+			attemptEndMS := attemptStartMS + attemptLatencyMS
+			telemetry.DefaultEmitter().EmitMetric(
+				telemetry.MetricProviderRTTMS,
+				float64(attemptLatencyMS),
+				"ms",
+				map[string]string{
+					"provider_id": adapter.ProviderID(),
+					"modality":    string(in.Modality),
+					"attempt":     strconv.Itoa(attempt),
+					"outcome":     string(outcome.Class),
+				},
+				telemetry.Correlation{
+					SessionID:          in.SessionID,
+					TurnID:             in.TurnID,
+					EventID:            in.EventID,
+					PipelineVersion:    in.PipelineVersion,
+					AuthorityEpoch:     nonNegative(in.AuthorityEpoch),
+					Lane:               string(eventabi.LaneTelemetry),
+					EmittedBy:          "OR-01",
+					RuntimeTimestampMS: attemptStartMS,
+				},
+			)
+			telemetry.DefaultEmitter().EmitSpan(
+				"provider_invocation_span",
+				"provider_invocation_span",
+				attemptStartMS,
+				attemptEndMS,
+				map[string]string{
+					"provider_id": adapter.ProviderID(),
+					"modality":    string(in.Modality),
+					"attempt":     strconv.Itoa(attempt),
+					"outcome":     string(outcome.Class),
+				},
+				telemetry.Correlation{
+					SessionID:          in.SessionID,
+					TurnID:             in.TurnID,
+					EventID:            in.EventID,
+					PipelineVersion:    in.PipelineVersion,
+					AuthorityEpoch:     nonNegative(in.AuthorityEpoch),
+					Lane:               string(eventabi.LaneTelemetry),
+					EmittedBy:          "OR-01",
+					RuntimeTimestampMS: attemptStartMS,
+				},
+			)
+			logSeverity := "info"
+			if outcome.Class != contracts.OutcomeSuccess {
+				logSeverity = "warn"
+			}
+			telemetry.DefaultEmitter().EmitLog(
+				"provider_invocation_attempt",
+				logSeverity,
+				"provider invocation attempt completed",
+				map[string]string{
+					"provider_id": adapter.ProviderID(),
+					"modality":    string(in.Modality),
+					"attempt":     strconv.Itoa(attempt),
+					"outcome":     string(outcome.Class),
+					"retryable":   strconv.FormatBool(outcome.Retryable),
+				},
+				telemetry.Correlation{
+					SessionID:          in.SessionID,
+					TurnID:             in.TurnID,
+					EventID:            in.EventID,
+					PipelineVersion:    in.PipelineVersion,
+					AuthorityEpoch:     nonNegative(in.AuthorityEpoch),
+					Lane:               string(eventabi.LaneTelemetry),
+					EmittedBy:          "OR-01",
+					RuntimeTimestampMS: attemptEndMS,
+				},
+			)
 
 			result.Attempts = append(result.Attempts, InvocationAttempt{
 				ProviderID: adapter.ProviderID(),

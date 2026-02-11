@@ -16,6 +16,7 @@ import (
 	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
 	"github.com/tiger/realtime-speech-pipeline/internal/controlplane/distribution"
 	"github.com/tiger/realtime-speech-pipeline/internal/observability/replay"
+	"github.com/tiger/realtime-speech-pipeline/internal/observability/telemetry"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/bootstrap"
 )
 
@@ -27,6 +28,12 @@ func main() {
 }
 
 func run(args []string, stdout io.Writer, _ io.Writer, now func() time.Time) error {
+	cleanupTelemetry, err := setupRuntimeTelemetry()
+	if err != nil {
+		return err
+	}
+	defer cleanupTelemetry()
+
 	if len(args) == 0 || args[0] == "bootstrap-providers" {
 		return runProviderBootstrap(stdout)
 	}
@@ -41,6 +48,26 @@ func run(args []string, stdout io.Writer, _ io.Writer, now func() time.Time) err
 		printUsage(stdout)
 		return fmt.Errorf("unsupported command %q", args[0])
 	}
+}
+
+func setupRuntimeTelemetry() (func(), error) {
+	previous := telemetry.DefaultEmitter()
+
+	pipeline, err := telemetry.NewPipelineFromEnv()
+	if err != nil {
+		return nil, fmt.Errorf("runtime telemetry setup failed: %w", err)
+	}
+	if pipeline == nil {
+		return func() {
+			telemetry.SetDefaultEmitter(previous)
+		}, nil
+	}
+
+	telemetry.SetDefaultEmitter(pipeline)
+	return func() {
+		_ = pipeline.Close()
+		telemetry.SetDefaultEmitter(previous)
+	}, nil
 }
 
 func runProviderBootstrap(stdout io.Writer) error {

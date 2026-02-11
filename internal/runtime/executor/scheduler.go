@@ -2,9 +2,11 @@ package executor
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/tiger/realtime-speech-pipeline/api/controlplane"
 	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
+	"github.com/tiger/realtime-speech-pipeline/internal/observability/telemetry"
 	"github.com/tiger/realtime-speech-pipeline/internal/observability/timeline"
 	runtimeeventabi "github.com/tiger/realtime-speech-pipeline/internal/runtime/eventabi"
 	runtimeexecutionpool "github.com/tiger/realtime-speech-pipeline/internal/runtime/executionpool"
@@ -227,6 +229,25 @@ func (s Scheduler) evaluate(scope controlplane.OutcomeScope, in SchedulingInput)
 		Shed:                 in.Shed,
 		Reason:               in.Reason,
 	})
+	correlation := telemetry.Correlation{
+		SessionID:          in.SessionID,
+		TurnID:             in.TurnID,
+		EventID:            in.EventID,
+		PipelineVersion:    defaultPipelineVersion(in.PipelineVersion),
+		AuthorityEpoch:     nonNegative(in.AuthorityEpoch),
+		Lane:               string(eventabi.LaneTelemetry),
+		EmittedBy:          "OR-01",
+		RuntimeTimestampMS: nonNegative(in.RuntimeTimestampMS),
+	}
+	telemetry.DefaultEmitter().EmitMetric(
+		telemetry.MetricShedRate,
+		boolToFloat(in.Shed),
+		"ratio",
+		map[string]string{
+			"scope": string(scope),
+		},
+		correlation,
+	)
 
 	if result.Allowed {
 		decision := SchedulingDecision{Allowed: true}
@@ -258,6 +279,22 @@ func (s Scheduler) evaluate(scope controlplane.OutcomeScope, in SchedulingInput)
 				return SchedulingDecision{}, err
 			}
 			attemptEvidence := buildAttemptEvidence(in, in.ProviderInvocation.Modality, invocationResult)
+			finalAttemptLatencyMS := int64(0)
+			if len(attemptEvidence) > 0 {
+				finalAttemptLatencyMS = attemptEvidence[len(attemptEvidence)-1].AttemptLatencyMS
+			}
+			telemetry.DefaultEmitter().EmitMetric(
+				telemetry.MetricProviderRTTMS,
+				float64(finalAttemptLatencyMS),
+				"ms",
+				map[string]string{
+					"scope":       string(scope),
+					"modality":    string(in.ProviderInvocation.Modality),
+					"attempts":    strconv.Itoa(len(invocationResult.Attempts)),
+					"retry_logic": invocationResult.RetryDecision,
+				},
+				correlation,
+			)
 
 			if s.attemptAppender != nil {
 				if err := s.attemptAppender.AppendProviderInvocationAttempts(attemptEvidence); err != nil {
@@ -288,6 +325,17 @@ func (s Scheduler) evaluate(scope controlplane.OutcomeScope, in SchedulingInput)
 			}
 			decision.Allowed = invocationResult.Outcome.Class == contracts.OutcomeSuccess
 		}
+		telemetry.DefaultEmitter().EmitSpan(
+			"node_span",
+			"node_span",
+			nonNegative(in.RuntimeTimestampMS),
+			nonNegative(in.RuntimeTimestampMS)+1,
+			map[string]string{
+				"scope":   string(scope),
+				"allowed": strconv.FormatBool(decision.Allowed),
+			},
+			correlation,
+		)
 		return decision, nil
 	}
 
@@ -305,6 +353,29 @@ func (s Scheduler) evaluate(scope controlplane.OutcomeScope, in SchedulingInput)
 	if err != nil {
 		return SchedulingDecision{}, err
 	}
+	telemetry.DefaultEmitter().EmitLog(
+		"scheduling_shed",
+		"warn",
+		"scheduling point shed triggered",
+		map[string]string{
+			"scope":   string(scope),
+			"outcome": string(result.Outcome.OutcomeKind),
+			"reason":  result.Outcome.Reason,
+		},
+		correlation,
+	)
+	telemetry.DefaultEmitter().EmitSpan(
+		"node_span",
+		"node_span",
+		nonNegative(in.RuntimeTimestampMS),
+		nonNegative(in.RuntimeTimestampMS)+1,
+		map[string]string{
+			"scope":   string(scope),
+			"allowed": "false",
+			"outcome": string(result.Outcome.OutcomeKind),
+		},
+		correlation,
+	)
 
 	return SchedulingDecision{Allowed: false, Outcome: result.Outcome, ControlSignal: controlSignal}, nil
 }
@@ -358,6 +429,13 @@ func nonNegative(v int64) int64 {
 
 func int64Ptr(v int64) *int64 {
 	return &v
+}
+
+func boolToFloat(v bool) float64 {
+	if v {
+		return 1
+	}
+	return 0
 }
 
 func buildAttemptEvidence(

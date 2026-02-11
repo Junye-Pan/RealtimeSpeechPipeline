@@ -7,6 +7,7 @@ import (
 
 	"github.com/tiger/realtime-speech-pipeline/api/controlplane"
 	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
+	"github.com/tiger/realtime-speech-pipeline/internal/observability/telemetry"
 	"github.com/tiger/realtime-speech-pipeline/internal/observability/timeline"
 	runtimeexecutionpool "github.com/tiger/realtime-speech-pipeline/internal/runtime/executionpool"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/localadmission"
@@ -858,5 +859,54 @@ func TestSchedulerGeneratesEventIDFromIdentity(t *testing.T) {
 	}
 	if decision.Provider == nil || decision.Provider.ProviderInvocationID == "" {
 		t.Fatalf("expected generated provider invocation id, got %+v", decision.Provider)
+	}
+}
+
+func TestSchedulerEmitsTelemetryEvents(t *testing.T) {
+	sink := telemetry.NewMemorySink()
+	pipeline := telemetry.NewPipeline(sink, telemetry.Config{QueueCapacity: 32})
+	previous := telemetry.DefaultEmitter()
+	telemetry.SetDefaultEmitter(pipeline)
+	t.Cleanup(func() {
+		telemetry.SetDefaultEmitter(previous)
+		_ = pipeline.Close()
+	})
+
+	scheduler := NewScheduler(localadmission.Evaluator{})
+	_, err := scheduler.NodeDispatch(SchedulingInput{
+		SessionID:            "sess-rk07-telemetry-1",
+		TurnID:               "turn-rk07-telemetry-1",
+		EventID:              "evt-rk07-telemetry-1",
+		PipelineVersion:      "pipeline-v1",
+		RuntimeTimestampMS:   10,
+		WallClockTimestampMS: 10,
+		Shed:                 true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected scheduler error: %v", err)
+	}
+	if err := pipeline.Close(); err != nil {
+		t.Fatalf("unexpected pipeline close error: %v", err)
+	}
+
+	var shedRateMetric bool
+	var nodeSpan bool
+	var shedLog bool
+	for _, event := range sink.Events() {
+		if event.Correlation.SessionID != "sess-rk07-telemetry-1" {
+			continue
+		}
+		if event.Kind == telemetry.EventKindMetric && event.Metric != nil && event.Metric.Name == telemetry.MetricShedRate {
+			shedRateMetric = true
+		}
+		if event.Kind == telemetry.EventKindSpan && event.Span != nil && event.Span.Name == "node_span" {
+			nodeSpan = true
+		}
+		if event.Kind == telemetry.EventKindLog && event.Log != nil && event.Log.Name == "scheduling_shed" {
+			shedLog = true
+		}
+	}
+	if !shedRateMetric || !nodeSpan || !shedLog {
+		t.Fatalf("expected scheduler telemetry events, got shed_rate=%v node_span=%v shed_log=%v", shedRateMetric, nodeSpan, shedLog)
 	}
 }

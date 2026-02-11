@@ -12,7 +12,7 @@ Status snapshot:
 - Runtime CP backend bootstrap integration is now hardened with file/env/http-backed distribution adapters, authenticated HTTP fetch (`Authorization` + client identity), ordered endpoint failover, deterministic retry/backoff, on-demand TTL refresh with bounded stale-serving fallback, per-service partial-backend fallback, and stale-snapshot deterministic handling coverage.
 - CP promotion-to-implemented gate scope for `CP-01/02/03/04/05/07/08/09/10` is closed at MVP scope with evidence for module behavior, service-client backend parity (`file`/`env`/`http`), backend-failure deterministic fallback handling, and synchronized conformance mappings.
 - `.codex` generated artifact tracking policy is finalized and enforced in CI.
-- This document is synchronized with the current MVP section-10 closure state in `docs/MVP_ImplementationSlice.md` (`10.1.21` closed; `10.2` currently has no open items).
+- This document is synchronized with the current MVP section-10 closure state in `docs/MVP_ImplementationSlice.md` (`10.1.22` closed; `10.2` currently has no open items).
 
 ## 2. Source of truth files
 
@@ -61,7 +61,7 @@ go run ./cmd/rspp-cli validate-contracts &&
 go run ./cmd/rspp-cli replay-smoke-report &&
 go run ./cmd/rspp-cli generate-runtime-baseline &&
 go run ./cmd/rspp-cli slo-gates-report &&
-go test ./api/controlplane ./api/eventabi ./internal/runtime/planresolver ./internal/runtime/turnarbiter ./internal/runtime/executor ./internal/runtime/buffering ./internal/runtime/guard ./internal/runtime/transport ./internal/observability/replay ./internal/observability/timeline ./internal/tooling/regression ./internal/tooling/ops ./test/contract ./test/integration ./test/replay &&
+go test ./api/controlplane ./api/eventabi ./internal/runtime/planresolver ./internal/runtime/turnarbiter ./internal/runtime/executor ./internal/runtime/buffering ./internal/runtime/guard ./internal/runtime/transport ./internal/observability/replay ./internal/observability/timeline ./internal/observability/telemetry ./internal/tooling/regression ./internal/tooling/ops ./test/contract ./test/integration ./test/replay &&
 go test ./test/failover -run 'TestF[137]'
 ```
 
@@ -72,6 +72,7 @@ Coverage summary:
 4. Conformance package tests in `test/contract`, `test/integration`, and `test/replay`.
 5. Failure smoke subset `F1`, `F3`, `F7`.
 6. CP turn-start service integration checks for promoted modules `CP-01/02/03/04/05/07/08/09/10` through `turnarbiter` and distribution-backed resolver tests, including CP-02 simple-mode profile enforcement with deterministic unsupported-profile pre-turn handling and rollout/policy/provider-health fallback defaults under backend failure.
+7. OR-01 telemetry module behavior coverage via targeted telemetry package tests and runtime instrumentation-path assertions.
 
 ## 4.2 Full gate (`make verify-full`)
 
@@ -240,4 +241,4 @@ Repository policy action (outside repo code):
 ## 8. Consistency references
 
 1. `docs/ConformanceTestPlan.md` maps conformance IDs and suite coverage to concrete tests/fixtures.
-2. `docs/MVP_ImplementationSlice.md` section `10` records closure state and post-MVP follow-ups (`10.1.21` closure + no current open `10.2` items).
+2. `docs/MVP_ImplementationSlice.md` section `10` records closure state and post-MVP follow-ups (`10.1.22` closure + no current open `10.2` items).

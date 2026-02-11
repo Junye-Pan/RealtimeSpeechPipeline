@@ -1,6 +1,10 @@
 package transport
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/tiger/realtime-speech-pipeline/internal/observability/telemetry"
+)
 
 func TestCF002LateOutputAfterCancelIsFenced(t *testing.T) {
 	t.Parallel()
@@ -60,5 +64,57 @@ func TestCF002LateOutputAfterCancelIsFenced(t *testing.T) {
 	}
 	if lateProviderOutput.Accepted || lateProviderOutput.Signal.Signal != "playback_cancelled" {
 		t.Fatalf("expected deterministic late-output fence, got %+v", lateProviderOutput)
+	}
+}
+
+func TestEvaluateOutputEmitsTelemetryEvents(t *testing.T) {
+	sink := telemetry.NewMemorySink()
+	pipeline := telemetry.NewPipeline(sink, telemetry.Config{QueueCapacity: 16})
+	previous := telemetry.DefaultEmitter()
+	telemetry.SetDefaultEmitter(pipeline)
+	t.Cleanup(func() {
+		telemetry.SetDefaultEmitter(previous)
+		_ = pipeline.Close()
+	})
+
+	fence := NewOutputFence()
+	_, err := fence.EvaluateOutput(OutputAttempt{
+		SessionID:            "sess-rk22-telemetry-1",
+		TurnID:               "turn-rk22-telemetry-1",
+		PipelineVersion:      "pipeline-v1",
+		EventID:              "evt-rk22-telemetry-1",
+		TransportSequence:    1,
+		RuntimeSequence:      1,
+		AuthorityEpoch:       2,
+		RuntimeTimestampMS:   100,
+		WallClockTimestampMS: 100,
+		CancelAccepted:       true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected evaluate output error: %v", err)
+	}
+	if err := pipeline.Close(); err != nil {
+		t.Fatalf("unexpected pipeline close error: %v", err)
+	}
+
+	var cancelMetric bool
+	var nodeSpan bool
+	var decisionLog bool
+	for _, event := range sink.Events() {
+		if event.Correlation.SessionID != "sess-rk22-telemetry-1" {
+			continue
+		}
+		if event.Kind == telemetry.EventKindMetric && event.Metric != nil && event.Metric.Name == telemetry.MetricCancelLatencyMS {
+			cancelMetric = true
+		}
+		if event.Kind == telemetry.EventKindSpan && event.Span != nil && event.Span.Name == "node_span" {
+			nodeSpan = true
+		}
+		if event.Kind == telemetry.EventKindLog && event.Log != nil && event.Log.Name == "output_fence_decision" {
+			decisionLog = true
+		}
+	}
+	if !cancelMetric || !nodeSpan || !decisionLog {
+		t.Fatalf("expected output-fence telemetry events, got cancel_latency=%v node_span=%v decision_log=%v", cancelMetric, nodeSpan, decisionLog)
 	}
 }
