@@ -2,6 +2,8 @@ package telemetry
 
 import (
 	"context"
+	"fmt"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -54,35 +56,135 @@ func TestPipelineEmitIsNonBlockingWhenQueueIsFull(t *testing.T) {
 	}
 }
 
-func TestPipelineDeterministicDebugLogSampling(t *testing.T) {
+func TestPipelineDeterministicSamplingAcrossTelemetryChannels(t *testing.T) {
 	t.Parallel()
 
-	sink := NewMemorySink()
-	pipeline := NewPipeline(sink, Config{
-		QueueCapacity: 32,
+	const (
+		totalEvents    = 120
+		emittedPerKind = totalEvents / 3
+	)
+
+	sinkA := NewMemorySink()
+	pipelineA := NewPipeline(sinkA, Config{
+		QueueCapacity: totalEvents,
+		LogSampleRate: 3,
+	})
+	sinkB := NewMemorySink()
+	pipelineB := NewPipeline(sinkB, Config{
+		QueueCapacity: totalEvents,
 		LogSampleRate: 3,
 	})
 
-	for i := 0; i < 10; i++ {
-		pipeline.EmitLog("sampled-debug", "debug", "message", map[string]string{"idx": "x"}, Correlation{
-			SessionID:          "sess-sample",
-			PipelineVersion:    "pipeline-v1",
-			RuntimeTimestampMS: int64(i + 1),
-			EmittedBy:          "OR-01",
-			Lane:               "telemetry",
-		})
+	for i := 0; i < totalEvents; i++ {
+		correlation := Correlation{
+			SessionID:            "sess-sample",
+			TurnID:               "turn-sample",
+			EventID:              fmt.Sprintf("evt-sample-%d", i+1),
+			PipelineVersion:      "pipeline-v1",
+			AuthorityEpoch:       1,
+			RuntimeTimestampMS:   int64(i + 1),
+			WallClockTimestampMS: int64(10_000 + i),
+			EmittedBy:            "OR-01",
+			Lane:                 "telemetry",
+		}
+		switch i % 3 {
+		case 0:
+			pipelineA.EmitMetric(
+				MetricQueueDepth,
+				float64(i+1),
+				"count",
+				map[string]string{"source": "test", "idx": fmt.Sprintf("%d", i)},
+				correlation,
+			)
+			pipelineB.EmitMetric(
+				MetricQueueDepth,
+				float64(i+1),
+				"count",
+				map[string]string{"source": "test", "idx": fmt.Sprintf("%d", i)},
+				correlation,
+			)
+		case 1:
+			pipelineA.EmitSpan(
+				"turn_span",
+				"stream",
+				int64(i),
+				int64(i+5),
+				map[string]string{"source": "test", "idx": fmt.Sprintf("%d", i)},
+				correlation,
+			)
+			pipelineB.EmitSpan(
+				"turn_span",
+				"stream",
+				int64(i),
+				int64(i+5),
+				map[string]string{"source": "test", "idx": fmt.Sprintf("%d", i)},
+				correlation,
+			)
+		default:
+			severity := "info"
+			if i%2 == 0 {
+				severity = "debug"
+			}
+			pipelineA.EmitLog(
+				"runtime_event",
+				severity,
+				fmt.Sprintf("message-%d", i),
+				map[string]string{"source": "test", "idx": fmt.Sprintf("%d", i)},
+				correlation,
+			)
+			pipelineB.EmitLog(
+				"runtime_event",
+				severity,
+				fmt.Sprintf("message-%d", i),
+				map[string]string{"source": "test", "idx": fmt.Sprintf("%d", i)},
+				correlation,
+			)
+		}
 	}
-	if err := pipeline.Close(); err != nil {
-		t.Fatalf("unexpected close error: %v", err)
+	if err := pipelineA.Close(); err != nil {
+		t.Fatalf("unexpected close error for pipelineA: %v", err)
+	}
+	if err := pipelineB.Close(); err != nil {
+		t.Fatalf("unexpected close error for pipelineB: %v", err)
 	}
 
-	events := sink.Events()
-	if len(events) != 4 {
-		t.Fatalf("expected deterministic sampled count 4, got %d", len(events))
+	eventsA := sinkA.Events()
+	eventsB := sinkB.Events()
+	if !reflect.DeepEqual(eventsA, eventsB) {
+		t.Fatalf("expected deterministic sampled events, got A=%d B=%d", len(eventsA), len(eventsB))
 	}
-	stats := pipeline.Stats()
-	if stats.SampledDropped != 6 {
-		t.Fatalf("expected 6 sampled drops, got %+v", stats)
+	if len(eventsA) == 0 || len(eventsA) >= totalEvents {
+		t.Fatalf("expected partial sampling outcome, got %d of %d", len(eventsA), totalEvents)
+	}
+
+	counts := map[EventKind]int{
+		EventKindMetric: 0,
+		EventKindSpan:   0,
+		EventKindLog:    0,
+	}
+	for _, event := range eventsA {
+		counts[event.Kind]++
+	}
+	if counts[EventKindMetric] == 0 || counts[EventKindSpan] == 0 || counts[EventKindLog] == 0 {
+		t.Fatalf("expected sampled output across metric/span/log channels, got counts=%+v", counts)
+	}
+	if counts[EventKindMetric] >= emittedPerKind || counts[EventKindSpan] >= emittedPerKind || counts[EventKindLog] >= emittedPerKind {
+		t.Fatalf("expected sampling to affect every channel, got counts=%+v emitted_per_kind=%d", counts, emittedPerKind)
+	}
+
+	statsA := pipelineA.Stats()
+	statsB := pipelineB.Stats()
+	if statsA.Dropped != 0 || statsB.Dropped != 0 {
+		t.Fatalf("expected no queue overflow drops in deterministic sampling test, got A=%+v B=%+v", statsA, statsB)
+	}
+	if statsA.SampledDropped == 0 || statsB.SampledDropped == 0 {
+		t.Fatalf("expected sampled drops in both pipelines, got A=%+v B=%+v", statsA, statsB)
+	}
+	if statsA.SampledDropped != statsB.SampledDropped {
+		t.Fatalf("expected deterministic sampled drop counts, got A=%+v B=%+v", statsA, statsB)
+	}
+	if statsA.SampledDropped != uint64(totalEvents-len(eventsA)) {
+		t.Fatalf("expected sampled drop accounting to match emitted minus exported, got stats=%+v events=%d", statsA, len(eventsA))
 	}
 }
 

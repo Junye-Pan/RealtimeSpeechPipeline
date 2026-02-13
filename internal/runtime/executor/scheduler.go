@@ -40,6 +40,8 @@ type ProviderInvocationInput struct {
 	AllowedAdaptiveActions []string
 	ProviderInvocationID   string
 	CancelRequested        bool
+	EnableStreaming        bool
+	StreamHooks            invocation.StreamEventHooks
 }
 
 // SchedulingDecision reports deterministic allow/shed outcomes at scheduling points.
@@ -52,14 +54,20 @@ type SchedulingDecision struct {
 
 // ProviderDecision captures RK-11 invocation outputs for the scheduling point.
 type ProviderDecision struct {
-	ProviderInvocationID string
-	Modality             contracts.Modality
-	SelectedProvider     string
-	OutcomeClass         contracts.OutcomeClass
-	Retryable            bool
-	RetryDecision        string
-	Attempts             int
-	Signals              []eventabi.ControlSignal
+	ProviderInvocationID  string
+	Modality              contracts.Modality
+	SelectedProvider      string
+	OutcomeClass          contracts.OutcomeClass
+	Retryable             bool
+	RetryDecision         string
+	Attempts              int
+	FinalAttemptLatencyMS int64
+	TotalLatencyMS        int64
+	FirstChunkLatencyMS   int64
+	ChunkCount            int
+	BytesOut              int64
+	StreamingUsed         bool
+	Signals               []eventabi.ControlSignal
 }
 
 // ToInvocationOutcomeEvidence maps provider decision output into OR-02 evidence shape.
@@ -104,6 +112,11 @@ type ProviderInvocationSnapshotAppender interface {
 	AppendInvocationSnapshot(timeline.InvocationSnapshotEvidence) error
 }
 
+// HandoffEdgeAppender appends orchestration-level handoff evidence.
+type HandoffEdgeAppender interface {
+	AppendHandoffEdges([]timeline.HandoffEdgeEvidence) error
+}
+
 type eventIdentityService interface {
 	NewEventContext(sessionID, turnID string) (runtimeidentity.Context, error)
 }
@@ -118,6 +131,7 @@ type Scheduler struct {
 	providerInvoker  ProviderInvoker
 	attemptAppender  ProviderAttemptAppender
 	snapshotAppender ProviderInvocationSnapshotAppender
+	handoffAppender  HandoffEdgeAppender
 	router           lanes.Router
 	identity         eventIdentityService
 	executionPool    dispatchPool
@@ -152,6 +166,7 @@ func NewSchedulerWithProviderInvokerAndAttemptAppender(
 		providerInvoker:  providerInvoker,
 		attemptAppender:  attemptAppender,
 		snapshotAppender: toSnapshotAppender(attemptAppender),
+		handoffAppender:  toHandoffAppender(attemptAppender),
 		router:           lanes.NewDefaultRouter(),
 		identity:         runtimeidentity.NewService(),
 	}
@@ -187,6 +202,7 @@ func NewSchedulerWithDependencies(
 		providerInvoker:  providerInvoker,
 		attemptAppender:  attemptAppender,
 		snapshotAppender: toSnapshotAppender(attemptAppender),
+		handoffAppender:  toHandoffAppender(attemptAppender),
 		router:           router,
 		identity:         identitySvc,
 	}
@@ -270,6 +286,8 @@ func (s Scheduler) evaluate(scope controlplane.OutcomeScope, in SchedulingInput)
 				RuntimeTimestampMS:     nonNegative(in.RuntimeTimestampMS),
 				WallClockTimestampMS:   nonNegative(in.WallClockTimestampMS),
 				CancelRequested:        in.ProviderInvocation.CancelRequested,
+				EnableStreaming:        in.ProviderInvocation.EnableStreaming,
+				StreamHooks:            in.ProviderInvocation.StreamHooks,
 			})
 			if err != nil {
 				return SchedulingDecision{}, err
@@ -313,15 +331,22 @@ func (s Scheduler) evaluate(scope controlplane.OutcomeScope, in SchedulingInput)
 				}
 			}
 
+			finalAttemptLatencyMS, totalLatencyMS, firstChunkLatencyMS, totalChunks, bytesOut := summarizeAttempts(invocationResult.Attempts)
 			decision.Provider = &ProviderDecision{
-				ProviderInvocationID: invocationResult.ProviderInvocationID,
-				Modality:             in.ProviderInvocation.Modality,
-				SelectedProvider:     invocationResult.SelectedProvider,
-				OutcomeClass:         invocationResult.Outcome.Class,
-				Retryable:            invocationResult.Outcome.Retryable,
-				RetryDecision:        invocationResult.RetryDecision,
-				Attempts:             len(invocationResult.Attempts),
-				Signals:              append([]eventabi.ControlSignal(nil), normalizedSignals...),
+				ProviderInvocationID:  invocationResult.ProviderInvocationID,
+				Modality:              in.ProviderInvocation.Modality,
+				SelectedProvider:      invocationResult.SelectedProvider,
+				OutcomeClass:          invocationResult.Outcome.Class,
+				Retryable:             invocationResult.Outcome.Retryable,
+				RetryDecision:         invocationResult.RetryDecision,
+				Attempts:              len(invocationResult.Attempts),
+				FinalAttemptLatencyMS: finalAttemptLatencyMS,
+				TotalLatencyMS:        totalLatencyMS,
+				FirstChunkLatencyMS:   firstChunkLatencyMS,
+				ChunkCount:            totalChunks,
+				BytesOut:              bytesOut,
+				StreamingUsed:         invocationResult.StreamingUsed,
+				Signals:               append([]eventabi.ControlSignal(nil), normalizedSignals...),
 			}
 			decision.Allowed = invocationResult.Outcome.Class == contracts.OutcomeSuccess
 		}
@@ -453,8 +478,14 @@ func buildAttemptEvidence(
 	for idx, attempt := range result.Attempts {
 		offset := int64(idx)
 		wallClockMS := nonNegative(in.WallClockTimestampMS) + offset
-		attemptLatencyMS := int64(0)
-		if hasPrevious && wallClockMS > previousWallClockMS {
+		attemptLatencyMS := nonNegative(attempt.AttemptLatencyMS)
+		if attemptLatencyMS > 0 {
+			if hasPrevious {
+				wallClockMS = previousWallClockMS + attemptLatencyMS
+			} else {
+				wallClockMS = nonNegative(in.WallClockTimestampMS) + attemptLatencyMS
+			}
+		} else if hasPrevious && wallClockMS > previousWallClockMS {
 			attemptLatencyMS = wallClockMS - previousWallClockMS
 		}
 		attempts = append(attempts, timeline.ProviderAttemptEvidence{
@@ -475,6 +506,17 @@ func buildAttemptEvidence(
 			AuthorityEpoch:       nonNegative(in.AuthorityEpoch),
 			RuntimeTimestampMS:   nonNegative(in.RuntimeTimestampMS) + offset,
 			WallClockTimestampMS: wallClockMS,
+			OutcomeReason:        attempt.Outcome.Reason,
+			CircuitOpen:          attempt.Outcome.CircuitOpen,
+			BackoffMS:            attempt.Outcome.BackoffMS,
+			InputPayload:         attempt.Outcome.InputPayload,
+			OutputPayload:        attempt.Outcome.OutputPayload,
+			OutputStatusCode:     attempt.Outcome.OutputStatusCode,
+			PayloadTruncated:     attempt.Outcome.PayloadTruncated,
+			StreamingUsed:        attempt.StreamingUsed,
+			ChunkCount:           attempt.ChunkCount,
+			BytesOut:             nonNegative(attempt.BytesOut),
+			FirstChunkLatencyMS:  nonNegative(attempt.FirstChunkLatencyMS),
 		})
 		previousWallClockMS = wallClockMS
 		hasPrevious = true
@@ -491,6 +533,17 @@ func toSnapshotAppender(appender ProviderAttemptAppender) ProviderInvocationSnap
 		return nil
 	}
 	return snapshotAppender
+}
+
+func toHandoffAppender(appender ProviderAttemptAppender) HandoffEdgeAppender {
+	if appender == nil {
+		return nil
+	}
+	handoffAppender, ok := appender.(HandoffEdgeAppender)
+	if !ok {
+		return nil
+	}
+	return handoffAppender
 }
 
 func buildInvocationSnapshotEvidence(
@@ -545,4 +598,31 @@ func buildInvocationSnapshotEvidence(
 		RuntimeTimestampMS:       runtimeTimestampMS,
 		WallClockTimestampMS:     wallClockTimestampMS,
 	}, true, nil
+}
+
+func summarizeAttempts(attempts []invocation.InvocationAttempt) (finalLatencyMS int64, totalLatencyMS int64, firstChunkMS int64, totalChunks int, bytesOut int64) {
+	firstChunkSet := false
+	for i := range attempts {
+		attempt := attempts[i]
+		latency := nonNegative(attempt.AttemptLatencyMS)
+		totalLatencyMS += latency
+		if i == len(attempts)-1 {
+			finalLatencyMS = latency
+		}
+		totalChunks += maxInt(attempt.ChunkCount, 0)
+		bytesOut += nonNegative(attempt.BytesOut)
+		candidateFirstChunk := nonNegative(attempt.FirstChunkLatencyMS)
+		if candidateFirstChunk > 0 && (!firstChunkSet || candidateFirstChunk < firstChunkMS) {
+			firstChunkMS = candidateFirstChunk
+			firstChunkSet = true
+		}
+	}
+	return finalLatencyMS, totalLatencyMS, firstChunkMS, totalChunks, bytesOut
+}
+
+func maxInt(a int, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

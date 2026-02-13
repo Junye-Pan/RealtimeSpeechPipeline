@@ -1,0 +1,17 @@
+services:
+  livekit:
+    image: livekit/livekit-server:latest
+    command: --config /etc/livekit/livekit.yaml
+    ports:
+      - "7880:7880"
+      - "7881:7881/udp"
+      - "7882:7882"
+    volumes:
+      - ./livekit.yaml:/etc/livekit/livekit.yaml:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 7880 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s

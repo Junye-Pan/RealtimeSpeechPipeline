@@ -1,0 +1,11 @@
+# Local self-hosted LiveKit configuration for RSPP smoke validation.
+# This template is rendered by scripts/bootstrap.sh into livekit.yaml.
+port: 7880
+
+rtc:
+  udp_port: 7881
+  tcp_port: 7882
+  use_external_ip: false
+
+keys:
+  __RSPP_LIVEKIT_API_KEY__: __RSPP_LIVEKIT_API_SECRET__

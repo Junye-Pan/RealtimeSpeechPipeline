@@ -30,7 +30,7 @@ type MVPSLOThresholds struct {
 	MaxStaleAcceptedOutput int
 }
 
-// DefaultMVPSLOThresholds returns thresholds from docs/MVP_ImplementationSlice.md.
+// DefaultMVPSLOThresholds returns repository baseline SLO thresholds.
 func DefaultMVPSLOThresholds() MVPSLOThresholds {
 	return MVPSLOThresholds{
 		TurnOpenDecisionP95MS:  120,

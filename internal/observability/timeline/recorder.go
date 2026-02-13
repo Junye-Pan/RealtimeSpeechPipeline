@@ -14,6 +14,8 @@ var (
 	ErrBaselineCapacityExhausted = fmt.Errorf("timeline baseline stage-a capacity exhausted")
 	// ErrProviderAttemptCapacityExhausted indicates Stage-A provider attempt capacity is depleted.
 	ErrProviderAttemptCapacityExhausted = fmt.Errorf("timeline provider attempt stage-a capacity exhausted")
+	// ErrHandoffCapacityExhausted indicates Stage-A handoff evidence capacity is depleted.
+	ErrHandoffCapacityExhausted = fmt.Errorf("timeline handoff stage-a capacity exhausted")
 	// ErrInvocationSnapshotCapacityExhausted indicates Stage-A invocation snapshot capacity is depleted.
 	ErrInvocationSnapshotCapacityExhausted = fmt.Errorf("timeline invocation snapshot stage-a capacity exhausted")
 )
@@ -23,6 +25,7 @@ type StageAConfig struct {
 	BaselineCapacity         int
 	DetailCapacity           int
 	AttemptCapacity          int
+	HandoffCapacity          int
 	InvocationSnapshotCap    int
 	EnableInvocationSnapshot bool
 }
@@ -120,6 +123,65 @@ type ProviderAttemptEvidence struct {
 	AuthorityEpoch       int64
 	RuntimeTimestampMS   int64
 	WallClockTimestampMS int64
+	OutcomeReason        string
+	CircuitOpen          bool
+	BackoffMS            int64
+	InputPayload         string
+	OutputPayload        string
+	OutputStatusCode     int
+	PayloadTruncated     bool
+	StreamingUsed        bool
+	ChunkCount           int
+	BytesOut             int64
+	FirstChunkLatencyMS  int64
+}
+
+// HandoffEdgeEvidence captures orchestration-level streaming handoff timings.
+type HandoffEdgeEvidence struct {
+	SessionID             string
+	TurnID                string
+	PipelineVersion       string
+	EventID               string
+	HandoffID             string
+	Edge                  string
+	UpstreamRevision      int
+	Action                string
+	PartialAcceptedAtMS   int64
+	DownstreamStartedAtMS int64
+	HandoffLatencyMS      int64
+	QueueDepth            int
+	WatermarkHigh         bool
+	RuntimeTimestampMS    int64
+	WallClockTimestampMS  int64
+}
+
+// Validate enforces streaming handoff evidence invariants.
+func (e HandoffEdgeEvidence) Validate() error {
+	if e.SessionID == "" || e.PipelineVersion == "" || e.EventID == "" || e.HandoffID == "" {
+		return fmt.Errorf("session_id, pipeline_version, event_id, and handoff_id are required")
+	}
+	if !inStringSet(e.Edge, []string{"stt_to_llm", "llm_to_tts"}) {
+		return fmt.Errorf("invalid handoff edge: %s", e.Edge)
+	}
+	if !inStringSet(e.Action, []string{"forward", "coalesce", "supersede", "final_fallback"}) {
+		return fmt.Errorf("invalid handoff action: %s", e.Action)
+	}
+	if e.UpstreamRevision < 1 {
+		return fmt.Errorf("upstream_revision must be >=1")
+	}
+	if e.PartialAcceptedAtMS < 0 || e.DownstreamStartedAtMS < 0 || e.HandoffLatencyMS < 0 {
+		return fmt.Errorf("handoff timestamps and latency must be >=0")
+	}
+	if e.DownstreamStartedAtMS < e.PartialAcceptedAtMS {
+		return fmt.Errorf("downstream_started_at_ms must be >= partial_accepted_at_ms")
+	}
+	if e.QueueDepth < 0 {
+		return fmt.Errorf("queue_depth must be >=0")
+	}
+	if e.RuntimeTimestampMS < 0 || e.WallClockTimestampMS < 0 {
+		return fmt.Errorf("handoff runtime/wall timestamps must be >=0")
+	}
+	return nil
 }
 
 // Validate enforces per-attempt evidence invariants.
@@ -150,6 +212,21 @@ func (e ProviderAttemptEvidence) Validate() error {
 	}
 	if e.RuntimeTimestampMS < 0 || e.WallClockTimestampMS < 0 {
 		return fmt.Errorf("provider attempt timestamps must be >=0")
+	}
+	if e.BackoffMS < 0 {
+		return fmt.Errorf("provider attempt backoff_ms must be >=0")
+	}
+	if e.OutputStatusCode < 0 {
+		return fmt.Errorf("provider attempt output_status_code must be >=0")
+	}
+	if e.ChunkCount < 0 {
+		return fmt.Errorf("provider attempt chunk_count must be >=0")
+	}
+	if e.BytesOut < 0 {
+		return fmt.Errorf("provider attempt bytes_out must be >=0")
+	}
+	if e.FirstChunkLatencyMS < 0 {
+		return fmt.Errorf("provider attempt first_chunk_latency_ms must be >=0")
 	}
 	return nil
 }
@@ -351,6 +428,7 @@ type Recorder struct {
 	baselineEntries []BaselineEvidence
 	detailEntries   []DetailEvent
 	attemptEntries  []ProviderAttemptEvidence
+	handoffEntries  []HandoffEdgeEvidence
 	snapshotEntries []InvocationSnapshotEvidence
 	droppedDetails  int
 	downgradeByTurn map[string]bool
@@ -366,6 +444,9 @@ func NewRecorder(cfg StageAConfig) Recorder {
 	}
 	if cfg.AttemptCapacity < 1 {
 		cfg.AttemptCapacity = 1024
+	}
+	if cfg.HandoffCapacity < 1 {
+		cfg.HandoffCapacity = 1024
 	}
 	if cfg.InvocationSnapshotCap < 1 {
 		cfg.InvocationSnapshotCap = 1024
@@ -411,6 +492,27 @@ func (r *Recorder) AppendProviderInvocationAttempts(attempts []ProviderAttemptEv
 		return ErrProviderAttemptCapacityExhausted
 	}
 	r.attemptEntries = append(r.attemptEntries, attempts...)
+	return nil
+}
+
+// AppendHandoffEdges appends orchestration-level streaming handoff evidence.
+func (r *Recorder) AppendHandoffEdges(edges []HandoffEdgeEvidence) error {
+	if len(edges) == 0 {
+		return nil
+	}
+	for _, edge := range edges {
+		if err := edge.Validate(); err != nil {
+			return err
+		}
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if len(r.handoffEntries)+len(edges) > r.cfg.HandoffCapacity {
+		return ErrHandoffCapacityExhausted
+	}
+	r.handoffEntries = append(r.handoffEntries, edges...)
 	return nil
 }
 
@@ -559,6 +661,37 @@ func (r *Recorder) ProviderAttemptEntriesForTurn(sessionID, turnID string) []Pro
 
 	filtered := make([]ProviderAttemptEvidence, 0)
 	for _, entry := range r.attemptEntries {
+		if entry.SessionID != sessionID {
+			continue
+		}
+		if turnID != "" && entry.TurnID != turnID {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	return filtered
+}
+
+// HandoffEntries returns a stable copy of orchestration-level handoff entries.
+func (r *Recorder) HandoffEntries() []HandoffEdgeEvidence {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]HandoffEdgeEvidence, len(r.handoffEntries))
+	copy(out, r.handoffEntries)
+	return out
+}
+
+// HandoffEntriesForTurn returns handoff entries for one session/turn pair.
+func (r *Recorder) HandoffEntriesForTurn(sessionID, turnID string) []HandoffEdgeEvidence {
+	if sessionID == "" {
+		return nil
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	filtered := make([]HandoffEdgeEvidence, 0)
+	for _, entry := range r.handoffEntries {
 		if entry.SessionID != sessionID {
 			continue
 		}
@@ -725,6 +858,12 @@ func deriveFinalAttemptLatencyMS(group []ProviderAttemptEvidence) int64 {
 func deriveTotalInvocationLatencyMS(group []ProviderAttemptEvidence) int64 {
 	if len(group) == 0 {
 		return 0
+	}
+	if len(group) == 1 {
+		if group[0].AttemptLatencyMS < 0 {
+			return 0
+		}
+		return group[0].AttemptLatencyMS
 	}
 	first := group[0]
 	last := group[len(group)-1]

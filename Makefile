@@ -1,4 +1,4 @@
-.PHONY: test validate-contracts verify-quick verify-full live-provider-smoke livekit-smoke a2-runtime-live security-baseline-check codex-artifact-policy-check
+.PHONY: test validate-contracts verify-quick verify-full live-provider-smoke livekit-smoke a2-runtime-live security-baseline-check codex-artifact-policy-check livekit-local-up livekit-local-validate livekit-local-down
 
 test:
 	go test ./...
@@ -27,3 +27,12 @@ security-baseline-check:
 
 codex-artifact-policy-check:
 	bash scripts/check-codex-artifact-policy.sh
+
+livekit-local-up:
+	bash ops/livekit-local/scripts/bootstrap.sh
+
+livekit-local-validate:
+	bash ops/livekit-local/scripts/validate.sh
+
+livekit-local-down:
+	docker compose -f ops/livekit-local/docker-compose.yml down

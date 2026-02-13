@@ -42,10 +42,10 @@ func TestLiveKitTransportAdapterEndToEndFlow(t *testing.T) {
 	if len(report.IngressRecords) == 0 || report.IngressRecords[0].PayloadClass != eventabi.PayloadAudioRaw {
 		t.Fatalf("expected audio ingress classification evidence, got %+v", report.IngressRecords)
 	}
-	if !hasSignal(report.ControlSignals, "connected") {
+	if !hasControlSignal(report.ControlSignals, "connected") {
 		t.Fatalf("expected connected signal, got %+v", report.ControlSignals)
 	}
-	if !hasSignal(report.ControlSignals, "playback_cancelled") {
+	if !hasControlSignal(report.ControlSignals, "playback_cancelled") {
 		t.Fatalf("expected playback_cancelled signal after cancel, got %+v", report.ControlSignals)
 	}
 	if !hasLifecycle(report.LifecycleEvents, "abort", "cancelled") || !hasLifecycle(report.LifecycleEvents, "close", "") {
@@ -80,7 +80,7 @@ func TestLiveKitTransportDisconnectPathEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("process disconnect scenario: %v", err)
 	}
-	if !hasSignal(report.ControlSignals, "disconnected") || !hasSignal(report.ControlSignals, "stall") {
+	if !hasControlSignal(report.ControlSignals, "disconnected") || !hasControlSignal(report.ControlSignals, "stall") {
 		t.Fatalf("expected disconnected/stall signals, got %+v", report.ControlSignals)
 	}
 	if !hasLifecycle(report.LifecycleEvents, "abort", "transport_disconnect_or_stall") {
@@ -88,7 +88,7 @@ func TestLiveKitTransportDisconnectPathEndToEnd(t *testing.T) {
 	}
 }
 
-func hasSignal(signals []eventabi.ControlSignal, signal string) bool {
+func hasControlSignal(signals []eventabi.ControlSignal, signal string) bool {
 	for _, candidate := range signals {
 		if candidate.Signal == signal {
 			return true

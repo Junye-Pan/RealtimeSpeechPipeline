@@ -1,0 +1,167 @@
+{
+  "generated_at_utc": "2026-02-12T15:44:38Z",
+  "session_id": "sess-livekit-smoke",
+  "turn_id": "turn-livekit-smoke",
+  "pipeline_version": "pipeline-v1",
+  "processed_events": 7,
+  "ingress_records": [
+    {
+      "schema_version": "v1.0",
+      "event_scope": "turn",
+      "session_id": "sess-livekit-smoke",
+      "turn_id": "turn-livekit-smoke",
+      "pipeline_version": "pipeline-v1",
+      "event_id": "evt-livekit-003-ingress_audio",
+      "lane": "DataLane",
+      "transport_sequence": 3,
+      "runtime_sequence": 3,
+      "authority_epoch": 1,
+      "runtime_timestamp_ms": 1770911078650,
+      "wall_clock_timestamp_ms": 1770911078650,
+      "payload_class": "audio_raw",
+      "media_time": {
+        "pts_ms": 1770911078650
+      }
+    }
+  ],
+  "control_signals": [
+    {
+      "schema_version": "v1.0",
+      "event_scope": "session",
+      "session_id": "sess-livekit-smoke",
+      "pipeline_version": "pipeline-v1",
+      "event_id": "evt-livekit-001-connected",
+      "lane": "ControlLane",
+      "transport_sequence": 1,
+      "runtime_sequence": 1,
+      "authority_epoch": 1,
+      "runtime_timestamp_ms": 1770911078648,
+      "wall_clock_timestamp_ms": 1770911078648,
+      "payload_class": "metadata",
+      "signal": "connected",
+      "emitted_by": "RK-23",
+      "reason": "livekit_connected",
+      "scope": "session"
+    },
+    {
+      "schema_version": "v1.0",
+      "event_scope": "turn",
+      "session_id": "sess-livekit-smoke",
+      "turn_id": "turn-livekit-smoke",
+      "pipeline_version": "pipeline-v1",
+      "event_id": "evt-livekit-004-output",
+      "lane": "ControlLane",
+      "transport_sequence": 4,
+      "runtime_sequence": 4,
+      "authority_epoch": 1,
+      "runtime_timestamp_ms": 1770911078651,
+      "wall_clock_timestamp_ms": 1770911078651,
+      "payload_class": "metadata",
+      "signal": "output_accepted",
+      "emitted_by": "RK-22",
+      "reason": "output_accepted",
+      "scope": "turn"
+    },
+    {
+      "schema_version": "v1.0",
+      "event_scope": "turn",
+      "session_id": "sess-livekit-smoke",
+      "turn_id": "turn-livekit-smoke",
+      "pipeline_version": "pipeline-v1",
+      "event_id": "evt-livekit-006-output",
+      "lane": "ControlLane",
+      "transport_sequence": 6,
+      "runtime_sequence": 6,
+      "authority_epoch": 1,
+      "runtime_timestamp_ms": 1770911078653,
+      "wall_clock_timestamp_ms": 1770911078653,
+      "payload_class": "metadata",
+      "signal": "playback_cancelled",
+      "emitted_by": "RK-22",
+      "reason": "cancel_fence_applied",
+      "scope": "turn"
+    },
+    {
+      "schema_version": "v1.0",
+      "event_scope": "session",
+      "session_id": "sess-livekit-smoke",
+      "pipeline_version": "pipeline-v1",
+      "event_id": "evt-livekit-007-ended",
+      "lane": "ControlLane",
+      "transport_sequence": 7,
+      "runtime_sequence": 7,
+      "authority_epoch": 1,
+      "runtime_timestamp_ms": 1770911078654,
+      "wall_clock_timestamp_ms": 1770911078654,
+      "payload_class": "metadata",
+      "signal": "ended",
+      "emitted_by": "RK-23",
+      "reason": "livekit_session_ended",
+      "scope": "session"
+    }
+  ],
+  "lifecycle_events": [
+    {
+      "Name": "turn_open",
+      "Reason": ""
+    },
+    {
+      "Name": "abort",
+      "Reason": "cancelled"
+    },
+    {
+      "Name": "close",
+      "Reason": ""
+    }
+  ],
+  "open_results": [
+    {
+      "state": "Active",
+      "event_id": "evt-livekit-002-turn_open_proposed",
+      "lifecycle_events": [
+        {
+          "Name": "turn_open",
+          "Reason": ""
+        }
+      ]
+    }
+  ],
+  "active_results": [
+    {
+      "state": "Closed",
+      "event_id": "evt-livekit-005-cancel",
+      "lifecycle_events": [
+        {
+          "Name": "abort",
+          "Reason": "cancelled"
+        },
+        {
+          "Name": "close",
+          "Reason": ""
+        }
+      ]
+    }
+  ],
+  "output_decisions": [
+    {
+      "event_id": "evt-livekit-004-output",
+      "accepted": true,
+      "signal": "output_accepted",
+      "reason": "output_accepted",
+      "emitted_by": "RK-22"
+    },
+    {
+      "event_id": "evt-livekit-006-output",
+      "accepted": false,
+      "signal": "playback_cancelled",
+      "reason": "cancel_fence_applied",
+      "emitted_by": "RK-22"
+    }
+  ],
+  "probe": {
+    "status": "passed",
+    "url": "http://127.0.0.1:7880",
+    "room": "rspp-smoke-room",
+    "http_status": 200
+  }
+}
