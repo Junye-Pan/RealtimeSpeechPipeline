@@ -5,6 +5,7 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -67,6 +68,13 @@ func TestLiveKitSmoke(t *testing.T) {
 }
 
 func writeSmokeReport(path string, report livekittransport.Report) error {
+	if !filepath.IsAbs(path) {
+		root, err := findRepoRoot()
+		if err != nil {
+			return err
+		}
+		path = filepath.Join(root, filepath.FromSlash(path))
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -82,4 +90,22 @@ func defaultString(v string, fallback string) string {
 		return fallback
 	}
 	return v
+}
+
+func findRepoRoot() (string, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	dir := wd
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", fmt.Errorf("repository root with go.mod not found from %s", wd)
+		}
+		dir = parent
+	}
 }

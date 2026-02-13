@@ -83,8 +83,19 @@ Target overlap path:
 
 Current status:
 - baseline overlap executor exists in runtime (`internal/runtime/executor/streaming_handoff.go`).
-- live provider chain smoke invokes streaming-chain execution and records chain artifacts; overlap activation in that path requires handoff policy env enablement (`RSPP_ORCH_STREAM_HANDOFF_ENABLE=1` and related edge flags when needed).
+- live provider chain smoke invokes streaming-chain execution and records chain artifacts with effective-mode markers:
+  - streaming mode uses overlap-friendly handoff defaults when explicit handoff env policy is unset
+  - non-streaming mode explicitly disables provider-native streaming in scheduler->RK-11 invocation input
 - rollout is policy-gated; sequential stage-by-stage fallback remains the safe default when overlap policy is disabled.
+- compare and gate workflow now includes deterministic paired artifact generation via `rspp-cli live-latency-compare-report`; `verify-mvp` fails closed if compare evidence is missing/invalid.
+
+Implementation progress snapshot (2026-02-13):
+1. Mode-correctness path is implemented end-to-end (effective handoff policy + effective provider streaming posture captured in live artifacts).
+2. Dual-metric comparison artifacts are implemented (`first_assistant_audio_e2e_latency_ms`, `turn_completion_e2e_latency_ms`).
+3. Latest paired live sample (`stt-assemblyai|llm-anthropic|tts-elevenlabs`, combo cap 1) still showed streaming slower:
+   - first-audio delta (streaming - non-streaming): `+3969ms`
+   - completion delta (streaming - non-streaming): `+4925ms`
+   - dominant contributor in this sample: STT attempt latency.
 
 Transport independence note:
 1. LiveKit usage at transport boundary does not block provider-native streaming upgrades.

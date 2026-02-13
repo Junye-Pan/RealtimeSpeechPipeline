@@ -24,7 +24,7 @@ This folder is the execution kernel for deterministic turn lifecycle, scheduling
 | `RK-17` Budget | `internal/runtime/budget` | `Runtime-Team` | implemented baseline |
 | `RK-18` Timebase Service | `internal/runtime/timebase` | `Runtime-Team` | scaffolded |
 | `RK-19` Determinism | `internal/runtime/determinism` | `Runtime-Team` | implemented baseline |
-| `RK-20` State Access | `internal/runtime/state` | `Runtime-Team` | implemented baseline |
+| `RK-20` State Access | `internal/runtime/state` | `Runtime-Team` | scaffolded |
 | `RK-21` Identity/Correlation | `internal/runtime/identity` | `Runtime-Team` | implemented baseline |
 | `RK-22`/`RK-23` Transport Boundary | `internal/runtime/transport` | `Transport-Team` | implemented baseline |
 | `RK-24` Runtime Contract Guard | `internal/runtime/guard` | `Runtime-Team` | implemented baseline |
@@ -121,13 +121,14 @@ Status:
 - live-provider chain smoke uses this path in `test/integration/provider_live_smoke_test.go` (`TestLiveProviderSmokeChainedWorkflow`)
 - runtime policy is currently environment-driven via `StreamingHandoffPolicyFromEnv` (`RSPP_ORCH_STREAM_HANDOFF_*`) with deterministic sequential fallback when disabled
 - `ResolvedTurnPlan.streaming_handoff` contract types exist in `api/controlplane/types.go`; planresolver/runtime wiring to consume those per-turn values is still pending
+- current trigger implementation uses `min_partial_chars` and punctuation boundaries; `max_partial_age_ms`, per-edge `min_tts_chars`, and explicit max-wait timers are not yet implemented in runtime executor
 
 Handoff contract:
 1. STT emits `start` and ordered `delta` chunks with monotonic sequence numbers.
-2. Runtime opens an `STT->LLM` handoff window when partial trigger policy is met (for example `min_partial_chars`, punctuation boundary, or max partial age).
+2. Runtime opens an `STT->LLM` handoff window when partial trigger policy is met (`min_partial_chars` or punctuation boundary).
 3. LLM invocation starts on eligible STT partial content and is tagged with `handoff_id` + `upstream_revision`.
 4. STT `final` seals a revision. If final text invalidates prior prefix, runtime deterministically supersedes downstream work and restarts from the latest stable prefix.
-5. LLM emits partial tokens; runtime opens an `LLM->TTS` handoff window on segment boundaries (`min_tts_chars`, punctuation, or max wait).
+5. LLM emits partial tokens; runtime opens an `LLM->TTS` handoff window on segment boundaries (`min_partial_chars` or punctuation boundary).
 6. TTS starts synthesis before LLM final and streams audio chunks while preserving output fence ordering.
 
 Deterministic consistency rules:
@@ -140,7 +141,7 @@ Slow-stage and backpressure policy:
 
 | Condition | Runtime action | Expected outcome |
 | --- | --- | --- |
-| STT slower than downstream demand | keep downstream idle; optionally fall back to final-only handoff after max-wait | continue unless wait budget exhausted |
+| STT slower than downstream demand | keep downstream idle until partial trigger or STT completion; emit final-only handoff on STT completion (`final_fallback`) | continue unless upstream failure or turn budget/policy exhaustion forces terminalization |
 | LLM slower than STT partial ingress | bound STT-partial queue, coalesce to latest revision, emit `flow_xoff` at high watermark | retry/switch/degrade before terminal abort |
 | TTS slower than LLM partial egress | bound token-to-audio queue, throttle `LLM->TTS` forwarding | degrade to text-only or deterministic abort on no legal path |
 | Stage hard-failure | apply modality retry/provider-switch/fallback policy | accepted turn still emits one terminal outcome then `close` |
@@ -158,7 +159,8 @@ These items are planned and prioritized for implementation; this section is docu
    - Runtime scope: chunk eligibility logic in streaming handoff hooks.
    - Expected impact: fewer false handoff openings and more stable handoff latency.
 3. STT streaming transport latency tuning:
-   - Goal: reduce provider-side partial wait intervals (for example AssemblyAI poll interval controls) while preserving deterministic behavior.
+   - Goal: reduce provider-side partial wait intervals while preserving deterministic behavior.
+   - Status: bounded AssemblyAI poll cadence env knob is implemented (`RSPP_STT_ASSEMBLYAI_POLL_INTERVAL_MS`, clamped to safe limits).
    - Runtime scope: STT adapter-level cadence knobs surfaced through provider config.
    - Expected impact: improved `stt_first_partial_latency_ms` and downstream start latency.
 4. Native STT streaming transport rollout for all STT adapters:
@@ -167,6 +169,10 @@ These items are planned and prioritized for implementation; this section is docu
    - Expected impact: strongest improvement in first-partial and first-audio latency.
 5. Fair streaming vs non-streaming semantic parity:
    - Goal: enforce equivalent success semantics when comparing modes (avoid early-success bias in non-streaming paths).
+   - Status: implemented baseline:
+     - explicit per-invocation non-streaming control (`DisableProviderStreaming`) through scheduler -> RK-11
+     - live chain mode-proof checks (streaming overlap evidence + non-streaming `streaming_used=false`)
+     - compare artifact generation (`live-latency-compare-report`)
    - Runtime scope: provider outcome completion criteria and live compare workflow.
    - Expected impact: trustworthy A/B latency conclusions and valid gate decisions.
 
@@ -218,6 +224,7 @@ Runtime kernel behavior is evaluated against these PRD targets (measurement emit
 - `go test ./test/integration ./test/failover ./test/replay`
 - `make verify-quick`
 - `make verify-full`
+- `make verify-mvp`
 
 ## Change checklist
 

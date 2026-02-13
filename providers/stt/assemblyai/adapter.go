@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,6 +16,13 @@ import (
 )
 
 const ProviderID = "stt-assemblyai"
+
+const (
+	defaultPollInterval = 1200 * time.Millisecond
+	minPollIntervalMS   = 200
+	maxPollIntervalMS   = 5000
+	pollIntervalEnvVar  = "RSPP_STT_ASSEMBLYAI_POLL_INTERVAL_MS"
+)
 
 type Config struct {
 	APIKey       string
@@ -38,7 +46,7 @@ func ConfigFromEnv() Config {
 		AudioURL:     defaultString(os.Getenv("RSPP_STT_ASSEMBLYAI_AUDIO_URL"), "https://static.deepgram.com/examples/Bueller-Life-moves-pretty-fast.wav"),
 		SpeechModels: parseSpeechModels(os.Getenv("RSPP_STT_ASSEMBLYAI_SPEECH_MODELS")),
 		Timeout:      45 * time.Second,
-		PollInterval: 1200 * time.Millisecond,
+		PollInterval: pollIntervalFromEnv(),
 	}
 }
 
@@ -50,7 +58,7 @@ func NewAdapter(cfg Config) (contracts.Adapter, error) {
 		cfg.Timeout = 45 * time.Second
 	}
 	if cfg.PollInterval <= 0 {
-		cfg.PollInterval = 1200 * time.Millisecond
+		cfg.PollInterval = defaultPollInterval
 	}
 	unary, err := httpadapter.New(httpadapter.Config{
 		ProviderID:    ProviderID,
@@ -383,4 +391,22 @@ func parseSpeechModels(raw string) []string {
 		return []string{"universal-2"}
 	}
 	return models
+}
+
+func pollIntervalFromEnv() time.Duration {
+	raw := strings.TrimSpace(os.Getenv(pollIntervalEnvVar))
+	if raw == "" {
+		return defaultPollInterval
+	}
+	valueMS, err := strconv.Atoi(raw)
+	if err != nil {
+		return defaultPollInterval
+	}
+	if valueMS < minPollIntervalMS {
+		valueMS = minPollIntervalMS
+	}
+	if valueMS > maxPollIntervalMS {
+		valueMS = maxPollIntervalMS
+	}
+	return time.Duration(valueMS) * time.Millisecond
 }

@@ -49,11 +49,20 @@ A scaffold/layout change should declare:
 
 | File | Scope |
 | --- | --- |
-| `docs/rspp_SystemDesign.md` | Repository-level architecture model and boundaries |
-| `docs/CIValidationGates.md` | Repository-level gate policy and command map |
+| `docs/rspp_SystemDesign.md` | Repository-level architecture model and boundaries (includes current streaming/non-streaming execution progress snapshot) |
+| `docs/CIValidationGates.md` | Repository-level gate policy and command map (includes implementation progress snapshot for live mode-proof/compare gating) |
 | `docs/SecurityDataHandlingBaseline.md` | Repository-level security and data-handling policy |
 | `docs/ContractArtifacts.schema.json` | Shared contract artifact schema |
 | `docs/runbooks/runbooks_index.md` | Repository-level runbook index and scope rule |
+| `docs/PRD.md` | Product requirements and MVP standards (includes execution progress snapshot for streaming vs non-streaming plan outcomes) |
+
+## Progress snapshot pointers
+
+Use these sections for the latest recorded progress on the streaming/non-streaming latency plan:
+1. `docs/PRD.md` section `5.3 Execution progress snapshot (2026-02-13)`
+2. `docs/rspp_SystemDesign.md` section `Implementation progress snapshot (2026-02-13)`
+3. `docs/CIValidationGates.md` section `5.2 Implementation progress snapshot (2026-02-13)`
+4. `internal/tooling/tooling_and_gates_guide.md` section `Latest implementation progress snapshot (2026-02-13)`
 
 ## Update workflow
 

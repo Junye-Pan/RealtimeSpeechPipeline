@@ -40,7 +40,7 @@ Implemented LiveKit adapter entrypoints:
 
 1. Deterministic ingress mapping and ABI normalization are preserved.
 2. Runtime output fence behavior is preserved through adapter integration.
-3. Lifecycle signal normalization remains schema-valid (`connected`, `reconnecting`, `disconnected`, `ended`, `silence`, `user_muted`, `stall`).
+3. Lifecycle signal normalization remains schema-valid (`connected`, `reconnecting`, `disconnected`, `ended`, `silence`, `stall`).
 4. Runtime and local-runner command surfaces produce deterministic report artifacts.
 
 ## Transport boundary contract alignment
@@ -53,11 +53,11 @@ Authority and lease/epoch requirements (PRD alignment):
 
 Ingress mapping and connection-behavior requirements (PRD alignment):
 1. Transport audio frames (with media timestamps) must map deterministically to runtime DataLane events with preserved ordering/continuity markers.
-2. Connection normalization must cover liveness/keepalive interpretation and schema-valid lifecycle signals (`connected`, `reconnecting`, `disconnected`, `ended`, `silence`, `user_muted`, `stall`).
-3. Disconnect handling must be explicit: on disconnect during an active turn, adapter behavior must cooperate with runtime turn abort rules (`abort(reason=disconnect)`), drain rules, and cleanup semantics.
+2. Connection normalization must cover liveness/keepalive interpretation and schema-valid lifecycle signals (`connected`, `reconnecting`, `disconnected`, `ended`, `silence`, `stall`).
+3. Disconnect handling must be explicit: on disconnect during an active turn, adapter behavior must cooperate with runtime turn abort rules (`abort(reason=transport_disconnect_or_stall)`), drain rules, and cleanup semantics.
 
 Playback, cancellation, and output-delivery requirements (PRD alignment):
-1. Transport adapters map playback/output lifecycle to ControlLane delivery signals (`output_accepted`, `playback_started`, `playback_completed`, `playback_cancelled`).
+1. Current LiveKit transport output-fence mapping emits ControlLane delivery signals `output_accepted` (pre-cancel allowed egress) and `playback_cancelled` (post-cancel fenced egress). `playback_started` and `playback_completed` are not emitted by the current adapter implementation.
 2. After `cancel(scope)` acceptance, transport egress queues for that scope must be fenced/cleared; emitting new `output_accepted` or `playback_started` signals for that scope is invalid.
 3. Deterministic artifacts should preserve enough signal lineage to diagnose cancel fences, playback completion, and dropped/fenced output behavior.
 

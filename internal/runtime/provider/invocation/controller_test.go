@@ -461,3 +461,57 @@ func TestInvokeUsesStreamingAdapterWhenEnabled(t *testing.T) {
 		t.Fatalf("expected streamed chunk count >=1, got %d", result.Attempts[0].ChunkCount)
 	}
 }
+
+func TestInvokeDisablesStreamingWhenExplicitlyRequested(t *testing.T) {
+	streamInvocations := 0
+	unaryInvocations := 0
+	catalog, err := registry.NewCatalog([]contracts.Adapter{
+		contracts.StaticAdapter{
+			ID:   "llm-stream",
+			Mode: contracts.ModalityLLM,
+			InvokeFn: func(req contracts.InvocationRequest) (contracts.Outcome, error) {
+				unaryInvocations++
+				return contracts.Outcome{Class: contracts.OutcomeSuccess}, nil
+			},
+			InvokeStreamFn: func(req contracts.InvocationRequest, observer contracts.StreamObserver) (contracts.Outcome, error) {
+				streamInvocations++
+				return contracts.Outcome{Class: contracts.OutcomeSuccess}, nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected catalog error: %v", err)
+	}
+
+	controller := NewController(catalog)
+	result, err := controller.Invoke(InvocationInput{
+		SessionID:                "sess-stream-disable-1",
+		TurnID:                   "turn-stream-disable-1",
+		PipelineVersion:          "pipeline-v1",
+		EventID:                  "evt-stream-disable-1",
+		Modality:                 contracts.ModalityLLM,
+		PreferredProvider:        "llm-stream",
+		EnableStreaming:          true,
+		DisableProviderStreaming: true,
+		TransportSequence:        1,
+		RuntimeSequence:          1,
+		AuthorityEpoch:           1,
+		RuntimeTimestampMS:       1,
+		WallClockTimestampMS:     1,
+	})
+	if err != nil {
+		t.Fatalf("unexpected invoke error: %v", err)
+	}
+	if result.Outcome.Class != contracts.OutcomeSuccess {
+		t.Fatalf("expected success outcome, got %s", result.Outcome.Class)
+	}
+	if unaryInvocations != 1 || streamInvocations != 0 {
+		t.Fatalf("expected unary path only when disable flag is set, got unary=%d stream=%d", unaryInvocations, streamInvocations)
+	}
+	if result.StreamingUsed {
+		t.Fatalf("expected streaming_used=false when disable flag is set, got %+v", result)
+	}
+	if len(result.Attempts) != 1 || result.Attempts[0].StreamingUsed {
+		t.Fatalf("expected attempt evidence to show non-streaming invocation, got %+v", result.Attempts)
+	}
+}

@@ -53,23 +53,24 @@ Runtime behavior suites:
 - `AE-001`, `AE-004`, `AE-005`
 - `AE-002`, `AE-003` (`not implemented` as dedicated `AE-*` suites)
 - `ML-001`, `ML-002`, `ML-003`, `ML-004`
-- `LK-001`..`LK-003`
+- LiveKit transport coverage mapped to `LK` family scope (`LK-001`..`LK-003`) via transport/integration/command tests; dedicated `LK-*` test function IDs are not used in current test names.
 
 Streaming handoff coverage (implemented baseline + planned expansion):
 - Implemented baseline:
   - `internal/runtime/executor/streaming_handoff_test.go` verifies overlap start ordering (`STT->LLM`, `LLM->TTS`) and sequential fallback when policy is disabled.
+  - `internal/runtime/executor/streaming_handoff_test.go` verifies handoff queue saturation/recovery signaling (`flow_xoff`/`flow_xon`) on `stt_to_llm` and `llm_to_tts` edges.
   - `test/integration/provider_live_smoke_test.go` (`TestLiveProviderSmokeChainedWorkflow`) executes live chain combinations and records handoff/latency evidence.
+  - `test/integration/provider_live_smoke_test.go` writes streaming/non-streaming artifacts with parity markers and comparison identity for MVP gate validity.
 - Planned expansion:
   - `SH-003`: upstream revision supersedes downstream deterministic restart behavior
-  - `SH-004`: slow-stage queue watermark and degrade/fallback behavior
   - `SH-005`: cancel/authority-loss fencing across active handoff windows
 
 Representative evidence paths:
 - `CT-001`..`CT-005`: `test/contract/*`, `api/*/types_test.go`, `internal/tooling/validation/*`
-- `CT-006`: `test/integration/runtime_chain_test.go` (CP backend parity/fallback/stale determinism coverage)
+- CP backend parity/fallback/stale determinism coverage: `test/integration/runtime_chain_test.go` (currently not tracked as a dedicated `CT-006` fixture/test ID)
 - `RD-*`: `test/replay/*`, `internal/tooling/regression/*`, `cmd/rspp-cli` replay reports
 - `CF-*`, `AE-*`, `ML-*`: `test/integration/*`, `test/failover/*`, runtime package tests
-- `LK-*`: `transports/livekit/*_test.go`, `test/integration/livekit_transport_integration_test.go`, `cmd/*livekit*` tests
+- `LK` family coverage: `transports/livekit/*_test.go`, `test/integration/livekit_transport_integration_test.go`, `test/integration/livekit_live_smoke_test.go`, `cmd/*livekit*` tests
 
 ## Replay fixture metadata policy
 
@@ -120,31 +121,39 @@ Full set:
 
 ## Gate mapping
 
-- `make verify-quick`: contract + integration + replay suites + failover smoke subset
-- `make verify-full`: full `go test ./...` plus replay regression and artifact checks
+- `make verify-quick`: contract/integration/replay suites + failover smoke subset, plus baseline artifact/report generation (`validate-contracts-report`, `replay-smoke-report`, `generate-runtime-baseline`, `slo-gates-report`)
+- `make verify-full`: full `go test ./...` plus replay regression and baseline artifact/report checks
+- `make verify-mvp`: full baseline gates plus `live-latency-compare-report` and `slo-gates-mvp-report` live end-to-end/fixed-decision checks
 - Optional non-blocking: live-provider smoke, LiveKit smoke, A2 runtime live matrix
 
 Live-provider smoke chain evidence:
 1. `.codex/providers/live-provider-chain-report.json` stores per-step inputs/outputs and per-attempt latency/chunk metrics.
 2. `.codex/providers/live-provider-chain-report.md` provides operator-readable summary with pass/fail/skip and latency rollups.
+3. `.codex/providers/live-provider-chain-report.streaming.json` and `.codex/providers/live-provider-chain-report.nonstreaming.json` preserve mode-specific evidence with parity markers.
+4. `.codex/providers/live-provider-chain-report.streaming.md` and `.codex/providers/live-provider-chain-report.nonstreaming.md` provide mode-specific operator summaries.
 
-## Streaming vs non-streaming compare protocol (planned)
+## Streaming vs non-streaming compare protocol (implemented MVP baseline)
 
 Use this protocol when evaluating latency impact of streaming handoff and provider streaming paths:
 1. Keep provider combination fixed:
    - same STT/LLM/TTS IDs for compared runs
 2. Keep workload fixed:
-   - same input snapshot fields and same combination cap
+   - recommended operator practice: keep input snapshot fields and combination cap consistent
+   - current compare-gate enforcement is based on mode markers and shared provider-combination identity
 3. Record execution mode explicitly:
    - run A: `execution_mode=streaming`
    - run B: `execution_mode=non_streaming`
 4. Verify semantic parity before comparing latency:
    - both runs must represent equivalent completion semantics
-   - if parity is false, comparison is diagnostic-only and not gate-valid
+   - if parity is false, comparison is diagnostic-only and fails MVP fixed-decision gate validity
 5. Report deltas on common metrics:
+   - `first_assistant_audio_e2e_latency_ms`
    - `turn_completion_e2e_latency_ms`
-   - where available, first partial/chunk and handoff latency fields
-6. Include invalid-comparison reason in artifacts when parity or input identity checks fail.
+   - handoff latency fields and attempt-level `streaming_used`
+6. Include invalid-comparison reason in artifacts when parity or comparison-identity checks fail.
+7. Generate compare artifact:
+   - `go run ./cmd/rspp-cli live-latency-compare-report .codex/providers/live-latency-compare.json .codex/providers/live-provider-chain-report.streaming.json .codex/providers/live-provider-chain-report.nonstreaming.json`
+8. Ensure provider enable toggles are present for selected providers (`RSPP_*_ENABLE=1`) in addition to API-key variables; otherwise live-chain artifacts may be skip-only and not comparable.
 
 ## Baseline exit criteria
 

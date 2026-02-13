@@ -54,6 +54,7 @@ type BaselineEvidence struct {
 	CloseEmitted             bool
 	TurnOpenProposedAtMS     *int64
 	TurnOpenAtMS             *int64
+	TurnTerminalAtMS         *int64
 	FirstOutputAtMS          *int64
 	CancelAcceptedAtMS       *int64
 	CancelFenceAppliedAtMS   *int64
@@ -355,6 +356,14 @@ func (b BaselineEvidence) ValidateCompleteness() error {
 	}
 	if b.TerminalOutcome == "abort" && b.TerminalReason == "" {
 		return fmt.Errorf("terminal reason is required for abort outcomes")
+	}
+	if b.TurnOpenAtMS != nil {
+		if b.TurnTerminalAtMS == nil {
+			return fmt.Errorf("turn_terminal_at is required for accepted turns")
+		}
+		if *b.TurnTerminalAtMS < *b.TurnOpenAtMS {
+			return fmt.Errorf("turn_terminal_at must be >= turn_open_at")
+		}
 	}
 	if b.CancelAcceptedAtMS != nil {
 		if b.CancelFenceAppliedAtMS == nil {

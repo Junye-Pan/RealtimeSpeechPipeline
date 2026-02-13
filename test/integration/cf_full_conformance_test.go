@@ -84,6 +84,7 @@ func TestCF004CancelObservabilityMarkersInOR02(t *testing.T) {
 	openProposed := int64(0)
 	open := int64(80)
 	firstOutput := int64(300)
+	terminal := int64(500)
 	evidence := timeline.BaselineEvidence{
 		SessionID:        "sess-cf-004",
 		TurnID:           "turn-cf-004",
@@ -125,6 +126,7 @@ func TestCF004CancelObservabilityMarkersInOR02(t *testing.T) {
 		CloseEmitted:           true,
 		TurnOpenProposedAtMS:   &openProposed,
 		TurnOpenAtMS:           &open,
+		TurnTerminalAtMS:       &terminal,
 		FirstOutputAtMS:        &firstOutput,
 		CancelSentAtMS:         &cancelSent,
 		CancelAcceptedAtMS:     &cancelAccepted,

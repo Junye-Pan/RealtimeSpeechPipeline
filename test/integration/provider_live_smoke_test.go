@@ -3,6 +3,7 @@
 package integration_test
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -35,10 +36,17 @@ const (
 	defaultLiveProviderChainMaxCombos    = 12
 	defaultLiveProviderChainReportPath   = ".codex/providers/live-provider-chain-report.json"
 	defaultLiveProviderChainReportMDPath = ".codex/providers/live-provider-chain-report.md"
+	defaultStreamingChainReportPath      = ".codex/providers/live-provider-chain-report.streaming.json"
+	defaultStreamingChainReportMDPath    = ".codex/providers/live-provider-chain-report.streaming.md"
+	defaultNonStreamingChainReportPath   = ".codex/providers/live-provider-chain-report.nonstreaming.json"
+	defaultNonStreamingChainReportMDPath = ".codex/providers/live-provider-chain-report.nonstreaming.md"
 
 	defaultProviderIOCaptureMode     = "redacted"
 	defaultProviderIOCaptureMaxBytes = 8192
 	minProviderIOCaptureMaxBytes     = 256
+
+	envLiveProviderChainExecutionMode = "RSPP_LIVE_PROVIDER_CHAIN_EXECUTION_MODE"
+	envLiveProviderChainParityPath    = "RSPP_LIVE_PROVIDER_CHAIN_PARITY_REFERENCE_PATH"
 )
 
 type liveProviderCase struct {
@@ -118,6 +126,7 @@ type liveProviderChainStepOutput struct {
 	AttemptCount        int                            `json:"attempt_count"`
 	Attempts            []liveProviderChainStepAttempt `json:"attempts"`
 	Signals             []liveProviderChainStepSignal  `json:"signals,omitempty"`
+	PseudoStreaming     bool                           `json:"pseudo_streaming,omitempty"`
 	RawInputPayload     string                         `json:"raw_input_payload,omitempty"`
 	RawOutputPayload    string                         `json:"raw_output_payload,omitempty"`
 	RawOutputStatusCode int                            `json:"raw_output_status_code,omitempty"`
@@ -146,7 +155,24 @@ type liveProviderChainCombinationReport struct {
 	Handoffs       []liveProviderChainHandoff    `json:"handoffs,omitempty"`
 	CoalesceCount  int                           `json:"coalesce_count,omitempty"`
 	SupersedeCount int                           `json:"supersede_count,omitempty"`
+	ModeEvidenceOK bool                          `json:"mode_evidence_ok"`
+	ModeViolations []string                      `json:"mode_violations,omitempty"`
 	Steps          []liveProviderChainStepReport `json:"steps"`
+}
+
+type liveProviderChainEffectiveHandoffPolicy struct {
+	Enabled             bool   `json:"enabled"`
+	STTToLLMEnabled     bool   `json:"stt_to_llm_enabled"`
+	LLMToTTSEnabled     bool   `json:"llm_to_tts_enabled"`
+	MinPartialChars     int    `json:"min_partial_chars"`
+	MaxPendingRevisions int    `json:"max_pending_revisions"`
+	CoalesceLatestOnly  bool   `json:"coalesce_latest_only"`
+	Source              string `json:"source"`
+}
+
+type liveProviderChainEffectiveProviderStreaming struct {
+	EnableStreaming  bool `json:"enable_streaming"`
+	DisableStreaming bool `json:"disable_streaming"`
 }
 
 type liveProviderChainHandoff struct {
@@ -172,23 +198,32 @@ type liveProviderChainLatency struct {
 }
 
 type liveProviderChainReport struct {
-	GeneratedAtUTC            string                                 `json:"generated_at_utc"`
-	Status                    string                                 `json:"status"`
-	ComboCap                  int                                    `json:"combo_cap"`
-	ComboCapSource            string                                 `json:"combo_cap_source"`
-	ComboCapParseWarning      string                                 `json:"combo_cap_parse_warning,omitempty"`
-	ProviderIOCaptureMode     string                                 `json:"provider_io_capture_mode"`
-	ProviderIOCaptureMaxBytes int                                    `json:"provider_io_capture_max_bytes"`
-	ReportPath                string                                 `json:"report_path"`
-	ReportMarkdownPath        string                                 `json:"report_markdown_path"`
-	EnabledProviders          chainEnabledProviders                  `json:"enabled_providers"`
-	MissingModalities         []string                               `json:"missing_modalities,omitempty"`
-	SkipReason                string                                 `json:"skip_reason,omitempty"`
-	TotalCombinationCount     int                                    `json:"total_combination_count"`
-	ExecutedCombinationCount  int                                    `json:"executed_combination_count"`
-	SelectedCombinations      []liveProviderChainSelectedCombination `json:"selected_combinations,omitempty"`
-	Aggregate                 liveProviderChainAggregate             `json:"aggregate"`
-	Combinations              []liveProviderChainCombinationReport   `json:"combinations,omitempty"`
+	GeneratedAtUTC             string                                      `json:"generated_at_utc"`
+	Status                     string                                      `json:"status"`
+	ExecutionMode              string                                      `json:"execution_mode,omitempty"`
+	ComparisonIdentity         string                                      `json:"comparison_identity,omitempty"`
+	EffectiveHandoffPolicy     liveProviderChainEffectiveHandoffPolicy     `json:"effective_handoff_policy"`
+	EffectiveProviderStreaming liveProviderChainEffectiveProviderStreaming `json:"effective_provider_streaming"`
+	PseudoStreamingProviders   []string                                    `json:"pseudo_streaming_providers,omitempty"`
+	SemanticParity             *bool                                       `json:"semantic_parity,omitempty"`
+	ParityComparisonValid      *bool                                       `json:"parity_comparison_valid,omitempty"`
+	ParityInvalidReason        string                                      `json:"parity_invalid_reason,omitempty"`
+	ParityReferencePath        string                                      `json:"parity_reference_path,omitempty"`
+	ComboCap                   int                                         `json:"combo_cap"`
+	ComboCapSource             string                                      `json:"combo_cap_source"`
+	ComboCapParseWarning       string                                      `json:"combo_cap_parse_warning,omitempty"`
+	ProviderIOCaptureMode      string                                      `json:"provider_io_capture_mode"`
+	ProviderIOCaptureMaxBytes  int                                         `json:"provider_io_capture_max_bytes"`
+	ReportPath                 string                                      `json:"report_path"`
+	ReportMarkdownPath         string                                      `json:"report_markdown_path"`
+	EnabledProviders           chainEnabledProviders                       `json:"enabled_providers"`
+	MissingModalities          []string                                    `json:"missing_modalities,omitempty"`
+	SkipReason                 string                                      `json:"skip_reason,omitempty"`
+	TotalCombinationCount      int                                         `json:"total_combination_count"`
+	ExecutedCombinationCount   int                                         `json:"executed_combination_count"`
+	SelectedCombinations       []liveProviderChainSelectedCombination      `json:"selected_combinations,omitempty"`
+	Aggregate                  liveProviderChainAggregate                  `json:"aggregate"`
+	Combinations               []liveProviderChainCombinationReport        `json:"combinations,omitempty"`
 }
 
 type liveProviderChainCombination struct {
@@ -374,16 +409,35 @@ func TestLiveProviderSmokeChainedWorkflow(t *testing.T) {
 	}
 
 	maxCombos, maxComboSource, maxComboParseWarning := liveProviderChainComboLimit()
-	reportPath, reportMDPath := liveProviderChainReportPaths()
+	executionMode, enableStreaming := liveProviderChainExecutionMode()
+	handoffPolicy, handoffPolicySource := liveProviderChainHandoffPolicy(enableStreaming)
+	reportPath, reportMDPath := liveProviderChainReportPaths(executionMode)
 	captureMode, captureMaxBytes := liveProviderIOCaptureConfig()
 	enabled := enabledProvidersByModality()
 	missing := missingModalities(enabled)
 	allCombos := buildLiveProviderChainCombinations(enabled)
 	selectedCombos := limitLiveProviderChainCombinations(allCombos, maxCombos)
+	comparisonIdentity := liveProviderChainComparisonIdentity(selectedCombos)
 
 	report := liveProviderChainReport{
-		GeneratedAtUTC:            time.Now().UTC().Format(time.RFC3339),
-		Status:                    "pending",
+		GeneratedAtUTC:     time.Now().UTC().Format(time.RFC3339),
+		Status:             "pending",
+		ExecutionMode:      executionMode,
+		ComparisonIdentity: comparisonIdentity,
+		EffectiveHandoffPolicy: liveProviderChainEffectiveHandoffPolicy{
+			Enabled:             handoffPolicy.Enabled,
+			STTToLLMEnabled:     handoffPolicy.STTToLLMEnabled,
+			LLMToTTSEnabled:     handoffPolicy.LLMToTTSEnabled,
+			MinPartialChars:     handoffPolicy.MinPartialChars,
+			MaxPendingRevisions: handoffPolicy.MaxPendingRevisions,
+			CoalesceLatestOnly:  handoffPolicy.CoalesceLatestOnly,
+			Source:              handoffPolicySource,
+		},
+		EffectiveProviderStreaming: liveProviderChainEffectiveProviderStreaming{
+			EnableStreaming:  enableStreaming,
+			DisableStreaming: !enableStreaming,
+		},
+		PseudoStreamingProviders:  pseudoStreamingProvidersForCombinations(selectedCombos),
 		ComboCap:                  maxCombos,
 		ComboCapSource:            maxComboSource,
 		ComboCapParseWarning:      maxComboParseWarning,
@@ -432,18 +486,18 @@ func TestLiveProviderSmokeChainedWorkflow(t *testing.T) {
 		runtimeProviders.Controller,
 		&recorder,
 	)
-	handoffPolicy := executor.StreamingHandoffPolicyFromEnv()
 
 	failureMessage := ""
 	for i, combo := range selectedCombos {
 		comboReport := liveProviderChainCombinationReport{
-			ComboIndex:    i + 1,
-			ComboID:       fmt.Sprintf("combo-%02d", i+1),
-			STTProviderID: combo.STTProviderID,
-			LLMProviderID: combo.LLMProviderID,
-			TTSProviderID: combo.TTSProviderID,
-			Status:        "pass",
-			Steps:         make([]liveProviderChainStepReport, 0, 3),
+			ComboIndex:     i + 1,
+			ComboID:        fmt.Sprintf("combo-%02d", i+1),
+			STTProviderID:  combo.STTProviderID,
+			LLMProviderID:  combo.LLMProviderID,
+			TTSProviderID:  combo.TTSProviderID,
+			Status:         "pass",
+			ModeEvidenceOK: true,
+			Steps:          make([]liveProviderChainStepReport, 0, 3),
 		}
 
 		comboBaseTimestamp := time.Now().UnixMilli() + int64(i*100)
@@ -464,30 +518,33 @@ func TestLiveProviderSmokeChainedWorkflow(t *testing.T) {
 				WallClockTimestampMS: comboBaseTimestamp,
 			},
 			executor.ProviderInvocationInput{
-				Modality:               contracts.ModalitySTT,
-				PreferredProvider:      combo.STTProviderID,
-				AllowedAdaptiveActions: []string{"retry", "provider_switch", "fallback"},
-				ProviderInvocationID:   fmt.Sprintf("pvi-live-provider-chain-%02d-stt", i+1),
-				EnableStreaming:        true,
+				Modality:                 contracts.ModalitySTT,
+				PreferredProvider:        combo.STTProviderID,
+				AllowedAdaptiveActions:   []string{"retry", "provider_switch", "fallback"},
+				ProviderInvocationID:     fmt.Sprintf("pvi-live-provider-chain-%02d-stt", i+1),
+				EnableStreaming:          enableStreaming,
+				DisableProviderStreaming: !enableStreaming,
 			},
 			executor.ProviderInvocationInput{
-				Modality:               contracts.ModalityLLM,
-				PreferredProvider:      combo.LLMProviderID,
-				AllowedAdaptiveActions: []string{"retry", "provider_switch", "fallback"},
-				ProviderInvocationID:   fmt.Sprintf("pvi-live-provider-chain-%02d-llm", i+1),
-				EnableStreaming:        true,
+				Modality:                 contracts.ModalityLLM,
+				PreferredProvider:        combo.LLMProviderID,
+				AllowedAdaptiveActions:   []string{"retry", "provider_switch", "fallback"},
+				ProviderInvocationID:     fmt.Sprintf("pvi-live-provider-chain-%02d-llm", i+1),
+				EnableStreaming:          enableStreaming,
+				DisableProviderStreaming: !enableStreaming,
 			},
 			executor.ProviderInvocationInput{
-				Modality:               contracts.ModalityTTS,
-				PreferredProvider:      combo.TTSProviderID,
-				AllowedAdaptiveActions: []string{"retry", "provider_switch", "fallback"},
-				ProviderInvocationID:   fmt.Sprintf("pvi-live-provider-chain-%02d-tts", i+1),
-				EnableStreaming:        true,
+				Modality:                 contracts.ModalityTTS,
+				PreferredProvider:        combo.TTSProviderID,
+				AllowedAdaptiveActions:   []string{"retry", "provider_switch", "fallback"},
+				ProviderInvocationID:     fmt.Sprintf("pvi-live-provider-chain-%02d-tts", i+1),
+				EnableStreaming:          enableStreaming,
+				DisableProviderStreaming: !enableStreaming,
 			},
 			handoffPolicy,
 		)
 
-		comboReport.Latency = chainLatencyFromExecutor(chainResult.Latency)
+		comboReport.Latency = normalizeChainLatencyForMode(executionMode, chainLatencyFromExecutor(chainResult.Latency))
 		comboReport.Handoffs = chainHandoffsFromExecutor(chainResult.Handoffs)
 		comboReport.CoalesceCount = chainResult.CoalesceCount
 		comboReport.SupersedeCount = chainResult.SupersedeCount
@@ -551,6 +608,7 @@ func TestLiveProviderSmokeChainedWorkflow(t *testing.T) {
 				stage.stageResult.Decision.ProviderInvocationID,
 			)
 			stepReport.Output = chainStepOutputFromEvidence(*stage.stageResult.Decision, attempts)
+			stepReport.Output.PseudoStreaming = isPseudoStreamingProvider(stage.stageResult.Decision.SelectedProvider)
 			comboReport.Steps = append(comboReport.Steps, stepReport)
 
 			if stage.stageResult.Decision.OutcomeClass != contracts.OutcomeSuccess {
@@ -570,6 +628,26 @@ func TestLiveProviderSmokeChainedWorkflow(t *testing.T) {
 			}
 			comboReport.FailureReason = chainErr.Error()
 			report.Aggregate.StepFailureCount++
+		}
+
+		if comboReport.Status == "pass" {
+			modeViolations := validateModeEvidence(executionMode, comboReport)
+			comboReport.ModeEvidenceOK = len(modeViolations) == 0
+			comboReport.ModeViolations = modeViolations
+			if len(modeViolations) > 0 {
+				comboReport.Status = "fail"
+				comboReport.FailureStep = "mode_evidence"
+				comboReport.FailureReason = strings.Join(modeViolations, "; ")
+				report.Aggregate.StepFailureCount++
+				failureMessage = fmt.Sprintf(
+					"mode evidence failed for combo[%d] stt=%s llm=%s tts=%s: %s",
+					i+1,
+					combo.STTProviderID,
+					combo.LLMProviderID,
+					combo.TTSProviderID,
+					comboReport.FailureReason,
+				)
+			}
 		}
 
 		if comboReport.Status == "fail" {
@@ -598,6 +676,7 @@ func TestLiveProviderSmokeChainedWorkflow(t *testing.T) {
 	} else {
 		report.Status = "pass"
 	}
+	annotateLiveProviderChainParity(&report)
 
 	if err := writeLiveProviderChainReport(report); err != nil {
 		t.Fatalf("write live-provider chain report: %v", err)
@@ -702,16 +781,198 @@ func liveProviderChainComboLimit() (int, string, string) {
 	return value, "env", ""
 }
 
-func liveProviderChainReportPaths() (string, string) {
+func liveProviderChainExecutionMode() (string, bool) {
+	raw := strings.ToLower(strings.TrimSpace(os.Getenv(envLiveProviderChainExecutionMode)))
+	switch raw {
+	case "", "streaming":
+		return "streaming", true
+	case "non_streaming", "non-streaming", "nonstreaming":
+		return "non_streaming", false
+	default:
+		return "streaming", true
+	}
+}
+
+func liveProviderChainHandoffPolicy(enableStreaming bool) (executor.StreamingHandoffPolicy, string) {
+	if !enableStreaming {
+		return executor.DefaultStreamingHandoffPolicy(), "disabled_non_streaming_mode"
+	}
+	policy := executor.StreamingHandoffPolicyFromEnv()
+	if policy.Enabled {
+		return policy, "env"
+	}
+	policy = executor.DefaultStreamingHandoffPolicy()
+	policy.Enabled = true
+	policy.STTToLLMEnabled = true
+	policy.LLMToTTSEnabled = true
+	policy.MinPartialChars = 4
+	policy.MaxPendingRevisions = 4
+	policy.CoalesceLatestOnly = true
+	return policy, "streaming_smoke_defaults"
+}
+
+func liveProviderChainReportPaths(executionMode string) (string, string) {
 	reportPath := strings.TrimSpace(os.Getenv("RSPP_LIVE_PROVIDER_CHAIN_REPORT_PATH"))
 	if reportPath == "" {
-		reportPath = defaultLiveProviderChainReportPath
+		switch executionMode {
+		case "non_streaming":
+			reportPath = defaultNonStreamingChainReportPath
+		default:
+			reportPath = defaultStreamingChainReportPath
+		}
 	}
 	reportMDPath := strings.TrimSpace(os.Getenv("RSPP_LIVE_PROVIDER_CHAIN_REPORT_MD_PATH"))
 	if reportMDPath == "" {
-		reportMDPath = defaultLiveProviderChainReportMDPath
+		switch executionMode {
+		case "non_streaming":
+			reportMDPath = defaultNonStreamingChainReportMDPath
+		default:
+			reportMDPath = defaultStreamingChainReportMDPath
+		}
 	}
 	return reportPath, reportMDPath
+}
+
+func validateModeEvidence(executionMode string, combo liveProviderChainCombinationReport) []string {
+	violations := make([]string, 0, 2)
+	switch executionMode {
+	case "streaming":
+		if !streamingOverlapEvidencePresent(combo) {
+			violations = append(violations, "streaming execution missing overlap evidence (handoffs/first-audio)")
+		}
+	case "non_streaming":
+		if nonStreamingUsesStreaming(combo) {
+			violations = append(violations, "non-streaming execution recorded streaming_used=true attempt(s)")
+		}
+	}
+	return violations
+}
+
+func streamingOverlapEvidencePresent(combo liveProviderChainCombinationReport) bool {
+	if len(combo.Handoffs) > 0 {
+		return true
+	}
+	return combo.Latency.FirstAssistantAudioE2EMS > 0 ||
+		combo.Latency.STTPartialToLLMStartLatencyMS > 0 ||
+		combo.Latency.LLMPartialToTTSStartLatencyMS > 0
+}
+
+func nonStreamingUsesStreaming(combo liveProviderChainCombinationReport) bool {
+	for _, step := range combo.Steps {
+		for _, attempt := range step.Output.Attempts {
+			if attempt.StreamingUsed {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func pseudoStreamingProvidersForCombinations(combos []liveProviderChainCombination) []string {
+	unique := map[string]struct{}{}
+	for _, combo := range combos {
+		for _, providerID := range []string{combo.STTProviderID, combo.LLMProviderID, combo.TTSProviderID} {
+			if isPseudoStreamingProvider(providerID) {
+				unique[providerID] = struct{}{}
+			}
+		}
+	}
+	if len(unique) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(unique))
+	for providerID := range unique {
+		out = append(out, providerID)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func isPseudoStreamingProvider(providerID string) bool {
+	switch providerID {
+	case sttdeepgramprovider.ProviderID:
+		return true
+	default:
+		return false
+	}
+}
+
+func liveProviderChainComparisonIdentity(combos []liveProviderChainCombination) string {
+	if len(combos) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(combos))
+	for _, combo := range combos {
+		parts = append(parts, fmt.Sprintf("%s|%s|%s", combo.STTProviderID, combo.LLMProviderID, combo.TTSProviderID))
+	}
+	sort.Strings(parts)
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\n")))
+	return fmt.Sprintf("%x", sum[:])
+}
+
+func annotateLiveProviderChainParity(report *liveProviderChainReport) {
+	if report == nil {
+		return
+	}
+	report.SemanticParity = boolPtr(false)
+	report.ParityComparisonValid = boolPtr(false)
+	referencePath := liveProviderChainParityReferencePath(report.ExecutionMode)
+	report.ParityReferencePath = referencePath
+
+	resolvedReferencePath := referencePath
+	if !filepath.IsAbs(referencePath) {
+		if root, err := findRepoRoot(); err == nil {
+			resolvedReferencePath = filepath.Join(root, filepath.FromSlash(referencePath))
+		}
+	}
+
+	raw, err := os.ReadFile(resolvedReferencePath)
+	if err != nil {
+		report.ParityInvalidReason = "counterpart report missing"
+		return
+	}
+
+	var counterpart liveProviderChainReport
+	if err := json.Unmarshal(raw, &counterpart); err != nil {
+		report.ParityInvalidReason = "counterpart report invalid"
+		return
+	}
+	if counterpart.ExecutionMode == "" {
+		report.ParityInvalidReason = "counterpart execution mode marker missing"
+		return
+	}
+	if counterpart.ExecutionMode == report.ExecutionMode {
+		report.ParityInvalidReason = "counterpart execution mode must differ"
+		return
+	}
+	if report.ComparisonIdentity == "" || counterpart.ComparisonIdentity == "" {
+		report.ParityInvalidReason = "comparison identity missing"
+		return
+	}
+	if report.ComparisonIdentity != counterpart.ComparisonIdentity {
+		report.ParityInvalidReason = "comparison identity mismatch"
+		return
+	}
+	if report.Status != "pass" || counterpart.Status != "pass" {
+		report.ParityInvalidReason = "semantic parity requires pass status on both runs"
+		return
+	}
+
+	report.SemanticParity = boolPtr(true)
+	report.ParityComparisonValid = boolPtr(true)
+	report.ParityInvalidReason = ""
+}
+
+func liveProviderChainParityReferencePath(executionMode string) string {
+	if explicit := strings.TrimSpace(os.Getenv(envLiveProviderChainParityPath)); explicit != "" {
+		return explicit
+	}
+	switch executionMode {
+	case "non_streaming":
+		return defaultStreamingChainReportPath
+	default:
+		return defaultNonStreamingChainReportPath
+	}
 }
 
 func liveProviderIOCaptureConfig() (string, int) {
@@ -799,6 +1060,13 @@ func chainLatencyFromExecutor(in executor.StreamingChainLatency) liveProviderCha
 		FirstAssistantAudioE2EMS:      in.FirstAssistantAudioE2EMS,
 		TurnCompletionE2EMS:           in.TurnCompletionE2EMS,
 	}
+}
+
+func normalizeChainLatencyForMode(executionMode string, latency liveProviderChainLatency) liveProviderChainLatency {
+	if executionMode == "non_streaming" && latency.FirstAssistantAudioE2EMS <= 0 && latency.TurnCompletionE2EMS > 0 {
+		latency.FirstAssistantAudioE2EMS = latency.TurnCompletionE2EMS
+	}
+	return latency
 }
 
 func chainHandoffsFromExecutor(in []executor.StreamingHandoffEdgeResult) []liveProviderChainHandoff {
@@ -932,6 +1200,7 @@ func writeLiveProviderChainReport(report liveProviderChainReport) error {
 	}
 	jsonPath := filepath.Join(root, filepath.FromSlash(report.ReportPath))
 	mdPath := filepath.Join(root, filepath.FromSlash(report.ReportMarkdownPath))
+	markdown := renderLiveProviderChainMarkdown(report)
 
 	if err := os.MkdirAll(filepath.Dir(jsonPath), 0o755); err != nil {
 		return err
@@ -947,10 +1216,75 @@ func writeLiveProviderChainReport(report liveProviderChainReport) error {
 	if err := os.WriteFile(jsonPath, payload, 0o644); err != nil {
 		return err
 	}
-	if err := os.WriteFile(mdPath, []byte(renderLiveProviderChainMarkdown(report)), 0o644); err != nil {
+	if err := os.WriteFile(mdPath, []byte(markdown), 0o644); err != nil {
+		return err
+	}
+
+	if aliasJSON, aliasMD, ok := liveProviderChainModeAliasPaths(report.ExecutionMode); ok {
+		aliasJSONPath := filepath.Join(root, filepath.FromSlash(aliasJSON))
+		aliasMDPath := filepath.Join(root, filepath.FromSlash(aliasMD))
+		if aliasJSONPath != jsonPath {
+			if err := os.MkdirAll(filepath.Dir(aliasJSONPath), 0o755); err != nil {
+				return err
+			}
+			if err := os.WriteFile(aliasJSONPath, payload, 0o644); err != nil {
+				return err
+			}
+		}
+		if aliasMDPath != mdPath {
+			if err := os.MkdirAll(filepath.Dir(aliasMDPath), 0o755); err != nil {
+				return err
+			}
+			if err := os.WriteFile(aliasMDPath, []byte(markdown), 0o644); err != nil {
+				return err
+			}
+		}
+	}
+	if err := writeLiveProviderChainAlias(jsonPath, mdPath, payload, markdown, root, defaultLiveProviderChainReportPath, defaultLiveProviderChainReportMDPath); err != nil {
 		return err
 	}
 	return nil
+}
+
+func writeLiveProviderChainAlias(
+	sourceJSONPath string,
+	sourceMDPath string,
+	payload []byte,
+	markdown string,
+	root string,
+	aliasJSON string,
+	aliasMD string,
+) error {
+	aliasJSONPath := filepath.Join(root, filepath.FromSlash(aliasJSON))
+	aliasMDPath := filepath.Join(root, filepath.FromSlash(aliasMD))
+	if aliasJSONPath != sourceJSONPath {
+		if err := os.MkdirAll(filepath.Dir(aliasJSONPath), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(aliasJSONPath, payload, 0o644); err != nil {
+			return err
+		}
+	}
+	if aliasMDPath != sourceMDPath {
+		if err := os.MkdirAll(filepath.Dir(aliasMDPath), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(aliasMDPath, []byte(markdown), 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func liveProviderChainModeAliasPaths(executionMode string) (string, string, bool) {
+	switch executionMode {
+	case "streaming":
+		return defaultStreamingChainReportPath, defaultStreamingChainReportMDPath, true
+	case "non_streaming":
+		return defaultNonStreamingChainReportPath, defaultNonStreamingChainReportMDPath, true
+	default:
+		return "", "", false
+	}
 }
 
 func renderLiveProviderChainMarkdown(report liveProviderChainReport) string {
@@ -958,6 +1292,38 @@ func renderLiveProviderChainMarkdown(report liveProviderChainReport) string {
 	fmt.Fprintf(&b, "# Live Provider Chained Workflow Report\n\n")
 	fmt.Fprintf(&b, "- Generated at (UTC): `%s`\n", report.GeneratedAtUTC)
 	fmt.Fprintf(&b, "- Status: `%s`\n", report.Status)
+	fmt.Fprintf(&b, "- Execution mode: `%s`\n", defaultString(report.ExecutionMode, "unknown"))
+	fmt.Fprintf(&b, "- Comparison identity: `%s`\n", defaultString(report.ComparisonIdentity, "none"))
+	fmt.Fprintf(
+		&b,
+		"- Effective handoff policy: `enabled=%t stt_to_llm=%t llm_to_tts=%t min_partial_chars=%d max_pending=%d coalesce_latest=%t source=%s`\n",
+		report.EffectiveHandoffPolicy.Enabled,
+		report.EffectiveHandoffPolicy.STTToLLMEnabled,
+		report.EffectiveHandoffPolicy.LLMToTTSEnabled,
+		report.EffectiveHandoffPolicy.MinPartialChars,
+		report.EffectiveHandoffPolicy.MaxPendingRevisions,
+		report.EffectiveHandoffPolicy.CoalesceLatestOnly,
+		defaultString(report.EffectiveHandoffPolicy.Source, "unknown"),
+	)
+	fmt.Fprintf(
+		&b,
+		"- Effective provider streaming: `enable=%t disable=%t`\n",
+		report.EffectiveProviderStreaming.EnableStreaming,
+		report.EffectiveProviderStreaming.DisableStreaming,
+	)
+	if len(report.PseudoStreamingProviders) > 0 {
+		fmt.Fprintf(&b, "- Pseudo-streaming providers: `%s`\n", strings.Join(report.PseudoStreamingProviders, ","))
+	}
+	fmt.Fprintf(&b, "- Parity reference: `%s`\n", defaultString(report.ParityReferencePath, "none"))
+	if report.SemanticParity != nil {
+		fmt.Fprintf(&b, "- Semantic parity: `%t`\n", *report.SemanticParity)
+	}
+	if report.ParityComparisonValid != nil {
+		fmt.Fprintf(&b, "- Parity comparison valid for gate: `%t`\n", *report.ParityComparisonValid)
+	}
+	if report.ParityInvalidReason != "" {
+		fmt.Fprintf(&b, "- Parity invalid reason: %s\n", report.ParityInvalidReason)
+	}
 	fmt.Fprintf(&b, "- Combo cap: `%d` (`%s`)\n", report.ComboCap, report.ComboCapSource)
 	if report.ComboCapParseWarning != "" {
 		fmt.Fprintf(&b, "- Combo cap parse warning: %s\n", report.ComboCapParseWarning)
@@ -997,15 +1363,19 @@ func renderLiveProviderChainMarkdown(report liveProviderChainReport) string {
 	}
 
 	fmt.Fprintf(&b, "## Streaming Handoff Latency\n\n")
-	fmt.Fprintf(&b, "| Combo | STT->LLM (ms) | LLM->TTS (ms) | STT First Partial (ms) | LLM First Partial (ms) | TTS First Audio (ms) | First Audio E2E (ms) | Completion E2E (ms) | Coalesce | Supersede |\n")
-	fmt.Fprintf(&b, "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
+	fmt.Fprintf(&b, "| Combo | STT->LLM (ms) | LLM->TTS (ms) | STT First Partial (ms) | LLM First Partial (ms) | TTS First Audio (ms) | First Audio E2E (ms) | Completion E2E (ms) | Coalesce | Supersede | Mode Evidence |\n")
+	fmt.Fprintf(&b, "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
 	if len(report.Combinations) == 0 {
-		fmt.Fprintf(&b, "| _none_ | _n/a_ | _n/a_ | _n/a_ | _n/a_ | _n/a_ | _n/a_ | _n/a_ | _n/a_ | _n/a_ |\n\n")
+		fmt.Fprintf(&b, "| _none_ | _n/a_ | _n/a_ | _n/a_ | _n/a_ | _n/a_ | _n/a_ | _n/a_ | _n/a_ | _n/a_ | _n/a_ |\n\n")
 	} else {
 		for _, combo := range report.Combinations {
+			modeEvidence := "ok"
+			if !combo.ModeEvidenceOK {
+				modeEvidence = strings.Join(combo.ModeViolations, "; ")
+			}
 			fmt.Fprintf(
 				&b,
-				"| `%02d` | `%d` | `%d` | `%d` | `%d` | `%d` | `%d` | `%d` | `%d` | `%d` |\n",
+				"| `%02d` | `%d` | `%d` | `%d` | `%d` | `%d` | `%d` | `%d` | `%d` | `%d` | %s |\n",
 				combo.ComboIndex,
 				combo.Latency.STTPartialToLLMStartLatencyMS,
 				combo.Latency.LLMPartialToTTSStartLatencyMS,
@@ -1016,6 +1386,7 @@ func renderLiveProviderChainMarkdown(report liveProviderChainReport) string {
 				combo.Latency.TurnCompletionE2EMS,
 				combo.CoalesceCount,
 				combo.SupersedeCount,
+				escapeChainMarkdownCell(modeEvidence),
 			)
 		}
 		fmt.Fprintf(&b, "\n")
@@ -1139,4 +1510,8 @@ func maxInt(a int, b int) int {
 		return a
 	}
 	return b
+}
+
+func boolPtr(v bool) *bool {
+	return &v
 }

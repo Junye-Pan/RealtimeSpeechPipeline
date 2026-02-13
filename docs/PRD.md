@@ -488,9 +488,30 @@ After `cancel(scope)` acceptance, runtime and transport egress queues for that s
 ### 5.2 Fixed decisions for MVP
 - Transport path: LiveKit only
 - Provider set: deterministic multi-provider catalog per modality (3-5 STT, 3-5 LLM, 3-5 TTS) with pre-authorized retry/switch behavior.
-  - STT: Deepgram, Google Speech-to-Text, AssemblyAI
-  - LLM: Anthropic, Google Gemini, Cohere
-  - TTS: ElevenLabs, Google Cloud Text-to-Speech, Amazon Polly
+  - STT: Deepgram, AssemblyAI
+  - LLM: Anthropic, Cohere
+  - TTS: ElevenLabs
 - Mode: Simple mode only (ExecutionProfile defaults required; advanced overrides deferred).
 - Authority model: single-region execution authority with lease/epoch checks.
 - Replay scope: OR-02 baseline replay evidence (L0 baseline contract) is mandatory.
+- Streaming and non-streaming mode for STT/LLM/TTS
+
+### 5.3 Execution progress snapshot (2026-02-13)
+
+1. Mode correctness and fairness controls are implemented:
+   - explicit provider-streaming disable path for non-streaming mode in scheduler->invocation flow
+   - live-chain artifacts now include effective handoff policy and effective provider-streaming posture
+   - streaming runs require overlap proof; non-streaming runs fail on `streaming_used=true` attempt evidence
+2. Dual-metric comparison artifacts are implemented and integrated:
+   - new command: `rspp-cli live-latency-compare-report`
+   - outputs: `.codex/providers/live-latency-compare.json` and `.codex/providers/live-latency-compare.md`
+   - metric scope: first-audio (`first_assistant_audio_e2e_latency_ms`) and completion (`turn_completion_e2e_latency_ms`)
+3. CI/gate status for this implementation pass:
+   - `go test ./...` passed
+   - `verify-quick`, `verify-full`, `security-baseline-check`, and `verify-mvp` passed
+4. Latest sampled paired live evidence in this pass (`stt-assemblyai|llm-anthropic|tts-elevenlabs`, combo cap `1`, AssemblyAI poll interval override `250ms`):
+   - first-audio delta (streaming - non-streaming): `+3969ms`
+   - completion delta (streaming - non-streaming): `+4925ms`
+   - current winner on both metrics: non-streaming
+5. Remaining optimization focus:
+   - sampled stage evidence indicates STT attempt latency is the dominant contributor in the current streaming regression and remains the next tuning target.

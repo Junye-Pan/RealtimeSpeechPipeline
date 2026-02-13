@@ -517,6 +517,7 @@ func TestToTurnMetricsComputesCompleteness(t *testing.T) {
 
 	open0 := int64(0)
 	open100 := int64(100)
+	terminal900 := int64(900)
 	first500 := int64(500)
 	entries := []timeline.BaselineEvidence{
 		{
@@ -539,6 +540,7 @@ func TestToTurnMetricsComputesCompleteness(t *testing.T) {
 			CloseEmitted:         true,
 			TurnOpenProposedAtMS: &open0,
 			TurnOpenAtMS:         &open100,
+			TurnTerminalAtMS:     &terminal900,
 			FirstOutputAtMS:      &first500,
 		},
 	}
@@ -577,6 +579,323 @@ func TestWriteSLOGatesReportFromRuntimeArtifact(t *testing.T) {
 	}
 	if err := writeSLOGatesReport(outputPath, artifactPath); err != nil {
 		t.Fatalf("expected slo report generation from runtime artifact to pass, got %v", err)
+	}
+}
+
+func TestEvaluateLiveEndToEndGateWaivesAfterMultipleAttempts(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	chainPath := filepath.Join(tmp, "live-provider-chain-report.json")
+	for _, name := range []string{
+		"live-provider-chain-report.json",
+		"live-provider-chain-report.streaming.json",
+		"live-provider-chain-report.nonstreaming.json",
+	} {
+		if err := osWriteFile(filepath.Join(tmp, name), []byte(`{}`)); err != nil {
+			t.Fatalf("write attempt artifact: %v", err)
+		}
+	}
+
+	report := liveProviderChainArtifact{
+		Status: "pass",
+		Combinations: []liveProviderChainCombinationEntry{
+			{Status: "pass", Latency: liveProviderChainLatency{TurnCompletionE2EMS: 2600}},
+			{Status: "pass", Latency: liveProviderChainLatency{TurnCompletionE2EMS: 3100}},
+		},
+	}
+
+	out := evaluateLiveEndToEndGate(report, ops.DefaultMVPSLOThresholds(), chainPath)
+	if !out.Waived {
+		t.Fatalf("expected waiver after multiple attempts, got %+v", out)
+	}
+	if !out.Passed {
+		t.Fatalf("expected waived gate to pass, got %+v", out)
+	}
+	if len(out.Violations) != 0 {
+		t.Fatalf("expected violations to be cleared after waiver, got %+v", out.Violations)
+	}
+	if len(out.AttemptFiles) < mvpE2EWaiveAfterAttempts {
+		t.Fatalf("expected attempt files >= %d, got %+v", mvpE2EWaiveAfterAttempts, out.AttemptFiles)
+	}
+}
+
+func TestEvaluateLiveEndToEndGateFailsWithoutWaiver(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	chainPath := filepath.Join(tmp, "live-provider-chain-report.json")
+	if err := osWriteFile(chainPath, []byte(`{}`)); err != nil {
+		t.Fatalf("write chain artifact: %v", err)
+	}
+
+	report := liveProviderChainArtifact{
+		Status: "pass",
+		Combinations: []liveProviderChainCombinationEntry{
+			{Status: "pass", Latency: liveProviderChainLatency{TurnCompletionE2EMS: 2500}},
+		},
+	}
+
+	out := evaluateLiveEndToEndGate(report, ops.DefaultMVPSLOThresholds(), chainPath)
+	if out.Waived {
+		t.Fatalf("expected no waiver with a single attempt, got %+v", out)
+	}
+	if out.Passed {
+		t.Fatalf("expected gate failure without waiver, got %+v", out)
+	}
+	if len(out.Violations) == 0 {
+		t.Fatalf("expected threshold violations, got none")
+	}
+}
+
+func TestEvaluateMVPFixedDecisionGatesRequiresParityValidity(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	livekitPath := filepath.Join(tmp, "livekit-smoke-report.json")
+	if err := osWriteFile(livekitPath, []byte(`{"probe":{"status":"passed"}}`)); err != nil {
+		t.Fatalf("write livekit report: %v", err)
+	}
+
+	report := liveProviderChainArtifact{
+		Status:                "pass",
+		ExecutionMode:         "streaming",
+		SemanticParity:        boolPtr(false),
+		ParityComparisonValid: boolPtr(false),
+		ParityInvalidReason:   "comparison identity mismatch",
+		EnabledProviders: liveProviderChainEnabledProviders{
+			STT: []string{"stt-deepgram"},
+			LLM: []string{"llm-anthropic"},
+			TTS: []string{"tts-elevenlabs"},
+		},
+		SelectedCombinations: []liveProviderChainComboSelection{
+			{
+				STTProviderID: "stt-deepgram",
+				LLMProviderID: "llm-anthropic",
+				TTSProviderID: "tts-elevenlabs",
+			},
+		},
+	}
+
+	out := evaluateMVPFixedDecisionGates(report, livekitPath)
+	if !out.ParityMarkersPresent {
+		t.Fatalf("expected parity markers to be detected, got %+v", out)
+	}
+	if out.ParityComparisonValid {
+		t.Fatalf("expected parity comparison validity to be false, got %+v", out)
+	}
+	if !hasViolationContaining(out.Violations, "parity comparison invalid") {
+		t.Fatalf("expected parity invalid violation, got %+v", out.Violations)
+	}
+}
+
+func TestWriteLiveLatencyCompareReport(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	streamingPath := filepath.Join(tmp, "streaming.json")
+	nonStreamingPath := filepath.Join(tmp, "nonstreaming.json")
+	outputPath := filepath.Join(tmp, "live-latency-compare.json")
+
+	streaming := liveProviderChainArtifact{
+		ExecutionMode:      "streaming",
+		ComparisonIdentity: "cmp-a",
+		Status:             "pass",
+		Combinations: []liveProviderChainCombinationEntry{
+			{
+				Status:        "pass",
+				STTProviderID: "stt-a",
+				LLMProviderID: "llm-a",
+				TTSProviderID: "tts-a",
+				Handoffs:      []liveProviderChainHandoffEntry{{HandoffID: "h-1"}},
+				Latency: liveProviderChainLatency{
+					FirstAssistantAudioE2EMS: 1000,
+					TurnCompletionE2EMS:      2200,
+				},
+			},
+			{
+				Status:        "pass",
+				STTProviderID: "stt-b",
+				LLMProviderID: "llm-b",
+				TTSProviderID: "tts-b",
+				Handoffs:      []liveProviderChainHandoffEntry{{HandoffID: "h-2"}},
+				Latency: liveProviderChainLatency{
+					FirstAssistantAudioE2EMS: 900,
+					TurnCompletionE2EMS:      1800,
+				},
+			},
+		},
+	}
+	nonStreaming := liveProviderChainArtifact{
+		ExecutionMode:      "non_streaming",
+		ComparisonIdentity: "cmp-a",
+		Status:             "pass",
+		Combinations: []liveProviderChainCombinationEntry{
+			{
+				Status:        "pass",
+				STTProviderID: "stt-a",
+				LLMProviderID: "llm-a",
+				TTSProviderID: "tts-a",
+				Steps: []liveProviderChainStepEntry{
+					{Output: liveProviderChainStepOutput{Attempts: []liveProviderChainStepAttempt{{StreamingUsed: false}}}},
+				},
+				Latency: liveProviderChainLatency{
+					FirstAssistantAudioE2EMS: 1400,
+					TurnCompletionE2EMS:      2100,
+				},
+			},
+			{
+				Status:        "pass",
+				STTProviderID: "stt-b",
+				LLMProviderID: "llm-b",
+				TTSProviderID: "tts-b",
+				Steps: []liveProviderChainStepEntry{
+					{Output: liveProviderChainStepOutput{Attempts: []liveProviderChainStepAttempt{{StreamingUsed: false}}}},
+				},
+				Latency: liveProviderChainLatency{
+					FirstAssistantAudioE2EMS: 1100,
+					TurnCompletionE2EMS:      1700,
+				},
+			},
+		},
+	}
+
+	streamingRaw, err := json.Marshal(streaming)
+	if err != nil {
+		t.Fatalf("marshal streaming report: %v", err)
+	}
+	nonStreamingRaw, err := json.Marshal(nonStreaming)
+	if err != nil {
+		t.Fatalf("marshal non-streaming report: %v", err)
+	}
+	if err := osWriteFile(streamingPath, streamingRaw); err != nil {
+		t.Fatalf("write streaming report: %v", err)
+	}
+	if err := osWriteFile(nonStreamingPath, nonStreamingRaw); err != nil {
+		t.Fatalf("write non-streaming report: %v", err)
+	}
+
+	if err := writeLiveLatencyCompareReport(outputPath, streamingPath, nonStreamingPath); err != nil {
+		t.Fatalf("expected compare report generation to pass, got %v", err)
+	}
+
+	raw, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("read compare report: %v", err)
+	}
+	var artifact liveLatencyCompareArtifact
+	if err := json.Unmarshal(raw, &artifact); err != nil {
+		t.Fatalf("decode compare report: %v", err)
+	}
+	if artifact.PairCount != 2 {
+		t.Fatalf("expected pair count 2, got %d", artifact.PairCount)
+	}
+	if len(artifact.Combos) != 2 {
+		t.Fatalf("expected two combo rows, got %d", len(artifact.Combos))
+	}
+	if artifact.Aggregate.FirstAudio.Winner != "streaming" {
+		t.Fatalf("expected first-audio winner streaming, got %q", artifact.Aggregate.FirstAudio.Winner)
+	}
+	if artifact.Aggregate.Completion.Winner != "non_streaming" {
+		t.Fatalf("expected completion winner non_streaming, got %q", artifact.Aggregate.Completion.Winner)
+	}
+
+	summaryPath := strings.TrimSuffix(outputPath, filepath.Ext(outputPath)) + ".md"
+	if _, err := os.Stat(summaryPath); err != nil {
+		t.Fatalf("expected markdown compare artifact, got %v", err)
+	}
+}
+
+func TestWriteLiveLatencyCompareReportRejectsStreamingWithoutOverlapEvidence(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	streamingPath := filepath.Join(tmp, "streaming.json")
+	nonStreamingPath := filepath.Join(tmp, "nonstreaming.json")
+	outputPath := filepath.Join(tmp, "live-latency-compare.json")
+
+	streaming := liveProviderChainArtifact{
+		ExecutionMode:      "streaming",
+		ComparisonIdentity: "cmp-b",
+		Status:             "pass",
+		Combinations: []liveProviderChainCombinationEntry{
+			{
+				Status:        "pass",
+				STTProviderID: "stt-a",
+				LLMProviderID: "llm-a",
+				TTSProviderID: "tts-a",
+				Latency:       liveProviderChainLatency{TurnCompletionE2EMS: 2000},
+			},
+		},
+	}
+	nonStreaming := liveProviderChainArtifact{
+		ExecutionMode:      "non_streaming",
+		ComparisonIdentity: "cmp-b",
+		Status:             "pass",
+		Combinations: []liveProviderChainCombinationEntry{
+			{
+				Status:        "pass",
+				STTProviderID: "stt-a",
+				LLMProviderID: "llm-a",
+				TTSProviderID: "tts-a",
+				Steps: []liveProviderChainStepEntry{
+					{Output: liveProviderChainStepOutput{Attempts: []liveProviderChainStepAttempt{{StreamingUsed: false}}}},
+				},
+				Latency: liveProviderChainLatency{TurnCompletionE2EMS: 1900},
+			},
+		},
+	}
+
+	streamingRaw, _ := json.Marshal(streaming)
+	nonStreamingRaw, _ := json.Marshal(nonStreaming)
+	if err := osWriteFile(streamingPath, streamingRaw); err != nil {
+		t.Fatalf("write streaming report: %v", err)
+	}
+	if err := osWriteFile(nonStreamingPath, nonStreamingRaw); err != nil {
+		t.Fatalf("write non-streaming report: %v", err)
+	}
+
+	err := writeLiveLatencyCompareReport(outputPath, streamingPath, nonStreamingPath)
+	if err == nil {
+		t.Fatalf("expected compare report generation to fail when streaming overlap evidence is missing")
+	}
+	if !strings.Contains(err.Error(), "missing streaming overlap evidence") {
+		t.Fatalf("expected overlap-evidence failure, got %v", err)
+	}
+}
+
+func TestValidateLiveProviderModeEvidenceRejectsStreamingAttemptsInNonStreamingMode(t *testing.T) {
+	t.Parallel()
+
+	report := liveProviderChainArtifact{
+		ExecutionMode: "non_streaming",
+		Combinations: []liveProviderChainCombinationEntry{
+			{
+				Status:        "pass",
+				STTProviderID: "stt-a",
+				LLMProviderID: "llm-a",
+				TTSProviderID: "tts-a",
+				Steps: []liveProviderChainStepEntry{
+					{Output: liveProviderChainStepOutput{Attempts: []liveProviderChainStepAttempt{{StreamingUsed: true}}}},
+				},
+			},
+		},
+	}
+
+	violations := validateLiveProviderModeEvidence(report)
+	if len(violations) == 0 {
+		t.Fatalf("expected non-streaming mode evidence violation")
+	}
+	if !hasViolationContaining(violations, "streaming_used=true") {
+		t.Fatalf("expected streaming_used violation, got %+v", violations)
+	}
+}
+
+func TestValidateSimpleModeOnly(t *testing.T) {
+	t.Parallel()
+
+	if err := validateSimpleModeOnly(); err != nil {
+		t.Fatalf("expected simple-mode validation to pass, got %v", err)
 	}
 }
 
@@ -718,6 +1037,19 @@ func TestWriteReleaseManifestFailsWhenReadinessFails(t *testing.T) {
 
 func int64Ptr(v int64) *int64 {
 	return &v
+}
+
+func boolPtr(v bool) *bool {
+	return &v
+}
+
+func hasViolationContaining(violations []string, needle string) bool {
+	for _, violation := range violations {
+		if strings.Contains(violation, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func osWriteFile(path string, data []byte) error {

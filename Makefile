@@ -1,4 +1,4 @@
-.PHONY: test validate-contracts verify-quick verify-full live-provider-smoke livekit-smoke a2-runtime-live security-baseline-check codex-artifact-policy-check livekit-local-up livekit-local-validate livekit-local-down
+.PHONY: test validate-contracts verify-quick verify-full verify-mvp live-provider-smoke livekit-smoke a2-runtime-live security-baseline-check codex-artifact-policy-check livekit-local-up livekit-local-validate livekit-local-down
 
 test:
 	go test ./...
@@ -11,6 +11,9 @@ verify-quick:
 
 verify-full:
 	VERIFY_FULL_CMD='go run ./cmd/rspp-cli validate-contracts && go run ./cmd/rspp-cli validate-contracts-report && go run ./cmd/rspp-cli replay-regression-report && go run ./cmd/rspp-cli generate-runtime-baseline && go run ./cmd/rspp-cli slo-gates-report && go test ./...' bash scripts/verify.sh full
+
+verify-mvp:
+	VERIFY_MVP_CMD='go run ./cmd/rspp-cli validate-contracts && go run ./cmd/rspp-cli validate-contracts-report && go run ./cmd/rspp-cli replay-regression-report && go run ./cmd/rspp-cli generate-runtime-baseline && go run ./cmd/rspp-cli slo-gates-report && go run ./cmd/rspp-cli live-latency-compare-report && go run ./cmd/rspp-cli slo-gates-mvp-report && go test ./...' bash scripts/verify.sh mvp
 
 live-provider-smoke:
 	go test -tags=liveproviders ./test/integration -run TestLiveProviderSmoke -v

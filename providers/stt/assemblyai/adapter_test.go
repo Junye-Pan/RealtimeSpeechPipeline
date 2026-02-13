@@ -12,10 +12,38 @@ import (
 
 func TestConfigFromEnv_DefaultSpeechModels(t *testing.T) {
 	t.Setenv("RSPP_STT_ASSEMBLYAI_SPEECH_MODELS", "")
+	t.Setenv("RSPP_STT_ASSEMBLYAI_POLL_INTERVAL_MS", "")
 
 	cfg := ConfigFromEnv()
 	if len(cfg.SpeechModels) != 1 || cfg.SpeechModels[0] != "universal-2" {
 		t.Fatalf("expected default speech_models [universal-2], got %+v", cfg.SpeechModels)
+	}
+	if cfg.PollInterval != defaultPollInterval {
+		t.Fatalf("expected default poll interval %s, got %s", defaultPollInterval, cfg.PollInterval)
+	}
+}
+
+func TestConfigFromEnv_PollIntervalBounded(t *testing.T) {
+	cases := []struct {
+		name     string
+		envValue string
+		want     time.Duration
+	}{
+		{name: "within_range", envValue: "450", want: 450 * time.Millisecond},
+		{name: "below_min", envValue: "50", want: minPollIntervalMS * time.Millisecond},
+		{name: "above_max", envValue: "99999", want: maxPollIntervalMS * time.Millisecond},
+		{name: "invalid", envValue: "oops", want: defaultPollInterval},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("RSPP_STT_ASSEMBLYAI_POLL_INTERVAL_MS", tc.envValue)
+			cfg := ConfigFromEnv()
+			if cfg.PollInterval != tc.want {
+				t.Fatalf("expected poll interval %s, got %s", tc.want, cfg.PollInterval)
+			}
+		})
 	}
 }
 

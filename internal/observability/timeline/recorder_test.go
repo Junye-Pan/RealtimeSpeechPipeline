@@ -603,6 +603,7 @@ func minimalBaseline(turnID string) BaselineEvidence {
 	}
 	openProposed := int64(90)
 	open := int64(100)
+	terminal := int64(900)
 	firstOutput := int64(300)
 	return BaselineEvidence{
 		SessionID:        "sess-1",
@@ -634,6 +635,7 @@ func minimalBaseline(turnID string) BaselineEvidence {
 		CloseEmitted:         true,
 		TurnOpenProposedAtMS: &openProposed,
 		TurnOpenAtMS:         &open,
+		TurnTerminalAtMS:     &terminal,
 		FirstOutputAtMS:      &firstOutput,
 		TerminalReason:       "",
 	}

@@ -35,13 +35,14 @@ type SchedulingInput struct {
 
 // ProviderInvocationInput supplies optional RK-11 invocation context.
 type ProviderInvocationInput struct {
-	Modality               contracts.Modality
-	PreferredProvider      string
-	AllowedAdaptiveActions []string
-	ProviderInvocationID   string
-	CancelRequested        bool
-	EnableStreaming        bool
-	StreamHooks            invocation.StreamEventHooks
+	Modality                 contracts.Modality
+	PreferredProvider        string
+	AllowedAdaptiveActions   []string
+	ProviderInvocationID     string
+	CancelRequested          bool
+	EnableStreaming          bool
+	DisableProviderStreaming bool
+	StreamHooks              invocation.StreamEventHooks
 }
 
 // SchedulingDecision reports deterministic allow/shed outcomes at scheduling points.
@@ -272,22 +273,23 @@ func (s Scheduler) evaluate(scope controlplane.OutcomeScope, in SchedulingInput)
 				return SchedulingDecision{}, fmt.Errorf("provider invocation requested but provider invoker is not configured")
 			}
 			invocationResult, err := s.providerInvoker.Invoke(invocation.InvocationInput{
-				SessionID:              in.SessionID,
-				TurnID:                 in.TurnID,
-				PipelineVersion:        defaultPipelineVersion(in.PipelineVersion),
-				EventID:                in.EventID,
-				Modality:               in.ProviderInvocation.Modality,
-				PreferredProvider:      in.ProviderInvocation.PreferredProvider,
-				AllowedAdaptiveActions: in.ProviderInvocation.AllowedAdaptiveActions,
-				ProviderInvocationID:   in.ProviderInvocation.ProviderInvocationID,
-				TransportSequence:      nonNegative(in.TransportSequence),
-				RuntimeSequence:        nonNegative(in.RuntimeSequence),
-				AuthorityEpoch:         nonNegative(in.AuthorityEpoch),
-				RuntimeTimestampMS:     nonNegative(in.RuntimeTimestampMS),
-				WallClockTimestampMS:   nonNegative(in.WallClockTimestampMS),
-				CancelRequested:        in.ProviderInvocation.CancelRequested,
-				EnableStreaming:        in.ProviderInvocation.EnableStreaming,
-				StreamHooks:            in.ProviderInvocation.StreamHooks,
+				SessionID:                in.SessionID,
+				TurnID:                   in.TurnID,
+				PipelineVersion:          defaultPipelineVersion(in.PipelineVersion),
+				EventID:                  in.EventID,
+				Modality:                 in.ProviderInvocation.Modality,
+				PreferredProvider:        in.ProviderInvocation.PreferredProvider,
+				AllowedAdaptiveActions:   in.ProviderInvocation.AllowedAdaptiveActions,
+				ProviderInvocationID:     in.ProviderInvocation.ProviderInvocationID,
+				TransportSequence:        nonNegative(in.TransportSequence),
+				RuntimeSequence:          nonNegative(in.RuntimeSequence),
+				AuthorityEpoch:           nonNegative(in.AuthorityEpoch),
+				RuntimeTimestampMS:       nonNegative(in.RuntimeTimestampMS),
+				WallClockTimestampMS:     nonNegative(in.WallClockTimestampMS),
+				CancelRequested:          in.ProviderInvocation.CancelRequested,
+				EnableStreaming:          in.ProviderInvocation.EnableStreaming,
+				DisableProviderStreaming: in.ProviderInvocation.DisableProviderStreaming,
+				StreamHooks:              in.ProviderInvocation.StreamHooks,
 			})
 			if err != nil {
 				return SchedulingDecision{}, err

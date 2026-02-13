@@ -32,6 +32,11 @@ Full path (`make verify-full`):
 - replay regression report with full fixture set
 - full `go test ./...` coverage
 
+MVP path (`make verify-mvp`):
+- all full checks
+- live-enforced MVP SLO report generation (`rspp-cli slo-gates-mvp-report`)
+- fails closed when required live artifacts are missing/invalid or fixed-decision gates are violated
+
 Security path (`make security-baseline-check`):
 - focused security baseline package tests via `scripts/security-check.sh`:
   - `./api/eventabi`
@@ -84,12 +89,16 @@ Default thresholds:
 - turn-open p95 `<= 120ms`
 - first-output p95 `<= 1500ms`
 - cancel-fence p95 `<= 150ms`
+- end-to-end p50 `<= 1500ms`
+- end-to-end p95 `<= 2000ms`
 - baseline completeness ratio `== 1.0`
 - stale accepted outputs `== 0`
 - terminal lifecycle correctness ratio `== 1.0`
 
-Current status note:
-- PRD MVP gate for end-to-end latency (`P50 <= 1.5s`, `P95 <= 2s`) is not yet implemented as a blocking `DX-05` gate.
+MVP-mode live enforcement:
+1. `rspp-cli slo-gates-mvp-report` combines baseline SLO gates with live chain evidence and fixed-decision checks.
+2. Live end-to-end threshold failures may be waived only after multiple attempts, and the waiver is recorded in the report.
+3. Fixed-decision checks fail on missing parity markers/invalid parity, unsupported provider policy, non-simple mode behavior, or missing LiveKit readiness evidence.
 
 ## PRD MVP quality-gate alignment status
 
@@ -101,16 +110,25 @@ Current status note:
 | Authority safety | stale accepted outputs `== 0` | implemented in `DX-05` |
 | Replay baseline completeness | OR-02 completeness `== 1.0` | implemented in `DX-05` |
 | Terminal lifecycle correctness | exactly one terminal (`commit` or `abort`) then `close` | implemented in `DX-05` |
-| End-to-end latency | `P50 <= 1.5s`, `P95 <= 2s` | not implemented yet as blocking `DX-05` gate |
+| End-to-end latency | `P50 <= 1.5s`, `P95 <= 2s` | implemented in `DX-05` and enforced in MVP live mode |
 
-## Live end-to-end latency diagnostics (streaming handoff rollout)
+## Live end-to-end latency diagnostics (current status + planned expansion)
 
-These standards define rollout diagnostics for live `STT->LLM->TTS` overlap lanes.
-They do not replace PRD MVP gate #7 (`P50 <= 1.5s`, `P95 <= 2s`) until that gate is implemented and promoted.
+Current implementation status in tooling:
+- `rspp-cli live-latency-compare-report` evaluates paired streaming/non-streaming artifacts and emits per-combo plus aggregate first-audio/completion deltas.
+- `rspp-cli slo-gates-mvp-report` consumes live provider-chain evidence and fixed-decision checks, including mode-proof validation.
+- Blocking live checks continue to enforce completion thresholds (`p50 <= 1500ms`, `p95 <= 2000ms`) plus fixed-decision checks.
 
-Target metrics (p95 unless noted):
+Currently emitted/consumed live metric:
 
-| Metric | Target | Scope |
+| Metric | Current gate usage | Artifact field |
+| --- | --- | --- |
+| End-to-end first assistant audio latency | compare artifact + diagnostic summary | `first_assistant_audio_e2e_latency_ms` |
+| End-to-end turn completion latency | blocking in MVP live mode (`p50`, `p95`) | `turn_completion_e2e_latency_ms` |
+
+Planned per-stage streaming diagnostics (not yet emitted/consumed by tooling artifacts):
+
+| Planned metric | Planned target | Planned scope |
 | --- | --- | --- |
 | STT first partial latency | `<= 450ms` | first user audio frame -> first STT stream chunk |
 | STT partial to LLM start handoff latency | `<= 120ms` | eligible STT partial accepted -> LLM invoke start |
@@ -118,13 +136,20 @@ Target metrics (p95 unless noted):
 | LLM partial to TTS start handoff latency | `<= 120ms` | eligible LLM partial accepted -> TTS invoke start |
 | TTS first audio latency | `<= 650ms` | TTS invoke start -> first audio chunk |
 | End-to-end first assistant audio latency | `<= 1800ms` | first user audio frame -> first assistant audio chunk |
-| End-to-end turn completion latency | `<= 5000ms` | first user audio frame -> terminal assistant audio chunk for smoke prompt sizes |
 
-Gate policy rollout:
-1. Emit these metrics in live-chain artifacts first (non-blocking observability phase).
-2. Promote to blocking gate thresholds after stable pass trend across provider matrix runs.
-3. Keep existing baseline SLOs active while live end-to-end standards phase in.
-4. Add blocking end-to-end `P50/P95` gate computation before treating PRD MVP gate #7 as implemented.
+Gate rollout status:
+1. Current blocking gate scope uses end-to-end turn completion latency plus fixed-decision checks.
+2. Per-stage streaming metrics are planned and remain non-blocking until artifact schema and gate ingestion support are implemented.
+3. Baseline SLO gates remain active in parallel with live-enforced MVP mode.
+4. `verify-mvp` now requires `live-latency-compare-report` generation to succeed before MVP SLO gating.
+
+Latest implementation progress snapshot (2026-02-13):
+1. Mode-correctness and compare-report pipeline are fully wired and enforced in `verify-mvp`.
+2. Live smoke workflow requires provider enable toggles (`RSPP_*_ENABLE=1`) in addition to provider API-key env vars to avoid skip-only artifacts.
+3. Sampled paired live evidence (`stt-assemblyai|llm-anthropic|tts-elevenlabs`, combo cap 1, AssemblyAI poll interval override `250ms`) currently shows:
+   - first-audio delta (streaming - non-streaming): `+3969ms`
+   - completion delta (streaming - non-streaming): `+4925ms`
+4. Stage-level evidence in that sample points to STT latency as the dominant regression contributor.
 
 ## Live E2E latency improvement tracking (planned phases)
 
@@ -153,10 +178,11 @@ Promotion readiness criteria:
 ## MVP fixed-decision alignment (PRD 5.2)
 
 Current tooling alignment to PRD fixed MVP decisions:
-1. LiveKit-only transport path: used by current live transport/smoke workflow; not enforced as a standalone blocking `DX` gate in this folder.
+1. LiveKit-only transport path: enforced in MVP live mode through required passing LiveKit smoke report.
 2. Single-region authority with lease/epoch checks: represented by stale-epoch accepted output safety gate (`== 0`) in `DX-05`.
-3. Simple mode only: dedicated tooling gate is not implemented yet.
+3. Simple mode only: enforced by normalizer/registry-based validation in MVP live mode.
 4. OR-02 baseline replay evidence mandatory: enforced by completeness gate (`== 1.0`) in `DX-05`.
+5. Streaming/non-streaming parity: required parity markers and valid parity comparison in MVP live mode.
 
 ## Spec-first CI/CD and release alignment (PRD 3.2)
 
@@ -185,6 +211,7 @@ Current rule: no runtime contract bypasses; any generated scaffolds must validat
 - `go run ./cmd/rspp-cli ...` command surface (via `make verify-quick` and `make verify-full`)
 - `make verify-quick`
 - `make verify-full`
+- `make verify-mvp`
 
 ## Change checklist
 

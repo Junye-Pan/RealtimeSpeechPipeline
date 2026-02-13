@@ -1,6 +1,7 @@
 # Observability API Guide
 
-This package defines shared observability and replay API contracts used for replay access control, immutable replay audit records, divergence classification, and replay evidence metadata.
+This package defines shared observability and replay API contracts used for replay access control, immutable replay audit records, divergence classification, and replay fidelity identifiers.
+Timeline evidence record schemas are implemented in `internal/observability/timeline`.
 
 ## Ownership
 
@@ -12,9 +13,9 @@ This package defines shared observability and replay API contracts used for repl
 
 This guide tracks API-level contracts required by `docs/PRD.md` for:
 1. observability and replay by default (metrics/traces/logs/events with correlation)
-2. replay and timeline contract surfaces (`EventTimeline`, `ReplayCursor`, `ReplayMode`)
-3. recording-level semantics (`L0/L1/L2`) and mandatory replay-critical evidence
-4. telemetry lane non-blocking behavior and overload safety constraints
+2. replay contracts owned in `api/observability` (divergence/access/audit/fidelity)
+3. recording-level semantics (`L0/L1/L2`) and replay-critical evidence obligations at API boundaries
+4. telemetry lane non-blocking behavior and overload safety constraints (implemented in internal observability modules, with lane/event taxonomy from `api/eventabi`)
 5. MVP replay baseline requirement (`OR-02`) and Simple-mode constraints
 
 ## Contract surfaces owned here
@@ -26,6 +27,10 @@ Implemented shared API contracts:
   - `ORDERING_DIVERGENCE`
   - `TIMING_DIVERGENCE`
   - `AUTHORITY_DIVERGENCE`
+- Replay divergence record type:
+  - `ReplayDivergence`
+- Replay fidelity enum:
+  - `ReplayFidelity` (`L0`, `L1`, `L2`)
 - Replay access contract types:
   - `ReplayAccessRequest`
   - `ReplayAccessDecision`
@@ -33,11 +38,13 @@ Implemented shared API contracts:
 - Immutable replay audit schema:
   - `ReplayAuditEvent`
 
-PRD-required replay/timeline surfaces tracked by this API contract boundary:
-- `EventTimeline` contract semantics (ordered event log by session/turn/lane)
-- `ReplayCursor` stepping semantics
-- `ReplayMode` semantics (re-simulate vs recorded-provider-output playback, with decision handling modes)
-- recording-level contract (`L0/L1/L2`) and replay-critical evidence requirements
+Adjacent replay/timeline surfaces mapped by this guide (not first-class `api/observability` types today):
+- Event timeline evidence schemas and ordered append artifacts:
+  - implemented in `internal/observability/timeline` (`BaselineEvidence`, `ProviderAttemptEvidence`, `HandoffEdgeEvidence`, `InvocationSnapshotEvidence`)
+- Replay mode semantics (re-simulate vs recorded-provider-output playback and decision-handling modes):
+  - implemented as control-plane recording policy fields in `api/controlplane` (`RecordingPolicy.AllowedReplayModes`)
+- Replay cursor stepping semantics:
+  - planned contract surface; not currently implemented as a shared type in `api/observability`
 
 ## Required invariants
 
@@ -62,6 +69,9 @@ Telemetry-lane observability invariants (PRD contract):
 - Telemetry is non-blocking and best-effort under overload.
 - Telemetry dropping/sampling must never block ControlLane delivery or add tail latency to DataLane.
 - Contracted telemetry signals include metrics/traces/log/debug categories with session/turn/pipeline correlation markers.
+- Implementation mapping:
+  - telemetry pipeline contract is implemented in `internal/observability/telemetry`
+  - lane and event taxonomy used for correlation boundaries is implemented in `api/eventabi`
 
 ## MVP standards tie-in
 
@@ -79,9 +89,9 @@ Replay/telemetry schema target includes structured handoff timing and state mark
 5. correlation fields (`handoff_id`, `upstream_revision`, `provider_invocation_id`)
 
 Current implementation status:
-1. Shared API code currently exposes divergence classes plus replay access/audit contracts as first-class types.
+1. Shared API code currently exposes divergence classes, replay divergence entries, replay fidelity, and replay access/audit contracts as first-class types.
 2. First-class shared API types/fields for streaming-handoff markers are not fully implemented in `api/observability`.
-3. Streaming-handoff marker validation/classification wiring in replay comparator logic is not fully implemented.
+3. Streaming-handoff evidence types currently live in `internal/observability/timeline`; dedicated handoff-marker divergence wiring in replay comparator logic is not fully implemented.
 
 Target divergence behavior:
 1. missing required handoff markers is an `OUTCOME_DIVERGENCE`

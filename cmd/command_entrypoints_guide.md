@@ -42,11 +42,17 @@ This folder contains operator and developer binaries for running the platform, p
 - Runtime baseline and SLO:
   - `generate-runtime-baseline`
   - `slo-gates-report`
+  - `slo-gates-mvp-report`
+  - `live-latency-compare-report`
   - report contract coverage for PRD "Operate" expectations:
     - latency percentiles (p95/p99)
     - cancellation fence latency
     - drop counts/rates
     - provider error rates
+  - `slo-gates-mvp-report` additionally validates live end-to-end evidence, parity markers, LiveKit readiness, and fixed MVP decisions.
+  - `live-latency-compare-report` emits paired streaming vs non-streaming first-audio/completion deltas:
+    - `.codex/providers/live-latency-compare.json`
+    - `.codex/providers/live-latency-compare.md`
 - Release:
   - `publish-release <spec_ref> <rollout_cfg_path> ...`
   - fails closed if required gate artifacts are missing/stale/failing
@@ -69,11 +75,14 @@ This folder contains operator and developer binaries for running the platform, p
 
 ## CI and gate integration
 
-- Blocking gate workflows rely on `rspp-cli` outputs:
-  - `make verify-quick`
-  - `make verify-full`
-  - `make security-baseline-check`
-  - `make codex-artifact-policy-check`
+- Blocking gate workflows use a mix of `rspp-cli` outputs and dedicated policy scripts:
+  - `rspp-cli`-driven gates:
+    - `make verify-quick`
+    - `make verify-full`
+    - `make verify-mvp` (MVP promotion mode)
+  - script-driven gates:
+    - `make security-baseline-check`
+    - `make codex-artifact-policy-check`
 - Optional live checks:
   - `make live-provider-smoke`
   - `make livekit-smoke`

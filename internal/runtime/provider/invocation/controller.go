@@ -38,22 +38,23 @@ type Controller struct {
 
 // InvocationInput carries scheduler-side context into RK-11.
 type InvocationInput struct {
-	SessionID              string
-	TurnID                 string
-	PipelineVersion        string
-	EventID                string
-	Modality               contracts.Modality
-	PreferredProvider      string
-	AllowedAdaptiveActions []string
-	ProviderInvocationID   string
-	TransportSequence      int64
-	RuntimeSequence        int64
-	AuthorityEpoch         int64
-	RuntimeTimestampMS     int64
-	WallClockTimestampMS   int64
-	CancelRequested        bool
-	EnableStreaming        bool
-	StreamHooks            StreamEventHooks
+	SessionID                string
+	TurnID                   string
+	PipelineVersion          string
+	EventID                  string
+	Modality                 contracts.Modality
+	PreferredProvider        string
+	AllowedAdaptiveActions   []string
+	ProviderInvocationID     string
+	TransportSequence        int64
+	RuntimeSequence          int64
+	AuthorityEpoch           int64
+	RuntimeTimestampMS       int64
+	WallClockTimestampMS     int64
+	CancelRequested          bool
+	EnableStreaming          bool
+	DisableProviderStreaming bool
+	StreamHooks              StreamEventHooks
 }
 
 // InvocationAttempt records one provider attempt with normalized outcome.
@@ -485,6 +486,9 @@ func (o *invocationStreamObserver) OnError(chunk contracts.StreamChunk) error {
 
 func streamingEnabled(in InvocationInput, cfg Config, modality contracts.Modality, adapter contracts.Adapter) bool {
 	if _, ok := adapter.(contracts.StreamingAdapter); !ok {
+		return false
+	}
+	if in.DisableProviderStreaming {
 		return false
 	}
 	if envEnabled("RSPP_PROVIDER_STREAMING_DISABLE") {

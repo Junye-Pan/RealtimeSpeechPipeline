@@ -95,15 +95,15 @@ Planned migration rules:
 1. `InvokeStream` should use provider-native incremental transport where available.
 2. Unary `Invoke` remains supported, but unary and streaming success semantics must represent equivalent completion points for fair comparison.
 3. Streaming event emission keeps deterministic lifecycle ordering (`start`, ordered chunk events, terminal `final` or `error`).
-4. Adapter-level cadence controls are explicit and bounded; planned additive knob:
-   - `RSPP_STT_ASSEMBLYAI_POLL_INTERVAL_MS` (planned)
+4. Adapter-level cadence controls are explicit and bounded; current additive knob:
+   - `RSPP_STT_ASSEMBLYAI_POLL_INTERVAL_MS` (implemented; bounded in adapter config)
 5. Live-smoke and observability artifacts must label execution mode and semantic parity status during A/B latency comparisons.
 
 Normalized outcome classes include deterministic mapping for classes such as:
 - `timeout`
 - `overload`
 - `blocked`
-- `safety_block`
+- `safety_block` (mapped blocked reason, not a standalone `OutcomeClass`)
 - `infrastructure_failure`
 - provider-specific mapped failures
 

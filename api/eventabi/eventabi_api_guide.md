@@ -14,7 +14,9 @@ PRD alignment scope:
 ## What this package owns
 
 - Lane model: `DataLane`, `ControlLane`, `TelemetryLane`
-- Scope model: `session`, `turn`
+- Scope model:
+  - envelope `event_scope`: `session`, `turn`
+  - control-signal `scope` field values used by current contracts/fixtures: `session`, `turn`, `node`, `provider_invocation`
 - Payload classes: `audio_raw`, `text_raw`, `PII`, `PHI`, `derived_summary`, `metadata`
 - Redaction actions: `allow`, `mask`, `hash`, `drop`, `tokenize`
 - Artifact structs:
@@ -58,7 +60,8 @@ PRD model alignment note:
 - Turn-scope events require `turn_id` and authority context.
 - `audio_raw` payloads require media-time coordinates.
 - `ControlSignal` requires `ControlLane` and metadata payload class.
-- Signal-specific emitter/field constraints are strict for lifecycle, pressure, flow-control, provider, authority, and transport signals.
+- Signal-specific emitter/field constraints are strict for lifecycle, flow-control, provider, authority, and transport signals.
+- For `budget_warning` / `budget_exhausted` / `degrade` / `fallback`, strict emitter constraints are currently schema-level; Go `ControlSignal.Validate()` currently enforces enum membership but not dedicated emitter-specific checks for those four signals.
 
 ## Control signal vocabulary vs PRD lane model
 
