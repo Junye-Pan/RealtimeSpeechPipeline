@@ -2,6 +2,10 @@ package telemetry
 
 import (
 	"context"
+	"hash"
+	"hash/fnv"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -131,8 +135,8 @@ func DefaultEmitter() Emitter {
 type Config struct {
 	QueueCapacity int
 	ExportTimeout time.Duration
-	// LogSampleRate drops deterministic debug log events when >1.
-	// With N, only every Nth debug log event is accepted.
+	// LogSampleRate controls deterministic sampling for telemetry events when >1.
+	// With N, roughly 1/N events are accepted across metric/span/log channels.
 	LogSampleRate int
 }
 
@@ -175,7 +179,6 @@ type Pipeline struct {
 	sampledDropped atomic.Uint64
 	exported       atomic.Uint64
 	exportFailures atomic.Uint64
-	logCounter     atomic.Uint64
 }
 
 type discardSink struct{}
@@ -222,7 +225,7 @@ func (p *Pipeline) Stats() Stats {
 
 // EmitMetric enqueues a metric sample without blocking.
 func (p *Pipeline) EmitMetric(name string, value float64, unit string, attributes map[string]string, correlation Correlation) {
-	p.enqueue(Event{
+	p.emit(Event{
 		Kind:        EventKindMetric,
 		TimestampMS: eventTimestampMS(correlation),
 		Correlation: normalizeCorrelation(correlation),
@@ -232,12 +235,12 @@ func (p *Pipeline) EmitMetric(name string, value float64, unit string, attribute
 			Unit:       strings.TrimSpace(unit),
 			Attributes: cloneAttributes(attributes),
 		},
-	}, true)
+	})
 }
 
 // EmitSpan enqueues a span sample without blocking.
 func (p *Pipeline) EmitSpan(name, kind string, startMS, endMS int64, attributes map[string]string, correlation Correlation) {
-	p.enqueue(Event{
+	p.emit(Event{
 		Kind:        EventKindSpan,
 		TimestampMS: eventTimestampMS(correlation),
 		Correlation: normalizeCorrelation(correlation),
@@ -248,12 +251,12 @@ func (p *Pipeline) EmitSpan(name, kind string, startMS, endMS int64, attributes 
 			EndMS:      nonNegative(endMS),
 			Attributes: cloneAttributes(attributes),
 		},
-	}, true)
+	})
 }
 
 // EmitLog enqueues a log sample without blocking.
 func (p *Pipeline) EmitLog(name, severity, message string, attributes map[string]string, correlation Correlation) {
-	event := Event{
+	p.emit(Event{
 		Kind:        EventKindLog,
 		TimestampMS: eventTimestampMS(correlation),
 		Correlation: normalizeCorrelation(correlation),
@@ -263,21 +266,49 @@ func (p *Pipeline) EmitLog(name, severity, message string, attributes map[string
 			Message:    message,
 			Attributes: cloneAttributes(attributes),
 		},
-	}
-	sampled := p.shouldSampleLog(event)
+	})
+}
+
+func (p *Pipeline) emit(event Event) {
+	sampled := p.shouldSampleEvent(event)
 	p.enqueue(event, sampled)
 }
 
-func (p *Pipeline) shouldSampleLog(event Event) bool {
+func (p *Pipeline) shouldSampleEvent(event Event) bool {
 	if p.cfg.LogSampleRate <= 1 {
 		return true
 	}
-	if event.Log == nil || !strings.EqualFold(strings.TrimSpace(event.Log.Severity), "debug") {
-		return true
+
+	hasher := fnv.New64a()
+	hashCorrelation(hasher, event.Correlation)
+	hashString(hasher, string(event.Kind))
+	switch event.Kind {
+	case EventKindMetric:
+		if event.Metric != nil {
+			hashString(hasher, event.Metric.Name)
+			hashString(hasher, event.Metric.Unit)
+			hashAttributes(hasher, event.Metric.Attributes)
+		}
+	case EventKindSpan:
+		if event.Span != nil {
+			hashString(hasher, event.Span.Name)
+			hashString(hasher, event.Span.Kind)
+			hashInt64(hasher, event.Span.StartMS)
+			hashInt64(hasher, event.Span.EndMS)
+			hashString(hasher, event.Span.TraceID)
+			hashString(hasher, event.Span.SpanID)
+			hashString(hasher, event.Span.ParentSpanID)
+			hashAttributes(hasher, event.Span.Attributes)
+		}
+	case EventKindLog:
+		if event.Log != nil {
+			hashString(hasher, event.Log.Name)
+			hashString(hasher, event.Log.Severity)
+			hashString(hasher, event.Log.Message)
+			hashAttributes(hasher, event.Log.Attributes)
+		}
 	}
-	n := p.logCounter.Add(1)
-	// Keep first event, then every Nth thereafter.
-	return (n-1)%uint64(p.cfg.LogSampleRate) == 0
+	return hasher.Sum64()%uint64(p.cfg.LogSampleRate) == 0
 }
 
 func (p *Pipeline) enqueue(event Event, sampled bool) {
@@ -366,4 +397,40 @@ func cloneAttributes(in map[string]string) map[string]string {
 		return nil
 	}
 	return out
+}
+
+func hashCorrelation(hasher hash.Hash64, correlation Correlation) {
+	hashString(hasher, correlation.SessionID)
+	hashString(hasher, correlation.TurnID)
+	hashString(hasher, correlation.EventID)
+	hashString(hasher, correlation.PipelineVersion)
+	hashInt64(hasher, correlation.AuthorityEpoch)
+	hashString(hasher, correlation.Lane)
+	hashString(hasher, correlation.EmittedBy)
+	hashInt64(hasher, correlation.RuntimeTimestampMS)
+	hashInt64(hasher, correlation.WallClockTimestampMS)
+}
+
+func hashAttributes(hasher hash.Hash64, attributes map[string]string) {
+	if len(attributes) == 0 {
+		return
+	}
+	keys := make([]string, 0, len(attributes))
+	for key := range attributes {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		hashString(hasher, key)
+		hashString(hasher, attributes[key])
+	}
+}
+
+func hashInt64(hasher hash.Hash64, v int64) {
+	hashString(hasher, strconv.FormatInt(v, 10))
+}
+
+func hashString(hasher hash.Hash64, value string) {
+	_, _ = hasher.Write([]byte(value))
+	_, _ = hasher.Write([]byte{0})
 }

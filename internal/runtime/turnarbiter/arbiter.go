@@ -843,6 +843,14 @@ func normalizeBaselineEvidence(evidence *timeline.BaselineEvidence, in ActiveInp
 	if evidence.TurnOpenAtMS == nil {
 		evidence.TurnOpenAtMS = &runtimeTs
 	}
+	if evidence.TurnTerminalAtMS == nil {
+		terminalTs := runtimeTs
+		evidence.TurnTerminalAtMS = &terminalTs
+	}
+	if evidence.TurnOpenAtMS != nil && evidence.TurnTerminalAtMS != nil && *evidence.TurnTerminalAtMS < *evidence.TurnOpenAtMS {
+		terminalTs := *evidence.TurnOpenAtMS
+		evidence.TurnTerminalAtMS = &terminalTs
+	}
 
 	if in.CancelAccepted && evidence.CancelAcceptedAtMS == nil {
 		cancelAccepted := runtimeTs

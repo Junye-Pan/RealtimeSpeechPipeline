@@ -39,3 +39,6 @@
 ## Security & Configuration Tips
 - Never commit credentials; provide provider keys via `RSPP_*` environment variables for live tests.
 - Do not track generated `.codex` artifacts. Only `.codex/skills/**` and `.codex/rules/**` are allowed as tracked `.codex` paths.
+
+# ExecPlans
+When writing complex features or significant refactors, use an ExecPlan (as described in .codex/PLANS.md) from design to implementation.

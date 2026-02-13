@@ -517,6 +517,61 @@ func (d Determinism) Validate() error {
 	return nil
 }
 
+// StreamingHandoffEdgePolicy configures one orchestration handoff edge.
+type StreamingHandoffEdgePolicy struct {
+	Enabled                  bool `json:"enabled"`
+	MinPartialChars          int  `json:"min_partial_chars,omitempty"`
+	TriggerOnPunctuation     bool `json:"trigger_on_punctuation,omitempty"`
+	MaxPartialAgeMS          int  `json:"max_partial_age_ms,omitempty"`
+	MaxPendingRevisions      int  `json:"max_pending_revisions,omitempty"`
+	MaxPendingSegments       int  `json:"max_pending_segments,omitempty"`
+	CoalesceLatestOnly       bool `json:"coalesce_latest_only,omitempty"`
+	EmitFlowControlSignals   bool `json:"emit_flow_control_signals,omitempty"`
+	DegradeOnThresholdBreach bool `json:"degrade_on_threshold_breach,omitempty"`
+}
+
+func (p StreamingHandoffEdgePolicy) Validate() error {
+	if !p.Enabled {
+		return nil
+	}
+	if p.MinPartialChars < 1 {
+		return fmt.Errorf("streaming handoff min_partial_chars must be >=1 when enabled")
+	}
+	if p.MaxPartialAgeMS < 1 {
+		return fmt.Errorf("streaming handoff max_partial_age_ms must be >=1 when enabled")
+	}
+	if p.MaxPendingRevisions < 1 {
+		return fmt.Errorf("streaming handoff max_pending_revisions must be >=1 when enabled")
+	}
+	if p.MaxPendingSegments < 1 {
+		return fmt.Errorf("streaming handoff max_pending_segments must be >=1 when enabled")
+	}
+	return nil
+}
+
+// StreamingHandoffPolicy configures orchestration-level overlap behavior for a turn.
+type StreamingHandoffPolicy struct {
+	Enabled  bool                       `json:"enabled"`
+	STTToLLM StreamingHandoffEdgePolicy `json:"stt_to_llm"`
+	LLMToTTS StreamingHandoffEdgePolicy `json:"llm_to_tts"`
+}
+
+func (p StreamingHandoffPolicy) Validate() error {
+	if !p.Enabled {
+		return nil
+	}
+	if err := p.STTToLLM.Validate(); err != nil {
+		return err
+	}
+	if err := p.LLMToTTS.Validate(); err != nil {
+		return err
+	}
+	if !p.STTToLLM.Enabled && !p.LLMToTTS.Enabled {
+		return fmt.Errorf("streaming handoff requires at least one enabled edge when policy is enabled")
+	}
+	return nil
+}
+
 // ResolvedTurnPlan is the immutable turn-start artifact.
 type ResolvedTurnPlan struct {
 	TurnID                 string                      `json:"turn_id"`
@@ -533,6 +588,7 @@ type ResolvedTurnPlan struct {
 	SnapshotProvenance     SnapshotProvenance          `json:"snapshot_provenance"`
 	RecordingPolicy        RecordingPolicy             `json:"recording_policy"`
 	Determinism            Determinism                 `json:"determinism"`
+	StreamingHandoff       *StreamingHandoffPolicy     `json:"streaming_handoff,omitempty"`
 }
 
 func (p ResolvedTurnPlan) Validate() error {
@@ -591,6 +647,11 @@ func (p ResolvedTurnPlan) Validate() error {
 	}
 	if err := p.Determinism.Validate(); err != nil {
 		return err
+	}
+	if p.StreamingHandoff != nil {
+		if err := p.StreamingHandoff.Validate(); err != nil {
+			return err
+		}
 	}
 	return nil
 }

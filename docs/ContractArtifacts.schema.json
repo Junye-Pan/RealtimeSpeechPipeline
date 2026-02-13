@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://rspp.local/schemas/contract-artifacts.schema.json",
   "title": "RSPP Section-4 Contract Artifacts",
-  "description": "Machine-checkable artifacts derived from docs/rspp_SystemDesign.md and docs/ModularDesign.md section-4 contracts.",
+  "description": "Machine-checkable artifacts derived from repository-level system design and API contract packages.",
   "anyOf": [
     {
       "$ref": "#/$defs/event_record"

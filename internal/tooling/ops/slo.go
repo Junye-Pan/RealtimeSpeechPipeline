@@ -13,6 +13,7 @@ type TurnMetrics struct {
 	HappyPath                bool
 	TurnOpenProposedAtMS     *int64
 	TurnOpenAtMS             *int64
+	TurnTerminalAtMS         *int64
 	FirstOutputAtMS          *int64
 	CancelAcceptedAtMS       *int64
 	CancelFenceAppliedAtMS   *int64
@@ -26,16 +27,20 @@ type MVPSLOThresholds struct {
 	TurnOpenDecisionP95MS  int64
 	FirstOutputP95MS       int64
 	CancelFenceP95MS       int64
+	EndToEndP50MS          int64
+	EndToEndP95MS          int64
 	RequiredCompleteness   float64
 	MaxStaleAcceptedOutput int
 }
 
-// DefaultMVPSLOThresholds returns thresholds from docs/MVP_ImplementationSlice.md.
+// DefaultMVPSLOThresholds returns repository baseline SLO thresholds.
 func DefaultMVPSLOThresholds() MVPSLOThresholds {
 	return MVPSLOThresholds{
 		TurnOpenDecisionP95MS:  120,
 		FirstOutputP95MS:       1500,
 		CancelFenceP95MS:       150,
+		EndToEndP50MS:          1500,
+		EndToEndP95MS:          2000,
 		RequiredCompleteness:   1.0,
 		MaxStaleAcceptedOutput: 0,
 	}
@@ -50,6 +55,8 @@ type MVPSLOGateReport struct {
 	TurnOpenDecisionP95MS     *int64   `json:"turn_open_decision_p95_ms,omitempty"`
 	FirstOutputP95MS          *int64   `json:"first_output_p95_ms,omitempty"`
 	CancelFenceP95MS          *int64   `json:"cancel_fence_p95_ms,omitempty"`
+	EndToEndP50MS             *int64   `json:"end_to_end_p50_ms,omitempty"`
+	EndToEndP95MS             *int64   `json:"end_to_end_p95_ms,omitempty"`
 	BaselineCompletenessRatio float64  `json:"baseline_completeness_ratio"`
 	StaleAcceptedOutputs      int      `json:"stale_epoch_accepted_outputs"`
 	TerminalCorrectnessRatio  float64  `json:"terminal_correctness_ratio"`
@@ -63,6 +70,7 @@ func EvaluateMVPSLOGates(samples []TurnMetrics, thresholds MVPSLOThresholds) MVP
 	turnOpenLatencies := make([]int64, 0)
 	firstOutputLatencies := make([]int64, 0)
 	cancelFenceLatencies := make([]int64, 0)
+	endToEndLatencies := make([]int64, 0)
 
 	completeAccepted := 0
 	terminalCorrectAccepted := 0
@@ -87,6 +95,16 @@ func EvaluateMVPSLOGates(samples []TurnMetrics, thresholds MVPSLOThresholds) MVP
 					report.Violations = append(report.Violations, fmt.Sprintf("turn %s has negative turn-open latency", sample.TurnID))
 				} else {
 					turnOpenLatencies = append(turnOpenLatencies, turnOpenLatency)
+				}
+			}
+			if sample.TurnOpenAtMS == nil || sample.TurnTerminalAtMS == nil {
+				report.Violations = append(report.Violations, fmt.Sprintf("turn %s missing end-to-end latency markers", sample.TurnID))
+			} else {
+				endToEndLatency := *sample.TurnTerminalAtMS - *sample.TurnOpenAtMS
+				if endToEndLatency < 0 {
+					report.Violations = append(report.Violations, fmt.Sprintf("turn %s has negative end-to-end latency", sample.TurnID))
+				} else {
+					endToEndLatencies = append(endToEndLatencies, endToEndLatency)
 				}
 			}
 		}
@@ -141,6 +159,18 @@ func EvaluateMVPSLOGates(samples []TurnMetrics, thresholds MVPSLOThresholds) MVP
 			report.Violations = append(report.Violations, fmt.Sprintf("cancel-fence p95=%dms exceeds threshold=%dms", p95, thresholds.CancelFenceP95MS))
 		}
 	}
+	if len(endToEndLatencies) > 0 {
+		p50 := percentile50(endToEndLatencies)
+		p95 := percentile95(endToEndLatencies)
+		report.EndToEndP50MS = &p50
+		report.EndToEndP95MS = &p95
+		if p50 > thresholds.EndToEndP50MS {
+			report.Violations = append(report.Violations, fmt.Sprintf("end-to-end p50=%dms exceeds threshold=%dms", p50, thresholds.EndToEndP50MS))
+		}
+		if p95 > thresholds.EndToEndP95MS {
+			report.Violations = append(report.Violations, fmt.Sprintf("end-to-end p95=%dms exceeds threshold=%dms", p95, thresholds.EndToEndP95MS))
+		}
+	}
 
 	if report.AcceptedTurns > 0 {
 		report.BaselineCompletenessRatio = float64(completeAccepted) / float64(report.AcceptedTurns)
@@ -174,12 +204,20 @@ func hasValidTerminalSequence(events []string) bool {
 }
 
 func percentile95(values []int64) int64 {
+	return percentile(values, 0.95)
+}
+
+func percentile50(values []int64) int64 {
+	return percentile(values, 0.50)
+}
+
+func percentile(values []int64, pct float64) int64 {
 	if len(values) == 0 {
 		return 0
 	}
 	copied := append([]int64(nil), values...)
 	sort.Slice(copied, func(i, j int) bool { return copied[i] < copied[j] })
-	index := int(math.Ceil(0.95*float64(len(copied)))) - 1
+	index := int(math.Ceil(pct*float64(len(copied)))) - 1
 	if index < 0 {
 		index = 0
 	}

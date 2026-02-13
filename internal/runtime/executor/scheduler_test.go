@@ -204,6 +204,66 @@ func TestSchedulerProviderInvocationSuccess(t *testing.T) {
 	}
 }
 
+func TestSchedulerProviderInvocationDisableStreaming(t *testing.T) {
+	t.Parallel()
+
+	streamInvocations := 0
+	unaryInvocations := 0
+	catalog, err := registry.NewCatalog([]contracts.Adapter{
+		contracts.StaticAdapter{
+			ID:   "llm-stream",
+			Mode: contracts.ModalityLLM,
+			InvokeFn: func(req contracts.InvocationRequest) (contracts.Outcome, error) {
+				unaryInvocations++
+				return contracts.Outcome{Class: contracts.OutcomeSuccess}, nil
+			},
+			InvokeStreamFn: func(req contracts.InvocationRequest, observer contracts.StreamObserver) (contracts.Outcome, error) {
+				streamInvocations++
+				return contracts.Outcome{Class: contracts.OutcomeSuccess}, nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected catalog error: %v", err)
+	}
+
+	invoker := invocation.NewController(catalog)
+	scheduler := NewSchedulerWithProviderInvoker(localadmission.Evaluator{}, invoker)
+
+	decision, err := scheduler.NodeDispatch(SchedulingInput{
+		SessionID:            "sess-provider-disable-streaming",
+		TurnID:               "turn-provider-disable-streaming",
+		EventID:              "evt-provider-disable-streaming",
+		PipelineVersion:      "pipeline-v1",
+		TransportSequence:    1,
+		RuntimeSequence:      1,
+		AuthorityEpoch:       1,
+		RuntimeTimestampMS:   10,
+		WallClockTimestampMS: 10,
+		ProviderInvocation: &ProviderInvocationInput{
+			Modality:                 contracts.ModalityLLM,
+			PreferredProvider:        "llm-stream",
+			EnableStreaming:          true,
+			DisableProviderStreaming: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected provider invocation error: %v", err)
+	}
+	if !decision.Allowed {
+		t.Fatalf("expected provider invocation to succeed")
+	}
+	if decision.Provider == nil {
+		t.Fatalf("expected provider decision details")
+	}
+	if decision.Provider.StreamingUsed {
+		t.Fatalf("expected scheduler to report streaming_used=false when disable flag is set")
+	}
+	if unaryInvocations != 1 || streamInvocations != 0 {
+		t.Fatalf("expected unary path only, got unary=%d stream=%d", unaryInvocations, streamInvocations)
+	}
+}
+
 func TestSchedulerProviderInvocationSwitchAfterFailure(t *testing.T) {
 	t.Parallel()
 

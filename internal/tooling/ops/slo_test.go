@@ -6,9 +6,9 @@ func TestEvaluateMVPSLOGatesPass(t *testing.T) {
 	t.Parallel()
 
 	samples := []TurnMetrics{
-		newAcceptedTurn("turn-1", 0, 90, 500, nil, nil, true, false, []string{"commit", "close"}, true),
-		newAcceptedTurn("turn-2", 0, 100, 700, nil, nil, true, false, []string{"abort", "close"}, true),
-		newAcceptedTurn("turn-3", 0, 110, 900, int64Ptr(1200), int64Ptr(1290), true, false, []string{"abort", "close"}, false),
+		newAcceptedTurn("turn-1", 0, 90, 500, 1200, nil, nil, true, false, []string{"commit", "close"}, true),
+		newAcceptedTurn("turn-2", 0, 100, 700, 1300, nil, nil, true, false, []string{"abort", "close"}, true),
+		newAcceptedTurn("turn-3", 0, 110, 900, 1400, int64Ptr(1200), int64Ptr(1290), true, false, []string{"abort", "close"}, false),
 	}
 
 	report := EvaluateMVPSLOGates(samples, DefaultMVPSLOThresholds())
@@ -24,7 +24,7 @@ func TestEvaluateMVPSLOGatesFail(t *testing.T) {
 	t.Parallel()
 
 	samples := []TurnMetrics{
-		newAcceptedTurn("turn-bad-1", 0, 250, 2000, int64Ptr(2200), int64Ptr(2500), false, true, []string{"commit", "close"}, true),
+		newAcceptedTurn("turn-bad-1", 0, 250, 2000, 3000, int64Ptr(2200), int64Ptr(2500), false, true, []string{"commit", "close"}, true),
 		{
 			TurnID:               "turn-bad-2",
 			Accepted:             true,
@@ -50,11 +50,12 @@ func newAcceptedTurn(
 	openProposed int64,
 	open int64,
 	firstOutput int64,
+	terminalAt int64,
 	cancelAccepted *int64,
 	cancelFence *int64,
 	baselineComplete bool,
 	staleAccepted bool,
-	terminal []string,
+	terminalEvents []string,
 	happyPath bool,
 ) TurnMetrics {
 	return TurnMetrics{
@@ -63,12 +64,13 @@ func newAcceptedTurn(
 		HappyPath:                happyPath,
 		TurnOpenProposedAtMS:     int64Ptr(openProposed),
 		TurnOpenAtMS:             int64Ptr(open),
+		TurnTerminalAtMS:         int64Ptr(terminalAt),
 		FirstOutputAtMS:          int64Ptr(firstOutput),
 		CancelAcceptedAtMS:       cancelAccepted,
 		CancelFenceAppliedAtMS:   cancelFence,
 		BaselineComplete:         baselineComplete,
 		AcceptedStaleEpochOutput: staleAccepted,
-		TerminalEvents:           terminal,
+		TerminalEvents:           terminalEvents,
 	}
 }
 

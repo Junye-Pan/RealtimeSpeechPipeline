@@ -18,6 +18,7 @@ import (
 	"github.com/tiger/realtime-speech-pipeline/internal/observability/replay"
 	"github.com/tiger/realtime-speech-pipeline/internal/observability/telemetry"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/bootstrap"
+	livekittransport "github.com/tiger/realtime-speech-pipeline/transports/livekit"
 )
 
 func main() {
@@ -41,6 +42,8 @@ func run(args []string, stdout io.Writer, _ io.Writer, now func() time.Time) err
 	switch args[0] {
 	case "retention-sweep":
 		return runRetentionSweep(args[1:], stdout, now)
+	case "livekit":
+		return livekittransport.RunCLI(args[1:], stdout, now)
 	case "help", "-h", "--help":
 		printUsage(stdout)
 		return nil
@@ -664,5 +667,6 @@ func writeJSONArtifact(path string, payload any) error {
 func printUsage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "rspp-runtime usage:")
 	_, _ = fmt.Fprintln(w, "  rspp-runtime [bootstrap-providers]")
+	_, _ = fmt.Fprintln(w, "  rspp-runtime livekit [-report <path>] [-events <path>] [-dry-run <bool>] [-probe <bool>] [-url <livekit_url>] [-api-key <key>] [-api-secret <secret>] [-room <room>] [-session-id <id>] [-turn-id <id>] [-pipeline-version <version>] [-authority-epoch <n>] [-default-data-class <class>] [-request-timeout-ms <ms>]")
 	_, _ = fmt.Fprintln(w, "  rspp-runtime retention-sweep -store <path> -tenants <tenant_a,tenant_b> [-policy <path>] [-report <path>] [-now-ms <ms>] [-interval-ms <ms>] [-runs <n>]")
 }

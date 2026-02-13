@@ -12,6 +12,8 @@ import (
 	"github.com/tiger/realtime-speech-pipeline/api/controlplane"
 	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
 	obs "github.com/tiger/realtime-speech-pipeline/api/observability"
+	cpnormalizer "github.com/tiger/realtime-speech-pipeline/internal/controlplane/normalizer"
+	cpregistry "github.com/tiger/realtime-speech-pipeline/internal/controlplane/registry"
 	replaycmp "github.com/tiger/realtime-speech-pipeline/internal/observability/replay"
 	"github.com/tiger/realtime-speech-pipeline/internal/observability/timeline"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/turnarbiter"
@@ -22,15 +24,22 @@ import (
 )
 
 const (
-	replaySmokeTimingToleranceMS       int64 = 15
-	replaySmokeFixtureID                     = "rd-001-smoke"
-	replayRegressionDefaultGate              = "full"
-	defaultReplayMetadataPath                = "test/replay/fixtures/metadata.json"
-	defaultReplayRegressionReportPath        = ".codex/replay/regression-report.json"
-	replayFixtureReportsDirName              = "fixtures"
-	defaultRuntimeBaselineArtifactPath       = ".codex/replay/runtime-baseline.json"
-	defaultContractsReportPath               = ".codex/ops/contracts-report.json"
-	defaultSLOGatesReportPath                = ".codex/ops/slo-gates-report.json"
+	replaySmokeTimingToleranceMS        int64 = 15
+	replaySmokeFixtureID                      = "rd-001-smoke"
+	replayRegressionDefaultGate               = "full"
+	defaultReplayMetadataPath                 = "test/replay/fixtures/metadata.json"
+	defaultReplayRegressionReportPath         = ".codex/replay/regression-report.json"
+	replayFixtureReportsDirName               = "fixtures"
+	defaultRuntimeBaselineArtifactPath        = ".codex/replay/runtime-baseline.json"
+	defaultContractsReportPath                = ".codex/ops/contracts-report.json"
+	defaultSLOGatesReportPath                 = ".codex/ops/slo-gates-report.json"
+	defaultMVPSLOGatesReportPath              = ".codex/ops/slo-gates-mvp-report.json"
+	defaultLiveProviderChainReportPath        = ".codex/providers/live-provider-chain-report.json"
+	defaultStreamingChainReportPath           = ".codex/providers/live-provider-chain-report.streaming.json"
+	defaultNonStreamingChainReportPath        = ".codex/providers/live-provider-chain-report.nonstreaming.json"
+	defaultLiveLatencyCompareReportPath       = ".codex/providers/live-latency-compare.json"
+	defaultLiveKitSmokeReportPath             = ".codex/providers/livekit-smoke-report.json"
+	mvpE2EWaiveAfterAttempts                  = 3
 )
 
 func main() {
@@ -132,6 +141,50 @@ func main() {
 		summaryPath := strings.TrimSuffix(outputPath, filepath.Ext(outputPath)) + ".md"
 		fmt.Printf("slo gates report written: %s\n", outputPath)
 		fmt.Printf("slo gates summary written: %s\n", summaryPath)
+	case "slo-gates-mvp-report":
+		outputPath := defaultMVPSLOGatesReportPath
+		baselineArtifactPath := defaultRuntimeBaselineArtifactPath
+		liveProviderChainPath := defaultLiveProviderChainReportPath
+		liveKitSmokePath := defaultLiveKitSmokeReportPath
+		if len(os.Args) >= 3 {
+			outputPath = os.Args[2]
+		}
+		if len(os.Args) >= 4 {
+			baselineArtifactPath = os.Args[3]
+		}
+		if len(os.Args) >= 5 {
+			liveProviderChainPath = os.Args[4]
+		}
+		if len(os.Args) >= 6 {
+			liveKitSmokePath = os.Args[5]
+		}
+		if err := writeMVPSLOGatesReport(outputPath, baselineArtifactPath, liveProviderChainPath, liveKitSmokePath); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to write mvp slo gates report: %v\n", err)
+			os.Exit(1)
+		}
+		summaryPath := strings.TrimSuffix(outputPath, filepath.Ext(outputPath)) + ".md"
+		fmt.Printf("mvp slo gates report written: %s\n", outputPath)
+		fmt.Printf("mvp slo gates summary written: %s\n", summaryPath)
+	case "live-latency-compare-report":
+		outputPath := defaultLiveLatencyCompareReportPath
+		streamingPath := defaultStreamingChainReportPath
+		nonStreamingPath := defaultNonStreamingChainReportPath
+		if len(os.Args) >= 3 {
+			outputPath = os.Args[2]
+		}
+		if len(os.Args) >= 4 {
+			streamingPath = os.Args[3]
+		}
+		if len(os.Args) >= 5 {
+			nonStreamingPath = os.Args[4]
+		}
+		if err := writeLiveLatencyCompareReport(outputPath, streamingPath, nonStreamingPath); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to write live latency compare report: %v\n", err)
+			os.Exit(1)
+		}
+		summaryPath := strings.TrimSuffix(outputPath, filepath.Ext(outputPath)) + ".md"
+		fmt.Printf("live latency compare report written: %s\n", outputPath)
+		fmt.Printf("live latency compare summary written: %s\n", summaryPath)
 	case "publish-release":
 		if len(os.Args) < 4 {
 			fmt.Fprintln(os.Stderr, "publish-release requires spec_ref and rollout_cfg_path")
@@ -187,6 +240,8 @@ func printUsage() {
 	fmt.Println("  rspp-cli replay-regression-report [output_path] [metadata_path] [gate]")
 	fmt.Println("  rspp-cli generate-runtime-baseline [output_path]")
 	fmt.Println("  rspp-cli slo-gates-report [output_path] [baseline_artifact_path]")
+	fmt.Println("  rspp-cli slo-gates-mvp-report [output_path] [baseline_artifact_path] [live_provider_chain_report_path] [livekit_smoke_report_path]")
+	fmt.Println("  rspp-cli live-latency-compare-report [output_path] [streaming_report_path] [non_streaming_report_path]")
 	fmt.Println("  rspp-cli publish-release <spec_ref> <rollout_cfg_path> [output_path] [contracts_report_path] [replay_report_path] [slo_report_path]")
 }
 
@@ -1074,6 +1129,156 @@ type sloGateArtifact struct {
 	Report               ops.MVPSLOGateReport `json:"report"`
 }
 
+type mvpSLOGateArtifact struct {
+	GeneratedAtUTC         string                `json:"generated_at_utc"`
+	BaselineArtifactPath   string                `json:"baseline_artifact_path"`
+	LiveProviderChainPath  string                `json:"live_provider_chain_path"`
+	LiveKitSmokeReportPath string                `json:"livekit_smoke_report_path"`
+	Thresholds             ops.MVPSLOThresholds  `json:"thresholds"`
+	BaselineReport         ops.MVPSLOGateReport  `json:"baseline_report"`
+	LiveEndToEnd           mvpLiveEndToEndGate   `json:"live_end_to_end"`
+	FixedDecisions         mvpFixedDecisionGates `json:"fixed_decisions"`
+	Warnings               []string              `json:"warnings,omitempty"`
+	Violations             []string              `json:"violations,omitempty"`
+	Passed                 bool                  `json:"passed"`
+}
+
+type mvpLiveEndToEndGate struct {
+	SampleCount   int      `json:"sample_count"`
+	EndToEndP50MS *int64   `json:"end_to_end_p50_ms,omitempty"`
+	EndToEndP95MS *int64   `json:"end_to_end_p95_ms,omitempty"`
+	Waived        bool     `json:"waived"`
+	WaiverReason  string   `json:"waiver_reason,omitempty"`
+	AttemptFiles  []string `json:"attempt_files,omitempty"`
+	Violations    []string `json:"violations,omitempty"`
+	Passed        bool     `json:"passed"`
+}
+
+type mvpFixedDecisionGates struct {
+	SimpleModeOnly          bool     `json:"simple_mode_only"`
+	ProviderPolicyCompliant bool     `json:"provider_policy_compliant"`
+	LiveKitPathReady        bool     `json:"livekit_path_ready"`
+	StreamingEvidence       bool     `json:"streaming_evidence"`
+	NonStreamingEvidence    bool     `json:"non_streaming_evidence"`
+	ParityMarkersPresent    bool     `json:"parity_markers_present"`
+	ParityComparisonValid   bool     `json:"parity_comparison_valid"`
+	Violations              []string `json:"violations,omitempty"`
+	Passed                  bool     `json:"passed"`
+}
+
+type liveProviderChainArtifact struct {
+	GeneratedAtUTC        string                              `json:"generated_at_utc"`
+	Status                string                              `json:"status"`
+	ExecutionMode         string                              `json:"execution_mode,omitempty"`
+	ComparisonIdentity    string                              `json:"comparison_identity,omitempty"`
+	SemanticParity        *bool                               `json:"semantic_parity,omitempty"`
+	ParityComparisonValid *bool                               `json:"parity_comparison_valid,omitempty"`
+	ParityInvalidReason   string                              `json:"parity_invalid_reason,omitempty"`
+	EnabledProviders      liveProviderChainEnabledProviders   `json:"enabled_providers"`
+	SelectedCombinations  []liveProviderChainComboSelection   `json:"selected_combinations,omitempty"`
+	Combinations          []liveProviderChainCombinationEntry `json:"combinations,omitempty"`
+}
+
+type liveProviderChainEnabledProviders struct {
+	STT []string `json:"stt"`
+	LLM []string `json:"llm"`
+	TTS []string `json:"tts"`
+}
+
+type liveProviderChainComboSelection struct {
+	STTProviderID string `json:"stt_provider_id"`
+	LLMProviderID string `json:"llm_provider_id"`
+	TTSProviderID string `json:"tts_provider_id"`
+}
+
+type liveProviderChainCombinationEntry struct {
+	ComboIndex    int                             `json:"combo_index,omitempty"`
+	ComboID       string                          `json:"combo_id,omitempty"`
+	STTProviderID string                          `json:"stt_provider_id,omitempty"`
+	LLMProviderID string                          `json:"llm_provider_id,omitempty"`
+	TTSProviderID string                          `json:"tts_provider_id,omitempty"`
+	Status        string                          `json:"status"`
+	Handoffs      []liveProviderChainHandoffEntry `json:"handoffs,omitempty"`
+	Steps         []liveProviderChainStepEntry    `json:"steps,omitempty"`
+	Latency       liveProviderChainLatency        `json:"latency,omitempty"`
+}
+
+type liveProviderChainLatency struct {
+	FirstAssistantAudioE2EMS int64 `json:"first_assistant_audio_e2e_latency_ms,omitempty"`
+	TurnCompletionE2EMS      int64 `json:"turn_completion_e2e_latency_ms,omitempty"`
+}
+
+type liveProviderChainHandoffEntry struct {
+	HandoffID string `json:"handoff_id,omitempty"`
+}
+
+type liveProviderChainStepEntry struct {
+	Step   string                      `json:"step,omitempty"`
+	Output liveProviderChainStepOutput `json:"output"`
+}
+
+type liveProviderChainStepOutput struct {
+	Attempts []liveProviderChainStepAttempt `json:"attempts,omitempty"`
+}
+
+type liveProviderChainStepAttempt struct {
+	StreamingUsed bool `json:"streaming_used,omitempty"`
+}
+
+type liveKitSmokeArtifact struct {
+	Probe liveKitProbeResult `json:"probe"`
+}
+
+type liveKitProbeResult struct {
+	Status string `json:"status"`
+}
+
+type liveLatencyCompareArtifact struct {
+	GeneratedAtUTC         string                      `json:"generated_at_utc"`
+	StreamingReportPath    string                      `json:"streaming_report_path"`
+	NonStreamingReportPath string                      `json:"non_streaming_report_path"`
+	ComparisonIdentity     string                      `json:"comparison_identity,omitempty"`
+	PairCount              int                         `json:"pair_count"`
+	Combos                 []liveLatencyCompareCombo   `json:"combos,omitempty"`
+	Aggregate              liveLatencyCompareAggregate `json:"aggregate"`
+	Conclusions            []string                    `json:"conclusions,omitempty"`
+}
+
+type liveLatencyCompareCombo struct {
+	ComboKey                    string `json:"combo_key"`
+	STTProviderID               string `json:"stt_provider_id"`
+	LLMProviderID               string `json:"llm_provider_id"`
+	TTSProviderID               string `json:"tts_provider_id"`
+	StreamingStatus             string `json:"streaming_status,omitempty"`
+	NonStreamingStatus          string `json:"non_streaming_status,omitempty"`
+	StreamingFirstAudioE2EMS    int64  `json:"streaming_first_assistant_audio_e2e_latency_ms,omitempty"`
+	NonStreamingFirstAudioE2EMS int64  `json:"non_streaming_first_assistant_audio_e2e_latency_ms,omitempty"`
+	FirstAudioDeltaMS           int64  `json:"first_assistant_audio_delta_ms,omitempty"`
+	StreamingCompletionE2EMS    int64  `json:"streaming_turn_completion_e2e_latency_ms,omitempty"`
+	NonStreamingCompletionE2EMS int64  `json:"non_streaming_turn_completion_e2e_latency_ms,omitempty"`
+	CompletionDeltaMS           int64  `json:"turn_completion_delta_ms,omitempty"`
+	FirstAudioWinner            string `json:"first_audio_winner,omitempty"`
+	CompletionWinner            string `json:"completion_winner,omitempty"`
+}
+
+type liveLatencyCompareAggregate struct {
+	FirstAudio liveLatencyMetricAggregate `json:"first_audio"`
+	Completion liveLatencyMetricAggregate `json:"completion"`
+}
+
+type liveLatencyMetricAggregate struct {
+	StreamingSampleCount    int    `json:"streaming_sample_count"`
+	NonStreamingSampleCount int    `json:"non_streaming_sample_count"`
+	PairedSampleCount       int    `json:"paired_sample_count"`
+	StreamingP50MS          *int64 `json:"streaming_p50_ms,omitempty"`
+	StreamingP95MS          *int64 `json:"streaming_p95_ms,omitempty"`
+	NonStreamingP50MS       *int64 `json:"non_streaming_p50_ms,omitempty"`
+	NonStreamingP95MS       *int64 `json:"non_streaming_p95_ms,omitempty"`
+	DeltaP50MS              *int64 `json:"delta_p50_ms,omitempty"`
+	DeltaP95MS              *int64 `json:"delta_p95_ms,omitempty"`
+	Winner                  string `json:"winner,omitempty"`
+}
+
 type contractsReportArtifact struct {
 	GeneratedAtUTC string                               `json:"generated_at_utc"`
 	FixtureRoot    string                               `json:"fixture_root"`
@@ -1116,6 +1321,675 @@ func writeSLOGatesReport(outputPath string, baselineArtifactPath string) error {
 		return fmt.Errorf("mvp slo gate failed: %v", artifact.Report.Violations)
 	}
 	return nil
+}
+
+func writeMVPSLOGatesReport(outputPath string, baselineArtifactPath string, liveProviderChainPath string, liveKitSmokePath string) error {
+	entries, effectiveBaselinePath, err := loadRuntimeBaselineEntries(baselineArtifactPath)
+	if err != nil {
+		return err
+	}
+	chainReport, effectiveChainPath, err := loadLiveProviderChainArtifact(liveProviderChainPath)
+	if err != nil {
+		return err
+	}
+
+	thresholds := ops.DefaultMVPSLOThresholds()
+	baselineReport := ops.EvaluateMVPSLOGates(toTurnMetrics(entries), thresholds)
+	liveE2E := evaluateLiveEndToEndGate(chainReport, thresholds, effectiveChainPath)
+	fixedDecisions := evaluateMVPFixedDecisionGates(chainReport, liveKitSmokePath)
+
+	artifact := mvpSLOGateArtifact{
+		GeneratedAtUTC:         time.Now().UTC().Format(time.RFC3339),
+		BaselineArtifactPath:   effectiveBaselinePath,
+		LiveProviderChainPath:  effectiveChainPath,
+		LiveKitSmokeReportPath: liveKitSmokePath,
+		Thresholds:             thresholds,
+		BaselineReport:         baselineReport,
+		LiveEndToEnd:           liveE2E,
+		FixedDecisions:         fixedDecisions,
+	}
+
+	if !baselineReport.Passed {
+		artifact.Violations = append(artifact.Violations, "baseline SLO gates failed")
+	}
+	if !liveE2E.Passed {
+		artifact.Violations = append(artifact.Violations, liveE2E.Violations...)
+	}
+	if liveE2E.Waived {
+		artifact.Warnings = append(artifact.Warnings, liveE2E.WaiverReason)
+	}
+	if !fixedDecisions.Passed {
+		artifact.Violations = append(artifact.Violations, fixedDecisions.Violations...)
+	}
+
+	artifact.Passed = baselineReport.Passed && liveE2E.Passed && fixedDecisions.Passed
+
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(artifact, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(outputPath, data, 0o644); err != nil {
+		return err
+	}
+
+	summaryPath := strings.TrimSuffix(outputPath, filepath.Ext(outputPath)) + ".md"
+	if err := os.WriteFile(summaryPath, []byte(renderMVPSLOGatesSummary(artifact)), 0o644); err != nil {
+		return err
+	}
+
+	if !artifact.Passed {
+		return fmt.Errorf("mvp slo gate failed: %v", artifact.Violations)
+	}
+	return nil
+}
+
+func writeLiveLatencyCompareReport(outputPath string, streamingPath string, nonStreamingPath string) error {
+	streamingReport, effectiveStreamingPath, err := loadLiveProviderChainArtifact(streamingPath)
+	if err != nil {
+		return err
+	}
+	nonStreamingReport, effectiveNonStreamingPath, err := loadLiveProviderChainArtifact(nonStreamingPath)
+	if err != nil {
+		return err
+	}
+	if !isStreamingMode(streamingReport.ExecutionMode) {
+		return fmt.Errorf("streaming report must have execution_mode=streaming, got %q", streamingReport.ExecutionMode)
+	}
+	if !isNonStreamingMode(nonStreamingReport.ExecutionMode) {
+		return fmt.Errorf("non-streaming report must have execution_mode=non_streaming, got %q", nonStreamingReport.ExecutionMode)
+	}
+	if strings.TrimSpace(streamingReport.ComparisonIdentity) == "" || strings.TrimSpace(nonStreamingReport.ComparisonIdentity) == "" {
+		return fmt.Errorf("comparison identity missing from streaming/non-streaming reports")
+	}
+	if streamingReport.ComparisonIdentity != nonStreamingReport.ComparisonIdentity {
+		return fmt.Errorf(
+			"comparison identity mismatch: streaming=%s non_streaming=%s",
+			streamingReport.ComparisonIdentity,
+			nonStreamingReport.ComparisonIdentity,
+		)
+	}
+
+	streamingViolations := validateLiveProviderModeEvidence(streamingReport)
+	if len(streamingViolations) > 0 {
+		return fmt.Errorf("streaming report mode evidence invalid: %s", strings.Join(streamingViolations, "; "))
+	}
+	nonStreamingViolations := validateLiveProviderModeEvidence(nonStreamingReport)
+	if len(nonStreamingViolations) > 0 {
+		return fmt.Errorf("non-streaming report mode evidence invalid: %s", strings.Join(nonStreamingViolations, "; "))
+	}
+
+	streamingByKey := mapCombinationsByKey(streamingReport)
+	nonStreamingByKey := mapCombinationsByKey(nonStreamingReport)
+	keys := intersectionKeys(streamingByKey, nonStreamingByKey)
+	if len(keys) == 0 {
+		return fmt.Errorf("no overlapping provider combinations between streaming and non-streaming reports")
+	}
+
+	combos := make([]liveLatencyCompareCombo, 0, len(keys))
+	streamingFirstAudio := make([]int64, 0, len(keys))
+	nonStreamingFirstAudio := make([]int64, 0, len(keys))
+	firstAudioDelta := make([]int64, 0, len(keys))
+	streamingCompletion := make([]int64, 0, len(keys))
+	nonStreamingCompletion := make([]int64, 0, len(keys))
+	completionDelta := make([]int64, 0, len(keys))
+
+	for _, key := range keys {
+		streamCombo := streamingByKey[key]
+		nonStreamCombo := nonStreamingByKey[key]
+		combo := liveLatencyCompareCombo{
+			ComboKey:                    key,
+			STTProviderID:               streamCombo.STTProviderID,
+			LLMProviderID:               streamCombo.LLMProviderID,
+			TTSProviderID:               streamCombo.TTSProviderID,
+			StreamingStatus:             streamCombo.Status,
+			NonStreamingStatus:          nonStreamCombo.Status,
+			StreamingFirstAudioE2EMS:    streamCombo.Latency.FirstAssistantAudioE2EMS,
+			NonStreamingFirstAudioE2EMS: nonStreamCombo.Latency.FirstAssistantAudioE2EMS,
+			StreamingCompletionE2EMS:    streamCombo.Latency.TurnCompletionE2EMS,
+			NonStreamingCompletionE2EMS: nonStreamCombo.Latency.TurnCompletionE2EMS,
+		}
+
+		if streamCombo.Status == "pass" && streamCombo.Latency.FirstAssistantAudioE2EMS > 0 {
+			streamingFirstAudio = append(streamingFirstAudio, streamCombo.Latency.FirstAssistantAudioE2EMS)
+		}
+		if nonStreamCombo.Status == "pass" && nonStreamCombo.Latency.FirstAssistantAudioE2EMS > 0 {
+			nonStreamingFirstAudio = append(nonStreamingFirstAudio, nonStreamCombo.Latency.FirstAssistantAudioE2EMS)
+		}
+		if streamCombo.Status == "pass" && nonStreamCombo.Status == "pass" &&
+			streamCombo.Latency.FirstAssistantAudioE2EMS > 0 && nonStreamCombo.Latency.FirstAssistantAudioE2EMS > 0 {
+			delta := streamCombo.Latency.FirstAssistantAudioE2EMS - nonStreamCombo.Latency.FirstAssistantAudioE2EMS
+			combo.FirstAudioDeltaMS = delta
+			combo.FirstAudioWinner = winnerForDelta(delta)
+			firstAudioDelta = append(firstAudioDelta, delta)
+		}
+
+		if streamCombo.Status == "pass" && streamCombo.Latency.TurnCompletionE2EMS > 0 {
+			streamingCompletion = append(streamingCompletion, streamCombo.Latency.TurnCompletionE2EMS)
+		}
+		if nonStreamCombo.Status == "pass" && nonStreamCombo.Latency.TurnCompletionE2EMS > 0 {
+			nonStreamingCompletion = append(nonStreamingCompletion, nonStreamCombo.Latency.TurnCompletionE2EMS)
+		}
+		if streamCombo.Status == "pass" && nonStreamCombo.Status == "pass" &&
+			streamCombo.Latency.TurnCompletionE2EMS > 0 && nonStreamCombo.Latency.TurnCompletionE2EMS > 0 {
+			delta := streamCombo.Latency.TurnCompletionE2EMS - nonStreamCombo.Latency.TurnCompletionE2EMS
+			combo.CompletionDeltaMS = delta
+			combo.CompletionWinner = winnerForDelta(delta)
+			completionDelta = append(completionDelta, delta)
+		}
+
+		combos = append(combos, combo)
+	}
+
+	aggregate := liveLatencyCompareAggregate{
+		FirstAudio: liveLatencyMetricAggregate{
+			StreamingSampleCount:    len(streamingFirstAudio),
+			NonStreamingSampleCount: len(nonStreamingFirstAudio),
+			PairedSampleCount:       len(firstAudioDelta),
+		},
+		Completion: liveLatencyMetricAggregate{
+			StreamingSampleCount:    len(streamingCompletion),
+			NonStreamingSampleCount: len(nonStreamingCompletion),
+			PairedSampleCount:       len(completionDelta),
+		},
+	}
+	populateMetricAggregate(&aggregate.FirstAudio, streamingFirstAudio, nonStreamingFirstAudio, firstAudioDelta)
+	populateMetricAggregate(&aggregate.Completion, streamingCompletion, nonStreamingCompletion, completionDelta)
+
+	artifact := liveLatencyCompareArtifact{
+		GeneratedAtUTC:         time.Now().UTC().Format(time.RFC3339),
+		StreamingReportPath:    effectiveStreamingPath,
+		NonStreamingReportPath: effectiveNonStreamingPath,
+		ComparisonIdentity:     streamingReport.ComparisonIdentity,
+		PairCount:              len(keys),
+		Combos:                 combos,
+		Aggregate:              aggregate,
+		Conclusions: []string{
+			fmt.Sprintf("first-audio winner: %s", defaultStringMetricWinner(aggregate.FirstAudio.Winner)),
+			fmt.Sprintf("completion winner: %s", defaultStringMetricWinner(aggregate.Completion.Winner)),
+		},
+	}
+
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+		return err
+	}
+	payload, err := json.MarshalIndent(artifact, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(outputPath, payload, 0o644); err != nil {
+		return err
+	}
+	summaryPath := strings.TrimSuffix(outputPath, filepath.Ext(outputPath)) + ".md"
+	if err := os.WriteFile(summaryPath, []byte(renderLiveLatencyCompareSummary(artifact)), 0o644); err != nil {
+		return err
+	}
+	return nil
+}
+
+func isStreamingMode(mode string) bool {
+	return strings.EqualFold(strings.TrimSpace(mode), "streaming")
+}
+
+func isNonStreamingMode(mode string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(mode))
+	switch normalized {
+	case "non_streaming", "non-streaming", "nonstreaming":
+		return true
+	default:
+		return false
+	}
+}
+
+func validateLiveProviderModeEvidence(report liveProviderChainArtifact) []string {
+	violations := make([]string, 0, 4)
+	combinations := normalizeChainCombinations(report)
+	switch {
+	case isStreamingMode(report.ExecutionMode):
+		for _, combo := range combinations {
+			if combo.Status != "pass" {
+				continue
+			}
+			hasOverlap := len(combo.Handoffs) > 0 ||
+				combo.Latency.FirstAssistantAudioE2EMS > 0
+			if !hasOverlap {
+				violations = append(violations, fmt.Sprintf("combo %s missing streaming overlap evidence", liveProviderComboKey(combo)))
+			}
+		}
+	case isNonStreamingMode(report.ExecutionMode):
+		for _, combo := range combinations {
+			if combo.Status != "pass" {
+				continue
+			}
+			for _, step := range combo.Steps {
+				for _, attempt := range step.Output.Attempts {
+					if attempt.StreamingUsed {
+						violations = append(violations, fmt.Sprintf("combo %s recorded streaming_used=true in non-streaming mode", liveProviderComboKey(combo)))
+						break
+					}
+				}
+				if len(violations) > 0 && strings.Contains(violations[len(violations)-1], liveProviderComboKey(combo)) {
+					break
+				}
+			}
+		}
+	default:
+		violations = append(violations, fmt.Sprintf("unsupported execution mode %q", report.ExecutionMode))
+	}
+	return violations
+}
+
+func normalizeChainCombinations(report liveProviderChainArtifact) []liveProviderChainCombinationEntry {
+	combinations := append([]liveProviderChainCombinationEntry(nil), report.Combinations...)
+	for i := range combinations {
+		if combinations[i].STTProviderID == "" && i < len(report.SelectedCombinations) {
+			combinations[i].STTProviderID = report.SelectedCombinations[i].STTProviderID
+		}
+		if combinations[i].LLMProviderID == "" && i < len(report.SelectedCombinations) {
+			combinations[i].LLMProviderID = report.SelectedCombinations[i].LLMProviderID
+		}
+		if combinations[i].TTSProviderID == "" && i < len(report.SelectedCombinations) {
+			combinations[i].TTSProviderID = report.SelectedCombinations[i].TTSProviderID
+		}
+	}
+	return combinations
+}
+
+func mapCombinationsByKey(report liveProviderChainArtifact) map[string]liveProviderChainCombinationEntry {
+	combinations := normalizeChainCombinations(report)
+	out := make(map[string]liveProviderChainCombinationEntry, len(combinations))
+	for _, combo := range combinations {
+		key := liveProviderComboKey(combo)
+		if key == "" {
+			continue
+		}
+		out[key] = combo
+	}
+	return out
+}
+
+func liveProviderComboKey(combo liveProviderChainCombinationEntry) string {
+	if strings.TrimSpace(combo.STTProviderID) == "" ||
+		strings.TrimSpace(combo.LLMProviderID) == "" ||
+		strings.TrimSpace(combo.TTSProviderID) == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s|%s|%s", combo.STTProviderID, combo.LLMProviderID, combo.TTSProviderID)
+}
+
+func intersectionKeys(left map[string]liveProviderChainCombinationEntry, right map[string]liveProviderChainCombinationEntry) []string {
+	keys := make([]string, 0, len(left))
+	for key := range left {
+		if _, ok := right[key]; ok {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func populateMetricAggregate(aggregate *liveLatencyMetricAggregate, streaming []int64, nonStreaming []int64, deltas []int64) {
+	if aggregate == nil {
+		return
+	}
+	if len(streaming) > 0 {
+		p50 := percentile(streaming, 0.50)
+		p95 := percentile(streaming, 0.95)
+		aggregate.StreamingP50MS = &p50
+		aggregate.StreamingP95MS = &p95
+	}
+	if len(nonStreaming) > 0 {
+		p50 := percentile(nonStreaming, 0.50)
+		p95 := percentile(nonStreaming, 0.95)
+		aggregate.NonStreamingP50MS = &p50
+		aggregate.NonStreamingP95MS = &p95
+	}
+	if len(deltas) > 0 {
+		p50 := percentile(deltas, 0.50)
+		p95 := percentile(deltas, 0.95)
+		aggregate.DeltaP50MS = &p50
+		aggregate.DeltaP95MS = &p95
+		aggregate.Winner = winnerForDelta(p50)
+	}
+}
+
+func winnerForDelta(delta int64) string {
+	switch {
+	case delta < 0:
+		return "streaming"
+	case delta > 0:
+		return "non_streaming"
+	default:
+		return "tie"
+	}
+}
+
+func defaultStringMetricWinner(winner string) string {
+	if strings.TrimSpace(winner) == "" {
+		return "insufficient_data"
+	}
+	return winner
+}
+
+func renderLiveLatencyCompareSummary(artifact liveLatencyCompareArtifact) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# Live Latency Compare Report\n\n")
+	fmt.Fprintf(&b, "- Generated at (UTC): `%s`\n", artifact.GeneratedAtUTC)
+	fmt.Fprintf(&b, "- Streaming report: `%s`\n", artifact.StreamingReportPath)
+	fmt.Fprintf(&b, "- Non-streaming report: `%s`\n", artifact.NonStreamingReportPath)
+	fmt.Fprintf(&b, "- Comparison identity: `%s`\n", artifact.ComparisonIdentity)
+	fmt.Fprintf(&b, "- Pair count: `%d`\n\n", artifact.PairCount)
+
+	fmt.Fprintf(&b, "## Aggregate Metrics\n\n")
+	fmt.Fprintf(&b, "| Metric | Streaming p50 | Streaming p95 | Non-streaming p50 | Non-streaming p95 | Delta p50 (streaming - non) | Delta p95 (streaming - non) | Winner |\n")
+	fmt.Fprintf(&b, "| --- | --- | --- | --- | --- | --- | --- | --- |\n")
+	fmt.Fprintf(
+		&b,
+		"| First audio | `%s` | `%s` | `%s` | `%s` | `%s` | `%s` | `%s` |\n",
+		formatOptionalInt64(artifact.Aggregate.FirstAudio.StreamingP50MS),
+		formatOptionalInt64(artifact.Aggregate.FirstAudio.StreamingP95MS),
+		formatOptionalInt64(artifact.Aggregate.FirstAudio.NonStreamingP50MS),
+		formatOptionalInt64(artifact.Aggregate.FirstAudio.NonStreamingP95MS),
+		formatOptionalInt64(artifact.Aggregate.FirstAudio.DeltaP50MS),
+		formatOptionalInt64(artifact.Aggregate.FirstAudio.DeltaP95MS),
+		defaultStringMetricWinner(artifact.Aggregate.FirstAudio.Winner),
+	)
+	fmt.Fprintf(
+		&b,
+		"| Completion | `%s` | `%s` | `%s` | `%s` | `%s` | `%s` | `%s` |\n\n",
+		formatOptionalInt64(artifact.Aggregate.Completion.StreamingP50MS),
+		formatOptionalInt64(artifact.Aggregate.Completion.StreamingP95MS),
+		formatOptionalInt64(artifact.Aggregate.Completion.NonStreamingP50MS),
+		formatOptionalInt64(artifact.Aggregate.Completion.NonStreamingP95MS),
+		formatOptionalInt64(artifact.Aggregate.Completion.DeltaP50MS),
+		formatOptionalInt64(artifact.Aggregate.Completion.DeltaP95MS),
+		defaultStringMetricWinner(artifact.Aggregate.Completion.Winner),
+	)
+
+	fmt.Fprintf(&b, "## Per-Combo Metrics\n\n")
+	fmt.Fprintf(&b, "| Combo | Streaming first-audio | Non-streaming first-audio | Delta | First-audio winner | Streaming completion | Non-streaming completion | Delta | Completion winner |\n")
+	fmt.Fprintf(&b, "| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
+	if len(artifact.Combos) == 0 {
+		fmt.Fprintf(&b, "| _none_ | _n/a_ | _n/a_ | _n/a_ | _n/a_ | _n/a_ | _n/a_ | _n/a_ | _n/a_ |\n")
+	} else {
+		for _, combo := range artifact.Combos {
+			fmt.Fprintf(
+				&b,
+				"| `%s` | `%d` | `%d` | `%d` | `%s` | `%d` | `%d` | `%d` | `%s` |\n",
+				combo.ComboKey,
+				combo.StreamingFirstAudioE2EMS,
+				combo.NonStreamingFirstAudioE2EMS,
+				combo.FirstAudioDeltaMS,
+				defaultStringMetricWinner(combo.FirstAudioWinner),
+				combo.StreamingCompletionE2EMS,
+				combo.NonStreamingCompletionE2EMS,
+				combo.CompletionDeltaMS,
+				defaultStringMetricWinner(combo.CompletionWinner),
+			)
+		}
+	}
+
+	if len(artifact.Conclusions) > 0 {
+		fmt.Fprintf(&b, "\n## Conclusions\n\n")
+		for _, conclusion := range artifact.Conclusions {
+			fmt.Fprintf(&b, "- %s\n", conclusion)
+		}
+	}
+	return b.String()
+}
+
+func formatOptionalInt64(value *int64) string {
+	if value == nil {
+		return "n/a"
+	}
+	return fmt.Sprintf("%d", *value)
+}
+
+func evaluateLiveEndToEndGate(report liveProviderChainArtifact, thresholds ops.MVPSLOThresholds, effectiveChainPath string) mvpLiveEndToEndGate {
+	out := mvpLiveEndToEndGate{}
+	for _, combo := range report.Combinations {
+		if combo.Status != "pass" {
+			continue
+		}
+		if combo.Latency.TurnCompletionE2EMS <= 0 {
+			continue
+		}
+		out.SampleCount++
+	}
+	latencies := make([]int64, 0, out.SampleCount)
+	for _, combo := range report.Combinations {
+		if combo.Status != "pass" || combo.Latency.TurnCompletionE2EMS <= 0 {
+			continue
+		}
+		latencies = append(latencies, combo.Latency.TurnCompletionE2EMS)
+	}
+	if len(latencies) == 0 {
+		out.Violations = append(out.Violations, "live provider chain report contains no passing end-to-end latency samples")
+	}
+	if report.Status != "pass" {
+		out.Violations = append(out.Violations, fmt.Sprintf("live provider chain status=%s", report.Status))
+	}
+	if len(latencies) > 0 {
+		p50 := percentile(latencies, 0.50)
+		p95 := percentile(latencies, 0.95)
+		out.EndToEndP50MS = &p50
+		out.EndToEndP95MS = &p95
+		if p50 > thresholds.EndToEndP50MS {
+			out.Violations = append(out.Violations, fmt.Sprintf("live end-to-end p50=%dms exceeds threshold=%dms", p50, thresholds.EndToEndP50MS))
+		}
+		if p95 > thresholds.EndToEndP95MS {
+			out.Violations = append(out.Violations, fmt.Sprintf("live end-to-end p95=%dms exceeds threshold=%dms", p95, thresholds.EndToEndP95MS))
+		}
+	}
+
+	out.AttemptFiles = discoverLiveE2EAttemptFiles(effectiveChainPath)
+	if len(out.Violations) > 0 && len(out.AttemptFiles) >= mvpE2EWaiveAfterAttempts {
+		out.Waived = true
+		out.WaiverReason = fmt.Sprintf("waived end-to-end latency standard after %d attempts (%s)", len(out.AttemptFiles), strings.Join(out.AttemptFiles, ", "))
+		out.Violations = nil
+		out.Passed = true
+		return out
+	}
+
+	out.Passed = len(out.Violations) == 0
+	return out
+}
+
+func evaluateMVPFixedDecisionGates(report liveProviderChainArtifact, liveKitSmokePath string) mvpFixedDecisionGates {
+	out := mvpFixedDecisionGates{}
+	if err := validateSimpleModeOnly(); err != nil {
+		out.Violations = append(out.Violations, fmt.Sprintf("simple-mode check failed: %v", err))
+	} else {
+		out.SimpleModeOnly = true
+	}
+
+	if violations := validateMVPProviderPolicy(report); len(violations) > 0 {
+		out.Violations = append(out.Violations, violations...)
+	} else {
+		out.ProviderPolicyCompliant = true
+	}
+
+	if isStreamingMode(report.ExecutionMode) && len(validateLiveProviderModeEvidence(report)) == 0 {
+		out.StreamingEvidence = true
+	}
+	if streamingReport, _, err := loadLiveProviderChainArtifact(defaultStreamingChainReportPath); err == nil {
+		if isStreamingMode(streamingReport.ExecutionMode) && len(validateLiveProviderModeEvidence(streamingReport)) == 0 {
+			out.StreamingEvidence = true
+		}
+	}
+	if isNonStreamingMode(report.ExecutionMode) && len(validateLiveProviderModeEvidence(report)) == 0 {
+		out.NonStreamingEvidence = true
+	}
+	if nonStreamingReport, _, err := loadLiveProviderChainArtifact(defaultNonStreamingChainReportPath); err == nil {
+		if isNonStreamingMode(nonStreamingReport.ExecutionMode) && len(validateLiveProviderModeEvidence(nonStreamingReport)) == 0 {
+			out.NonStreamingEvidence = true
+		}
+	}
+	if report.SemanticParity != nil && report.ParityComparisonValid != nil {
+		out.ParityMarkersPresent = true
+		out.ParityComparisonValid = *report.SemanticParity && *report.ParityComparisonValid
+	}
+	if !out.StreamingEvidence {
+		out.Violations = append(out.Violations, "streaming execution evidence missing from live provider report")
+	}
+	if !out.NonStreamingEvidence {
+		out.Violations = append(out.Violations, "non-streaming execution evidence missing (.codex/providers/live-provider-chain-report.nonstreaming.json)")
+	}
+	if !out.ParityMarkersPresent {
+		out.Violations = append(out.Violations, "streaming/non-streaming parity markers missing from live provider report")
+	}
+	if out.ParityMarkersPresent && !out.ParityComparisonValid {
+		detail := strings.TrimSpace(report.ParityInvalidReason)
+		if detail == "" {
+			detail = "semantic parity or comparison validity is false"
+		}
+		out.Violations = append(out.Violations, "streaming/non-streaming parity comparison invalid: "+detail)
+	}
+
+	livekit, _, err := loadLiveKitSmokeArtifact(liveKitSmokePath)
+	if err != nil {
+		out.Violations = append(out.Violations, fmt.Sprintf("livekit smoke report missing/invalid: %v", err))
+	} else if strings.ToLower(strings.TrimSpace(livekit.Probe.Status)) != "passed" {
+		out.Violations = append(out.Violations, fmt.Sprintf("livekit probe status must be passed, got %q", livekit.Probe.Status))
+	} else {
+		out.LiveKitPathReady = true
+	}
+
+	out.Passed = len(out.Violations) == 0
+	return out
+}
+
+func validateSimpleModeOnly() error {
+	if cpregistry.DefaultExecutionProfile != "simple" {
+		return fmt.Errorf("registry default execution profile must be simple, got %q", cpregistry.DefaultExecutionProfile)
+	}
+	normalizer := cpnormalizer.Service{}
+	normalized, err := normalizer.Normalize(cpnormalizer.Input{
+		Record: cpregistry.PipelineRecord{
+			PipelineVersion:    cpregistry.DefaultPipelineVersion,
+			GraphDefinitionRef: cpregistry.DefaultGraphDefinitionRef,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("normalize simple profile default: %w", err)
+	}
+	if normalized.ExecutionProfile != cpregistry.DefaultExecutionProfile {
+		return fmt.Errorf("normalized execution profile must be %q, got %q", cpregistry.DefaultExecutionProfile, normalized.ExecutionProfile)
+	}
+	_, err = normalizer.Normalize(cpnormalizer.Input{
+		Record: cpregistry.PipelineRecord{
+			PipelineVersion:    cpregistry.DefaultPipelineVersion,
+			GraphDefinitionRef: cpregistry.DefaultGraphDefinitionRef,
+			ExecutionProfile:   "advanced",
+		},
+	})
+	if err == nil {
+		return fmt.Errorf("advanced execution profile must be rejected in MVP")
+	}
+	if !strings.Contains(err.Error(), "unsupported in MVP") {
+		return fmt.Errorf("advanced execution profile error must mention unsupported in MVP, got %q", err.Error())
+	}
+	return nil
+}
+
+func validateMVPProviderPolicy(report liveProviderChainArtifact) []string {
+	allowed := map[string]map[string]struct{}{
+		"stt": {"stt-deepgram": {}, "stt-assemblyai": {}},
+		"llm": {"llm-anthropic": {}, "llm-cohere": {}},
+		"tts": {"tts-elevenlabs": {}},
+	}
+	violations := make([]string, 0)
+	validateSet := func(modality string, providers []string) {
+		if len(providers) < 1 || len(providers) > 5 {
+			violations = append(violations, fmt.Sprintf("%s provider count must be within [1,5], got %d", modality, len(providers)))
+		}
+		for _, provider := range providers {
+			if _, ok := allowed[modality][provider]; !ok {
+				violations = append(violations, fmt.Sprintf("%s provider %q is outside MVP fixed policy", modality, provider))
+			}
+		}
+	}
+	validateSet("stt", report.EnabledProviders.STT)
+	validateSet("llm", report.EnabledProviders.LLM)
+	validateSet("tts", report.EnabledProviders.TTS)
+	for _, combo := range report.SelectedCombinations {
+		if _, ok := allowed["stt"][combo.STTProviderID]; !ok {
+			violations = append(violations, fmt.Sprintf("combo uses unsupported stt provider %q", combo.STTProviderID))
+		}
+		if _, ok := allowed["llm"][combo.LLMProviderID]; !ok {
+			violations = append(violations, fmt.Sprintf("combo uses unsupported llm provider %q", combo.LLMProviderID))
+		}
+		if _, ok := allowed["tts"][combo.TTSProviderID]; !ok {
+			violations = append(violations, fmt.Sprintf("combo uses unsupported tts provider %q", combo.TTSProviderID))
+		}
+	}
+	return violations
+}
+
+func loadLiveProviderChainArtifact(path string) (liveProviderChainArtifact, string, error) {
+	if strings.TrimSpace(path) == "" {
+		path = defaultLiveProviderChainReportPath
+	}
+	resolved, err := resolveProjectRelativePath(path)
+	if err != nil {
+		return liveProviderChainArtifact{}, path, fmt.Errorf("resolve live provider chain report: %w", err)
+	}
+	raw, err := os.ReadFile(resolved)
+	if err != nil {
+		return liveProviderChainArtifact{}, resolved, fmt.Errorf("read live provider chain report %s: %w", resolved, err)
+	}
+	var report liveProviderChainArtifact
+	if err := json.Unmarshal(raw, &report); err != nil {
+		return liveProviderChainArtifact{}, resolved, fmt.Errorf("decode live provider chain report %s: %w", resolved, err)
+	}
+	return report, resolved, nil
+}
+
+func loadLiveKitSmokeArtifact(path string) (liveKitSmokeArtifact, string, error) {
+	if strings.TrimSpace(path) == "" {
+		path = defaultLiveKitSmokeReportPath
+	}
+	resolved, err := resolveProjectRelativePath(path)
+	if err != nil {
+		return liveKitSmokeArtifact{}, path, fmt.Errorf("resolve livekit smoke report: %w", err)
+	}
+	raw, err := os.ReadFile(resolved)
+	if err != nil {
+		return liveKitSmokeArtifact{}, resolved, fmt.Errorf("read livekit smoke report %s: %w", resolved, err)
+	}
+	var artifact liveKitSmokeArtifact
+	if err := json.Unmarshal(raw, &artifact); err != nil {
+		return liveKitSmokeArtifact{}, resolved, fmt.Errorf("decode livekit smoke report %s: %w", resolved, err)
+	}
+	return artifact, resolved, nil
+}
+
+func discoverLiveE2EAttemptFiles(chainPath string) []string {
+	baseDir := filepath.Dir(chainPath)
+	matches, err := filepath.Glob(filepath.Join(baseDir, "live-provider-chain-report*.json"))
+	if err != nil {
+		return nil
+	}
+	sort.Strings(matches)
+	return matches
+}
+
+func percentile(values []int64, pct float64) int64 {
+	if len(values) == 0 {
+		return 0
+	}
+	copied := append([]int64(nil), values...)
+	sort.Slice(copied, func(i, j int) bool { return copied[i] < copied[j] })
+	index := int(float64(len(copied))*pct+0.999999999) - 1
+	if index < 0 {
+		index = 0
+	}
+	if index >= len(copied) {
+		index = len(copied) - 1
+	}
+	return copied[index]
 }
 
 func writeContractsReport(outputPath string, fixtureRoot string) error {
@@ -1587,6 +2461,7 @@ func toTurnMetrics(entries []timeline.BaselineEvidence) []ops.TurnMetrics {
 			HappyPath:                entry.TurnOpenAtMS != nil && entry.FirstOutputAtMS != nil,
 			TurnOpenProposedAtMS:     entry.TurnOpenProposedAtMS,
 			TurnOpenAtMS:             entry.TurnOpenAtMS,
+			TurnTerminalAtMS:         entry.TurnTerminalAtMS,
 			FirstOutputAtMS:          entry.FirstOutputAtMS,
 			CancelAcceptedAtMS:       entry.CancelAcceptedAtMS,
 			CancelFenceAppliedAtMS:   entry.CancelFenceAppliedAtMS,
@@ -1623,6 +2498,12 @@ func renderSLOGatesSummary(artifact sloGateArtifact) string {
 	if report.CancelFenceP95MS != nil {
 		lines = append(lines, fmt.Sprintf("Cancel-fence p95: %d ms", *report.CancelFenceP95MS))
 	}
+	if report.EndToEndP50MS != nil {
+		lines = append(lines, fmt.Sprintf("End-to-end p50: %d ms", *report.EndToEndP50MS))
+	}
+	if report.EndToEndP95MS != nil {
+		lines = append(lines, fmt.Sprintf("End-to-end p95: %d ms", *report.EndToEndP95MS))
+	}
 
 	if report.Passed {
 		lines = append(lines, "", "Status: PASS")
@@ -1631,6 +2512,85 @@ func renderSLOGatesSummary(artifact sloGateArtifact) string {
 		for _, violation := range report.Violations {
 			lines = append(lines, "- "+violation)
 		}
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
+func renderMVPSLOGatesSummary(artifact mvpSLOGateArtifact) string {
+	lines := []string{
+		"# MVP SLO Gates Report (Live-Enforced)",
+		"",
+		"Generated at (UTC): " + artifact.GeneratedAtUTC,
+		"Baseline artifact: " + artifact.BaselineArtifactPath,
+		"Live provider chain report: " + artifact.LiveProviderChainPath,
+		"LiveKit smoke report: " + artifact.LiveKitSmokeReportPath,
+		"",
+		"## Baseline",
+		fmt.Sprintf("Accepted turns: %d", artifact.BaselineReport.AcceptedTurns),
+		fmt.Sprintf("Happy-path turns: %d", artifact.BaselineReport.HappyPathTurns),
+		fmt.Sprintf("OR-02 completeness: %.2f", artifact.BaselineReport.BaselineCompletenessRatio),
+		fmt.Sprintf("Terminal correctness: %.2f", artifact.BaselineReport.TerminalCorrectnessRatio),
+	}
+	if artifact.BaselineReport.TurnOpenDecisionP95MS != nil {
+		lines = append(lines, fmt.Sprintf("Turn-open p95: %d ms", *artifact.BaselineReport.TurnOpenDecisionP95MS))
+	}
+	if artifact.BaselineReport.FirstOutputP95MS != nil {
+		lines = append(lines, fmt.Sprintf("First-output p95: %d ms", *artifact.BaselineReport.FirstOutputP95MS))
+	}
+	if artifact.BaselineReport.CancelFenceP95MS != nil {
+		lines = append(lines, fmt.Sprintf("Cancel-fence p95: %d ms", *artifact.BaselineReport.CancelFenceP95MS))
+	}
+	if artifact.BaselineReport.EndToEndP50MS != nil {
+		lines = append(lines, fmt.Sprintf("End-to-end p50: %d ms", *artifact.BaselineReport.EndToEndP50MS))
+	}
+	if artifact.BaselineReport.EndToEndP95MS != nil {
+		lines = append(lines, fmt.Sprintf("End-to-end p95: %d ms", *artifact.BaselineReport.EndToEndP95MS))
+	}
+
+	lines = append(lines,
+		"",
+		"## Live End-to-End",
+		fmt.Sprintf("Samples: %d", artifact.LiveEndToEnd.SampleCount),
+		fmt.Sprintf("Waived: %t", artifact.LiveEndToEnd.Waived),
+	)
+	if artifact.LiveEndToEnd.EndToEndP50MS != nil {
+		lines = append(lines, fmt.Sprintf("Live end-to-end p50: %d ms", *artifact.LiveEndToEnd.EndToEndP50MS))
+	}
+	if artifact.LiveEndToEnd.EndToEndP95MS != nil {
+		lines = append(lines, fmt.Sprintf("Live end-to-end p95: %d ms", *artifact.LiveEndToEnd.EndToEndP95MS))
+	}
+	if artifact.LiveEndToEnd.WaiverReason != "" {
+		lines = append(lines, "Waiver reason: "+artifact.LiveEndToEnd.WaiverReason)
+	}
+
+	lines = append(lines,
+		"",
+		"## Fixed Decisions",
+		fmt.Sprintf("Simple-mode-only: %t", artifact.FixedDecisions.SimpleModeOnly),
+		fmt.Sprintf("Provider policy compliant: %t", artifact.FixedDecisions.ProviderPolicyCompliant),
+		fmt.Sprintf("LiveKit path ready: %t", artifact.FixedDecisions.LiveKitPathReady),
+		fmt.Sprintf("Streaming evidence: %t", artifact.FixedDecisions.StreamingEvidence),
+		fmt.Sprintf("Non-streaming evidence: %t", artifact.FixedDecisions.NonStreamingEvidence),
+		fmt.Sprintf("Parity markers present: %t", artifact.FixedDecisions.ParityMarkersPresent),
+		fmt.Sprintf("Parity comparison valid: %t", artifact.FixedDecisions.ParityComparisonValid),
+	)
+
+	if len(artifact.Warnings) > 0 {
+		lines = append(lines, "", "## Warnings")
+		for _, warning := range artifact.Warnings {
+			lines = append(lines, "- "+warning)
+		}
+	}
+	if len(artifact.Violations) > 0 {
+		lines = append(lines, "", "## Violations")
+		for _, violation := range artifact.Violations {
+			lines = append(lines, "- "+violation)
+		}
+	}
+	if artifact.Passed {
+		lines = append(lines, "", "Status: PASS")
+	} else {
+		lines = append(lines, "", "Status: FAIL")
 	}
 	return strings.Join(lines, "\n") + "\n"
 }

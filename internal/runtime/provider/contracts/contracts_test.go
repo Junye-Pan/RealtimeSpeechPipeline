@@ -127,3 +127,104 @@ func TestNormalizeAdaptiveActions(t *testing.T) {
 		t.Fatalf("expected sorted actions, got %+v", normalized)
 	}
 }
+
+type captureObserver struct {
+	startCount    int
+	chunkCount    int
+	completeCount int
+	errorCount    int
+}
+
+func (o *captureObserver) OnStart(StreamChunk) error {
+	o.startCount++
+	return nil
+}
+
+func (o *captureObserver) OnChunk(StreamChunk) error {
+	o.chunkCount++
+	return nil
+}
+
+func (o *captureObserver) OnComplete(StreamChunk) error {
+	o.completeCount++
+	return nil
+}
+
+func (o *captureObserver) OnError(StreamChunk) error {
+	o.errorCount++
+	return nil
+}
+
+func TestStreamChunkValidate(t *testing.T) {
+	t.Parallel()
+
+	valid := StreamChunk{
+		SessionID:            "sess-1",
+		TurnID:               "turn-1",
+		PipelineVersion:      "pipeline-v1",
+		EventID:              "evt-1",
+		ProviderInvocationID: "pvi-1",
+		ProviderID:           "llm-a",
+		Modality:             ModalityLLM,
+		Attempt:              1,
+		Sequence:             0,
+		RuntimeTimestampMS:   1,
+		WallClockTimestampMS: 1,
+		Kind:                 StreamChunkFinal,
+		TextFinal:            "ok",
+	}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("expected valid stream chunk, got %v", err)
+	}
+
+	invalid := valid
+	invalid.Kind = StreamChunkAudio
+	invalid.AudioBytes = nil
+	if err := invalid.Validate(); err == nil {
+		t.Fatalf("expected audio chunk without bytes to fail")
+	}
+
+	invalid = valid
+	invalid.Kind = StreamChunkError
+	invalid.ErrorReason = ""
+	if err := invalid.Validate(); err == nil {
+		t.Fatalf("expected error chunk without reason to fail")
+	}
+}
+
+func TestStaticAdapterDefaultInvokeStream(t *testing.T) {
+	t.Parallel()
+
+	adapter := StaticAdapter{
+		ID:   "llm-a",
+		Mode: ModalityLLM,
+	}
+	observer := &captureObserver{}
+	outcome, err := adapter.InvokeStream(InvocationRequest{
+		SessionID:              "sess-3",
+		TurnID:                 "turn-3",
+		PipelineVersion:        "pipeline-v1",
+		EventID:                "evt-3",
+		ProviderInvocationID:   "pvi-3",
+		ProviderID:             "llm-a",
+		Modality:               ModalityLLM,
+		Attempt:                1,
+		TransportSequence:      1,
+		RuntimeSequence:        1,
+		AuthorityEpoch:         1,
+		RuntimeTimestampMS:     1,
+		WallClockTimestampMS:   1,
+		AllowedAdaptiveActions: []string{"retry"},
+		RetryBudgetRemaining:   0,
+		CandidateProviderCount: 1,
+	}, observer)
+	if err != nil {
+		t.Fatalf("unexpected stream invoke error: %v", err)
+	}
+	if outcome.Class != OutcomeSuccess {
+		t.Fatalf("expected stream success, got %s", outcome.Class)
+	}
+	if observer.startCount != 1 || observer.completeCount != 1 || observer.errorCount != 0 {
+		t.Fatalf("unexpected observer counts: start=%d chunk=%d complete=%d error=%d", observer.startCount, observer.chunkCount, observer.completeCount, observer.errorCount)
+	}
+}

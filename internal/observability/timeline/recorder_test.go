@@ -514,6 +514,80 @@ func TestInvocationOutcomesFromProviderAttemptsRejectsInvalidInput(t *testing.T)
 	}
 }
 
+func TestAppendHandoffEdges(t *testing.T) {
+	t.Parallel()
+
+	recorder := NewRecorder(StageAConfig{
+		BaselineCapacity: 4,
+		DetailCapacity:   4,
+		AttemptCapacity:  4,
+		HandoffCapacity:  1,
+	})
+	edges := []HandoffEdgeEvidence{
+		{
+			SessionID:             "sess-1",
+			TurnID:                "turn-1",
+			PipelineVersion:       "pipeline-v1",
+			EventID:               "evt-1",
+			HandoffID:             "handoff-1",
+			Edge:                  "stt_to_llm",
+			UpstreamRevision:      1,
+			Action:                "forward",
+			PartialAcceptedAtMS:   100,
+			DownstreamStartedAtMS: 110,
+			HandoffLatencyMS:      10,
+			QueueDepth:            0,
+			RuntimeTimestampMS:    100,
+			WallClockTimestampMS:  100,
+		},
+	}
+	if err := recorder.AppendHandoffEdges(edges); err != nil {
+		t.Fatalf("unexpected handoff append error: %v", err)
+	}
+	stored := recorder.HandoffEntries()
+	if len(stored) != 1 {
+		t.Fatalf("expected one handoff edge entry, got %d", len(stored))
+	}
+	filtered := recorder.HandoffEntriesForTurn("sess-1", "turn-1")
+	if len(filtered) != 1 || filtered[0].HandoffID != "handoff-1" {
+		t.Fatalf("unexpected handoff turn filter result: %+v", filtered)
+	}
+
+	if err := recorder.AppendHandoffEdges(edges); !errors.Is(err, ErrHandoffCapacityExhausted) {
+		t.Fatalf("expected handoff capacity exhaustion, got %v", err)
+	}
+}
+
+func TestHandoffEdgeEvidenceValidate(t *testing.T) {
+	t.Parallel()
+
+	valid := HandoffEdgeEvidence{
+		SessionID:             "sess-1",
+		TurnID:                "turn-1",
+		PipelineVersion:       "pipeline-v1",
+		EventID:               "evt-1",
+		HandoffID:             "handoff-1",
+		Edge:                  "llm_to_tts",
+		UpstreamRevision:      2,
+		Action:                "forward",
+		PartialAcceptedAtMS:   200,
+		DownstreamStartedAtMS: 210,
+		HandoffLatencyMS:      10,
+		QueueDepth:            0,
+		RuntimeTimestampMS:    200,
+		WallClockTimestampMS:  200,
+	}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("expected valid handoff evidence, got %v", err)
+	}
+
+	invalid := valid
+	invalid.Edge = "invalid"
+	if err := invalid.Validate(); err == nil {
+		t.Fatalf("expected invalid edge to fail validation")
+	}
+}
+
 func minimalBaseline(turnID string) BaselineEvidence {
 	decision := controlplane.DecisionOutcome{
 		OutcomeKind:        controlplane.OutcomeAdmit,
@@ -529,6 +603,7 @@ func minimalBaseline(turnID string) BaselineEvidence {
 	}
 	openProposed := int64(90)
 	open := int64(100)
+	terminal := int64(900)
 	firstOutput := int64(300)
 	return BaselineEvidence{
 		SessionID:        "sess-1",
@@ -560,6 +635,7 @@ func minimalBaseline(turnID string) BaselineEvidence {
 		CloseEmitted:         true,
 		TurnOpenProposedAtMS: &openProposed,
 		TurnOpenAtMS:         &open,
+		TurnTerminalAtMS:     &terminal,
 		FirstOutputAtMS:      &firstOutput,
 		TerminalReason:       "",
 	}

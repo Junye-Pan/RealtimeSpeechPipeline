@@ -16,7 +16,7 @@ const (
 	EnvTelemetryOTLPHTTPEndpoint = "RSPP_TELEMETRY_OTLP_HTTP_ENDPOINT"
 	// EnvTelemetryQueueCapacity sets in-memory queue capacity.
 	EnvTelemetryQueueCapacity = "RSPP_TELEMETRY_QUEUE_CAPACITY"
-	// EnvTelemetryDropSampleRate sets deterministic debug-log sample rate.
+	// EnvTelemetryDropSampleRate sets deterministic telemetry sample rate.
 	EnvTelemetryDropSampleRate = "RSPP_TELEMETRY_DROP_SAMPLE_RATE"
 	// EnvTelemetryExportTimeoutMS sets export timeout in milliseconds.
 	EnvTelemetryExportTimeoutMS = "RSPP_TELEMETRY_EXPORT_TIMEOUT_MS"

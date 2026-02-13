@@ -6,11 +6,10 @@ MODE="${1:-quick}"
 # Allow explicit override from env
 # e.g. export VERIFY_QUICK_CMD="uv run -m pytest -q"
 #      export VERIFY_FULL_CMD="uv run -m pytest"
-if [[ "$MODE" == "quick" ]]; then
-  CMD="${VERIFY_QUICK_CMD:-}"
-else
-  CMD="${VERIFY_FULL_CMD:-}"
-fi
+#      export VERIFY_MVP_CMD="make verify-mvp"
+MODE_UPPER="$(printf '%s' "$MODE" | tr '[:lower:]' '[:upper:]')"
+CMD_VAR="VERIFY_${MODE_UPPER}_CMD"
+CMD="${!CMD_VAR:-}"
 
 detect_cmd() {
   if [[ -n "$CMD" ]]; then
@@ -44,7 +43,6 @@ detect_cmd() {
 
 RUN_CMD="$(detect_cmd)"
 if [[ -z "$RUN_CMD" ]]; then
-  MODE_UPPER="$(printf '%s' "$MODE" | tr '[:lower:]' '[:upper:]')"
   echo "verify.sh: No default verify command found."
   echo "Set VERIFY_${MODE_UPPER}_CMD to enforce checks."
   exit 0

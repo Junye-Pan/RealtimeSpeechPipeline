@@ -118,6 +118,7 @@ func TestRD004SnapshotProvenancePlanDivergence(t *testing.T) {
 func baselineEvidence(turnID string) timeline.BaselineEvidence {
 	openProposed := int64(0)
 	open := int64(80)
+	terminal := int64(1200)
 	firstOutput := int64(500)
 	decision := controlplane.DecisionOutcome{
 		OutcomeKind:        controlplane.OutcomeAdmit,
@@ -160,6 +161,7 @@ func baselineEvidence(turnID string) timeline.BaselineEvidence {
 		CloseEmitted:         true,
 		TurnOpenProposedAtMS: &openProposed,
 		TurnOpenAtMS:         &open,
+		TurnTerminalAtMS:     &terminal,
 		FirstOutputAtMS:      &firstOutput,
 	}
 }

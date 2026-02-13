@@ -3,3 +3,5 @@
 !.codex/skills/**
 !.codex/rules/
 !.codex/rules/**
+ops/livekit-local/.env.generated
+ops/livekit-local/livekit.yaml
