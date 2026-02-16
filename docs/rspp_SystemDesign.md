@@ -7,7 +7,6 @@ This document is the repository-level architecture source of truth for RSPP.
 It consolidates:
 - `docs/PRD.md` (product and runtime semantics)
 - `docs/RSPP_features_framework.json` (feature inventory and release phasing)
-- `docs/repository_docs_index.md` (canonical guide locations and governance rules)
 
 RSPP is a transport-agnostic real-time speech runtime framework that sits between transport layers and model providers.
 
