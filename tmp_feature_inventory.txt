@@ -1,0 +1,289 @@
+PipelineSpec & Graph Execution (docs/RSPP_features_framework.json:3-255)
+F-001 (functional): PipelineSpec can be validated against a published schema
+F-002 (functional): Runtime can load a PipelineSpec and instantiate an executable session graph
+F-003 (functional): PipelineSpec supports explicit node definitions with typed inputs/outputs
+F-004 (functional): PipelineSpec supports directed edges with fan-out (one-to-many) routing
+F-005 (functional): PipelineSpec supports fan-in via merge (many-to-one) with deterministic ordering rules
+F-006 (functional): PipelineSpec supports fan-in via select (many-to-one) based on policy/conditions
+F-007 (functional): PipelineSpec supports fallback paths triggered by timeout or error
+F-008 (functional): Runtime enforces a deterministic event contract per edge (ordering, at-most-once delivery)
+F-009 (functional): Nodes can emit multiple output streams (e.g., partial and final) from a single input stream
+F-010 (functional): Runtime supports built-in node types for common speech pipelines
+F-011 (functional): Developers can register custom nodes with a stable Node API (Event stream in/out)
+F-012 (functional): Node lifecycle hooks are supported (init/start/stop) with timeouts
+F-013 (functional): Runtime propagates session/turn correlation context to every node
+F-014 (functional): Runtime provides turn segmentation primitives (turn start/end events)
+F-015 (functional): PipelineSpec artifacts are versioned and immutable once published
+F-016 (functional): Runtime can run multiple PipelineSpec versions concurrently across sessions
+F-017 (functional): Turn detection nodes (VAD/endpointing) are first-class and swappable via policy
+F-018 (functional): Edges can be conditional based on event attributes (e.g., language, confidence, sentiment)
+F-019 (functional): Graph supports subgraphs/modules for reusable pipeline components
+
+Unified Event ABI & Schema (docs/RSPP_features_framework.json:269-437)
+F-020 (functional): All data exchanged between nodes uses a unified Event envelope with explicit unknown_event_action handling policy
+F-021 (functional): Event envelope includes schema_version for compatibility and replay
+F-022 (functional): Runtime supports event types: audio, text, control, metrics, debug, and error
+F-023 (functional): Audio events support streaming chunks with explicit encoding metadata
+F-024 (functional): Text events support partial and final semantics with monotonic updates
+F-025 (functional): Control events support cancellation, barge-in, and turn boundary signaling
+F-026 (functional): Metrics events can be emitted by runtime and nodes for in-band observability
+F-027 (functional): Debug events can be enabled/disabled per session for low overhead by default
+F-028 (functional): Event schema changes are validated via compatibility rules in CI and at publish time
+F-029 (functional): Recorded event streams can be replayed to reproduce a session timeline
+F-030 (functional): Runtime supports multiple event encodings (e.g., JSON for debug, Protobuf for production) with negotiation per transport
+F-031 (functional): Event streams can be optionally compressed on transport boundaries without changing node contracts
+F-032 (functional): Schema registry can serve schema definitions by version for tools (linting, replay, SDK generation)
+
+Cancellation & Turn Interrupts (docs/RSPP_features_framework.json:451-577)
+F-033 (functional): Barge-in triggers immediate cancellation of downstream generation (LLM/TTS) for the current turn
+F-034 (functional): Cancellation propagates across the graph following edge directions and fan-in/fan-out rules
+F-035 (functional): Runtime exposes cancellation reason codes (barge-in, timeout, user cancel, provider error)
+F-036 (functional): Nodes can implement cooperative cancellation checks during long-running work
+F-037 (functional): Runtime can forcefully terminate node work that ignores cancellation after a grace period
+F-038 (functional): After cancellation, runtime flushes relevant queues and resets node state for the next turn
+F-039 (functional): Runtime provides a configurable 'commit point' to prevent cancelling already-played audio
+F-040 (functional): Cancellation latency is measured and emitted as a metric per node and end-to-end
+F-041 (functional): Runtime supports 'soft cancel' vs 'hard cancel' semantics for nodes that need to finalize output
+F-042 (functional): Client can signal explicit end-of-utterance (manual push-to-talk) to bypass VAD
+
+Backpressure, Budgets & Degradation (docs/RSPP_features_framework.json:591-745)
+F-043 (functional): Each edge uses a bounded queue with configurable capacity
+F-044 (functional): Runtime supports queue strategies: block, drop_newest, drop_oldest, merge/coalesce
+F-045 (functional): Node-level processing budgets enforce max compute time per event or per turn
+F-046 (functional): Provider call budgets enforce request timeouts and cancellation propagation
+F-047 (functional): Budget exhaustion can trigger fallback to alternate nodes/providers
+F-048 (functional): Runtime supports degrade behaviors under load (reduced fidelity, shorter context, simplified TTS)
+F-049 (functional): Admission control rejects or queues new sessions when resources are constrained
+F-050 (functional): Per-tenant quotas and rate limits can be enforced at session creation and per turn
+F-051 (functional): Runtime can optionally enable dynamic batching for compatible provider calls
+F-052 (functional): Runtime measures its own overhead and attributes latency to kernel vs. node work
+F-053 (functional): Partial transcript events can be coalesced/merged to reduce downstream load
+F-054 (functional): Audio buffering strategy can be tuned per pipeline (latency-first vs accuracy-first)
+
+Provider Adapters & Policies (docs/RSPP_features_framework.json:759-913)
+F-055 (functional): Provider adapters implement a stable contract for STT, LLM, and TTS calls
+F-056 (functional): Policies can select providers/models per tenant, language, region, or cost tier
+F-057 (functional): Policies can define circuit-breakers for provider error rates with automatic failover
+F-058 (functional): Policies can cap cost by enforcing token, audio duration, and TTS character budgets
+F-059 (functional): Policies support retries with backoff that respect remaining budgets
+F-060 (functional): Provider health checks influence routing decisions in near real-time
+F-061 (functional): Provider configuration supports secret references (not raw secrets) for API keys and endpoints
+F-062 (functional): Policies can inject compliance and safety nodes into a pipeline at runtime (where allowed)
+F-063 (functional): LLM adapter supports streaming token output and emits token events in real time
+F-064 (functional): TTS adapter supports streaming audio output and can begin playback before full text is available
+F-065 (functional): Provider adapters expose standardized metrics (latency, retries, error codes, payload sizes)
+F-066 (functional): Policies can route to different providers using real-time price/availability signals and must fall back to a deterministic default when signals are unavailable
+
+Observability, Recording & Replay (docs/RSPP_features_framework.json:927-1067)
+F-067 (functional): Runtime emits structured logs with session/turn/node correlation IDs
+F-068 (functional): Runtime emits metrics for per-node and per-edge latency distributions (p50/p95/p99)
+F-069 (functional): Runtime emits queue depth and drop/merge counters per edge
+F-070 (functional): Runtime exports traces compatible with OpenTelemetry for end-to-end session tracing
+F-071 (functional): Runtime can record an event timeline for sessions with configurable sampling and retention
+F-072 (functional): Replay tool can run a recorded session against a new PipelineSpec version for regression testing
+F-073 (functional): Recording supports configurable redaction of sensitive text and audio
+F-074 (functional): Runtime provides an event timeline view (CLI/UI) for debugging sessions
+F-075 (functional): Runtime provides per-session summaries (turn count, total tokens, total audio seconds, total cost estimate)
+F-076 (functional): On-demand debug capture can be triggered for a single session without increasing unrelated-session overhead beyond configured thresholds
+F-077 (functional): Replay tool supports diffing two runs (outputs, timings, provider choices) and producing a report artifact
+
+Simple Mode & Configuration (docs/RSPP_features_framework.json:1081-1142)
+F-078 (functional): Runtime supports named execution profiles. MVP requires the simple profile; additional profiles (e.g., balanced, aggressive) are post-MVP.
+F-079 (functional): Simple mode allows running a pipeline with minimal required fields (template + provider config)
+F-080 (functional): Configuration supports layering (defaults -> environment -> tenant -> session overrides)
+F-081 (functional): Runtime exposes a 'resolved spec' view that shows the effective graph after applying policies, inserts, and defaults
+F-082 (functional): PipelineSpec supports human-friendly comments/metadata without affecting execution semantics
+
+Transport Adapters (LiveKit/WebSocket/Telephony) (docs/RSPP_features_framework.json:1156-1277)
+F-083 (functional): LiveKit transport adapter maps audio tracks to runtime audio events and returns synthesized audio
+F-084 (functional): WebSocket transport adapter supports bi-directional streaming of audio and events
+F-085 (functional): Telephony gateway adapter maps phone call audio to runtime events and returns audio to caller
+F-086 (functional): Transport adapters implement a shared contract for session creation, audio streaming, and control events
+F-087 (functional): Transport adapters perform jitter buffering and packet loss handling according to a profile
+F-088 (functional): Transport adapters authenticate sessions using tokens issued by the control plane
+F-089 (functional): Transport adapters can emit transport-specific control signals (e.g., DTMF) into the Event stream
+F-090 (functional): Transport adapter can transcode inbound audio codecs into the runtime's preferred format (e.g., Opus -> PCM)
+F-091 (functional): Network disconnects are handled gracefully with configurable session timeout and cleanup
+
+Control Plane (Registry, Routing, Rollouts) (docs/RSPP_features_framework.json:1291-1431)
+F-092 (functional): Control plane provides a pipeline registry for publishing and retrieving PipelineSpec versions
+F-093 (functional): Control plane supports rollout policies (canary, percentage, tenant allowlists)
+F-094 (functional): Control plane routes sessions to runtime instances based on health, capacity, and policy
+F-095 (functional): Control plane issues placement leases/epochs to enforce single-authority execution per session
+F-096 (functional): Control plane can trigger failover by reassigning sessions when a region or fleet becomes unhealthy
+F-097 (functional): Control plane exposes an audit log for pipeline changes, policy changes, and rollouts
+F-098 (functional): Control plane can enforce admission control decisions at session start (rate limits, quotas)
+F-099 (functional): Control plane provides session route metadata to clients (transport endpoint + token)
+F-100 (functional): Control plane supports explicit rollback to a prior pipeline version
+F-101 (functional): Control plane exposes session status APIs (connected, running, degraded, ended) for operations
+F-102 (functional): Policies and provider configurations are versioned and can be rolled forward/back independently
+
+Kubernetes Runtime, Scaling & Scheduling (docs/RSPP_features_framework.json:1445-1529)
+F-103 (functional): Runtime runs as stateless pods that can be horizontally scaled
+F-104 (functional): Runtime exposes metrics suitable for autoscaling (CPU, queue depth, latency)
+F-105 (functional): Runtime supports pooled execution and multiplexing to reduce per-session overhead
+F-106 (functional): Runtime supports graceful shutdown that drains sessions before terminating
+F-107 (functional): Node resource limits can be configured (CPU/memory) and enforced via runtime settings
+F-108 (functional): Runtime exposes standard liveness and readiness probes for Kubernetes
+F-109 (functional): Runtime supports node-level concurrency controls to prevent noisy-neighbor effects
+
+Multi-Region Routing & Failover (docs/RSPP_features_framework.json:1543-1597)
+F-110 (functional): Control plane selects the lowest-latency healthy region for new sessions based on policy
+F-111 (functional): Active-active routing distributes sessions across regions while enforcing single-authority execution per session
+F-112 (functional): Failover decisions consider capacity, provider health, and region-level incidents
+F-113 (functional): Failover policy can choose between draining in-flight sessions vs migrating sessions across regions
+
+Security, Tenancy & Compliance (docs/RSPP_features_framework.json:1615-1699)
+F-114 (functional): Sessions are isolated by tenant_id with independent quotas, policies, and provider configs
+F-115 (functional): Control plane and runtime support RBAC for administrative operations
+F-116 (functional): Runtime supports configurable data retention for recordings, logs, and traces
+F-117 (functional): Sensitive values (API keys, tokens) are redacted from logs and debug events
+F-118 (functional): Compliance nodes can be inserted to filter or redact outputs before transport
+F-119 (functional): Session tokens are short-lived and cryptographically verifiable (signed) to prevent tampering
+F-120 (functional): Inter-service communication can be secured with mTLS (optional deployment mode)
+
+Extensibility: Custom/External Nodes (docs/RSPP_features_framework.json:1713-1755)
+F-121 (functional): Custom nodes can be packaged and versioned independently from PipelineSpec
+F-122 (functional): External nodes can run out-of-process via an isolation boundary (e.g., gRPC)
+F-123 (functional): Runtime can apply resource/time limits to external nodes separately from in-process nodes
+F-124 (functional): Runtime can run untrusted custom nodes in a sandbox mode (future: WASM) behind a stable boundary
+
+Tooling: Local Runner, CI/CD & Testing (docs/RSPP_features_framework.json:1769-1839)
+F-125 (functional): Local runner can execute a PipelineSpec on a single machine with minimal control-plane stubs
+F-126 (functional): CLI provides lint/validate commands for PipelineSpec and policy config
+F-127 (functional): Replay tests can be run in CI to prevent regressions in outputs and latency budgets
+F-128 (functional): Node SDK includes a unit test harness for event streams
+F-129 (functional): Spec and policy docs can be generated automatically from schemas (developer reference)
+F-130 (functional): Local runner can simulate transport adapters (loopback audio) for fast offline testing
+
+Error Handling & Recovery (docs/RSPP_features_framework.json:1853-1937)
+F-131 (functional): Runtime uses a standard error taxonomy and emits error events with codes and context
+F-132 (functional): Unrecoverable node errors can route events to a dead-letter stream for analysis
+F-133 (functional): Runtime can automatically activate fallback nodes on provider errors
+F-134 (functional): Runtime isolates node crashes and prevents a single session from bringing down the process
+F-135 (functional): Runtime supports configurable user-facing error responses (e.g., apologize + retry prompt)
+F-136 (functional): Circuit-breaker and fallback activation events include enough context for debugging without leaking sensitive payloads
+F-137 (functional): Runtime can optionally continue a session in 'degraded' mode when one capability fails (e.g., fallback to text-only)
+
+Latency & Performance (docs/RSPP_features_framework.json:1951-1979)
+NF-001 (non-functional): End-to-end p95 latency (audio-in to audio-out) is measurable and configurable per pipeline profile
+NF-002 (non-functional): Runtime overhead added by the kernel remains within an explicit budget and is continuously measured
+NF-003 (non-functional): Cancellation propagation p95 is within a configured threshold under load
+
+Reliability & Resilience (docs/RSPP_features_framework.json:1993-2911)
+NF-004 (non-functional): System avoids unbounded memory growth via bounded queues and leak detection
+NF-005 (non-functional): Runtime maintains service availability according to a published SLO (configurable per deployment)
+NF-006 (non-functional): Runtime degrades gracefully under overload rather than failing catastrophically
+NF-030 (non-functional): Error-budget governance is defined with burn-rate alerting and rollout freeze criteria
+NF-031 (non-functional): Disaster recovery objectives (RTO and RPO) are published and validated by recovery drills
+
+Portability (docs/RSPP_features_framework.json:2035-2035)
+NF-007 (non-functional): Kubernetes portability: runtime deploys and operates on any CNCF-conformant Kubernetes cluster
+
+Observability (docs/RSPP_features_framework.json:2049-2049)
+NF-008 (non-functional): Observability completeness: every event/span/metric includes consistent correlation identifiers
+
+Testability (docs/RSPP_features_framework.json:2063-2063)
+NF-009 (non-functional): Replay determinism: recorded sessions can be replayed with stable ordering and outputs within documented determinism tolerances
+
+Compatibility & Evolution (docs/RSPP_features_framework.json:2077-2925)
+NF-010 (non-functional): Backward compatibility policy: schema and PipelineSpec changes are governed by versioning rules
+NF-032 (non-functional): Supported version-skew window across runtime, control plane, and schemas is explicitly tested (for example N and N-1)
+
+Security (docs/RSPP_features_framework.json:2091-2119)
+NF-011 (non-functional): Security: secrets (API keys, tokens) never appear in logs, traces, or recordings
+NF-012 (non-functional): Security: control-plane operations enforce least privilege via RBAC
+NF-013 (non-functional): Input validation: malformed audio/event payloads are rejected safely without crashing the runtime
+
+Security & Privacy (docs/RSPP_features_framework.json:2133-2133)
+NF-014 (non-functional): Privacy: configurable PII redaction is available for recordings and logs
+
+Usability (docs/RSPP_features_framework.json:2147-2147)
+NF-015 (non-functional): Operational clarity: configuration errors fail fast with actionable messages
+
+Operability (docs/RSPP_features_framework.json:2161-2161)
+NF-016 (non-functional): Upgradeability: rolling updates do not drop sessions unexpectedly (drain or migrate per policy)
+
+Cost (docs/RSPP_features_framework.json:2175-2175)
+NF-017 (non-functional): Cost control: budgets and quotas prevent unbounded provider spend
+
+Correctness (docs/RSPP_features_framework.json:2189-2189)
+NF-018 (non-functional): Time correctness: session timestamps are monotonic, ordering follows timeline contract, and clock skew stays within configured bounds
+
+Boundaries (Non-goals) (docs/RSPP_features_framework.json:2203-2259)
+NF-019 (non-functional): Boundary: runtime does not implement SFU/WebRTC/ICE/TURN; it integrates with external transport systems via adapters
+NF-020 (non-functional): Boundary: runtime is not a voice SDK/agent framework; agent planning/memory/tooling can be implemented as nodes
+NF-021 (non-functional): Boundary: runtime does not guarantee model quality; it guarantees runtime semantics and operational behavior
+NF-022 (non-functional): Boundary: runtime does not own business-system integrations (CRM/ticketing/payments); these are implemented in application nodes
+NF-023 (non-functional): Boundary: runtime is not a model API; it integrates with model providers via adapters and policies
+
+Runtime Semantics & Lifecycle (docs/RSPP_features_framework.json:2273-3009)
+F-138 (functional): Session lifecycle uses an explicit state machine with valid transitions and rejection of invalid transitions
+F-139 (functional): Turn lifecycle state machine is explicit (OPEN, ACTIVE, COMMIT or ABORT, CLOSE) and enforced; `turn_open_proposed` is pre-turn intent and does not create turn lifecycle state
+F-140 (functional): Turn arbitration rules explicitly define overlap, preemption, and late-event handling
+F-141 (functional): Pre-turn admission outcomes (admit, reject, defer) are emitted as pre-turn control outcomes without terminal turn events
+F-175 (functional): After `cancel(scope)` acceptance, runtime and transport egress for that scope are fenced; new `output_accepted` or `playback_started` signals for that scope are rejected
+
+Edge Buffering, Lanes & Flow Control (docs/RSPP_features_framework.json:2333-2417)
+F-142 (functional): Lane priority contract is enforced as ControlLane over DataLane over TelemetryLane under pressure
+F-143 (functional): Edge BufferSpec supports bounds by items, bytes, time-in-queue, and latency contribution with explicit defaulting source
+F-144 (functional): Watermark crossings emit pressure signals and trigger deterministic actions resolved in the turn plan
+F-145 (functional): Flow control modes support signal, credit, and hybrid behavior with explicit flow_xoff, flow_xon, and credit_grant semantics
+F-146 (functional): SyncDropPolicy supports atomic_drop and drop_with_discontinuity behaviors for synchronized streams
+F-147 (functional): Per-edge lane handling rules are explicit so DataLane, ControlLane, and TelemetryLane behaviors are independently verifiable
+F-148 (functional): Low-latency profiles enforce bounded max_block_time and deterministic shedding instead of indefinite blocking
+
+Determinism, Replay & Provenance (docs/RSPP_features_framework.json:2431-3027)
+F-149 (functional): Each turn records a ResolvedTurnPlan artifact with plan hash and snapshot provenance references
+F-150 (functional): DeterminismContext captures replay-critical fields including seed, merge-rule identity, ordering markers, and nondeterministic inputs
+F-151 (functional): Replay supports both node re-simulation mode and recorded-provider-playback mode with explicit mode selection
+F-152 (functional): ReplayCursor supports deterministic stepping, pause/resume, and resume-from-cursor behavior
+F-153 (functional): Recording levels (L0, L1, L2) define capture fidelity and required evidence fields
+F-154 (functional): Timeline persistence separates non-blocking local append from asynchronous durable export
+F-176 (functional): When timeline pressure forces recording fidelity reduction, runtime applies deterministic recording-level downgrade while preserving replay-critical control evidence
+
+State, Authority & Migration (docs/RSPP_features_framework.json:2515-2585)
+F-155 (functional): State contract explicitly classifies turn-ephemeral, session-hot, and session-durable state with migration expectations
+F-156 (functional): Lease epoch is enforced on ingress and egress so stale-authority events and outputs are rejected
+F-157 (functional): Migration handoff emits explicit start and finish markers while preserving session identity continuity
+F-158 (functional): Idempotency keys and dedupe semantics are enforced across retries, reconnects, and failovers
+F-159 (functional): Routing view snapshots are versioned and include staleness bounds used by adapters during endpoint resolution
+F-160 (functional): ProviderInvocation is tracked as a first-class unit with invocation ID, cancellation scope, and normalized outcome
+
+Governance, Compatibility & Change Management (docs/RSPP_features_framework.json:2599-2655)
+F-161 (functional): Capability discovery captures transport and provider capabilities at turn start and freezes them in the resolved turn plan
+F-162 (functional): Version-skew policy defines supported runtime-control-plane-schema combinations and rejects unsupported combinations
+F-163 (functional): Deprecation lifecycle for schema and spec fields includes warning phase, enforcement date, and removal gate
+F-164 (functional): Conformance profiles define mandatory contract tests for transport adapters, provider adapters, and external nodes
+F-165 (functional): Change management requires review and approval metadata for pipeline, policy, and rollout mutations
+
+Resilience, DR & Chaos (docs/RSPP_features_framework.json:2669-2683)
+F-166 (functional): Disaster recovery runbook can restore control-plane artifacts and resume session admission within defined objectives
+F-167 (functional): Fault-injection and chaos scenarios are defined for cancellation, failover, admission, and provider-outage paths
+
+Data Governance, Key Management & Trust (docs/RSPP_features_framework.json:2697-2967)
+F-168 (functional): Data residency policy constrains where session data, timelines, and recordings may be processed and stored
+F-169 (functional): Signing and encryption keys support online rotation via KMS-backed references without service interruption
+F-170 (functional): Audit trails are tamper-evident through digest chaining or signed checkpoints
+F-171 (functional): External node onboarding requires provenance, SBOM, and attestation checks before execution
+NF-034 (non-functional): Residency compliance requires session artifacts to remain in policy-approved jurisdictions
+NF-035 (non-functional): Cryptographic hygiene requires periodic key rotation with documented maximum key age
+
+Capacity Planning & Fairness (docs/RSPP_features_framework.json:2753-2939)
+F-172 (functional): Capacity model defines utilization headroom and admission thresholds that are enforced before overload
+F-173 (functional): Priority-aware load shedding preserves control-path and interactive turn continuity under severe overload
+F-174 (functional): Fairness scheduling across tenant, session, and turn keys prevents starvation in shared execution pools
+NF-033 (non-functional): Fairness SLO ensures no tenant experiences starvation under sustained shared-pool contention
+
+MVP Quality Gates (docs/RSPP_features_framework.json:2795-3044)
+NF-024 (non-functional): Turn-open decision latency gate requires p95 <= 120 ms from `turn_open_proposed` acceptance point to `turn_open` emission
+NF-025 (non-functional): First assistant output latency gate requires p95 <= 1500 ms from `turn_open` to first DataLane output chunk on the happy path
+NF-026 (non-functional): Cancellation fence latency gate requires p95 <= 150 ms from cancel acceptance to egress output fencing
+NF-027 (non-functional): Authority safety gate requires zero accepted stale-epoch outputs in failover and lease-rotation tests
+NF-028 (non-functional): Replay baseline completeness gate requires 100% of accepted turns to include required replay-critical evidence fields
+NF-029 (non-functional): Terminal lifecycle correctness gate requires 100% of accepted turns to emit exactly one terminal outcome followed by close
+NF-038 (non-functional): End-to-end latency gate requires P50 <= 1.5s and P95 <= 2.0s for audio-in to audio-out latency
+
+Security Supply Chain (docs/RSPP_features_framework.json:2981-2995)
+NF-036 (non-functional): Supply-chain policy requires attestation and SBOM coverage for executable external-node artifacts
+NF-037 (non-functional): Change provenance coverage requires framework-critical artifact changes to be traceable to signed identity and approval records

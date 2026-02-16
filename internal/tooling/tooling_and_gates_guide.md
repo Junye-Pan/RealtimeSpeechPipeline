@@ -1,228 +1,270 @@
-# Internal Tooling Guide
+# Tooling and Release Gates Guide (Code-Verified + Implementation-Ready)
 
-This folder contains DevEx tooling for contract validation, replay regression policy, SLO gate evaluation, release readiness, and authoring scaffolds.
+This guide is both:
+- the target architecture for tooling/release-gate internals
+- the current-state progress/divergence report for what is already in code
 
-PRD alignment scope:
-- `docs/PRD.md` section 3.2 (spec-first CI/CD and release flow)
-- `docs/PRD.md` section 5 (MVP quality gates and fixed MVP decisions)
+As-of snapshot date: `2026-02-16`.
 
-## Ownership and module map
+Primary evidence sources:
+- `docs/PRD.md` section `3.2`, `4.1.6`, `5.1`, `5.2`
+- `docs/RSPP_features_framework.json`
+- `docs/rspp_SystemDesign.md`
+- code under `internal/tooling/*`, `cmd/rspp-cli`, `cmd/rspp-local-runner`, `Makefile`, `scripts/*`
 
-| Module | Path | Primary owner | Cross-review | Status |
+Code-level verification run in this pass:
+- `GOCACHE=/tmp/go-build go test ./internal/tooling/... ./cmd/rspp-cli ./cmd/rspp-local-runner` passed.
+
+## 0) Current codebase progress and divergence snapshot
+
+| Area | Current implementation (code-verified) | Progress | Divergence from target | Evidence |
 | --- | --- | --- | --- | --- |
-| `DX-02` Validation Harness | `internal/tooling/validation` | `DevEx-Team` | Runtime-Team | implemented baseline |
-| `DX-03` Replay Regression | `internal/tooling/regression` | `DevEx-Team` | ObsReplay-Team | implemented baseline |
-| `DX-04` Release Workflow | `internal/tooling/release` | `DevEx-Team` | CP-Team | implemented baseline |
-| `DX-05` Ops SLO Pack | `internal/tooling/ops` | `DevEx-Team` | Runtime-Team | implemented baseline |
-| `DX-06` Node Authoring Kit | `internal/tooling/authoring` | `DevEx-Team` | Runtime-Team | scaffolded |
+| Gate orchestration | Gate sequencing is implemented in CLI subcommands + Makefile chains (`verify-quick/full/mvp`), not as a reusable internal orchestrator package. | partial | No `internal/tooling/gates` package or shared gate registry yet. | `cmd/rspp-cli/main.go`, `Makefile` ([F-126], [F-127], [NF-016]) |
+| Contract validation | Strict typed + schema validation for `event`, `control_signal`, `turn_transition`, `resolved_turn_plan`, `decision_outcome`. | implemented baseline | No dedicated PipelineSpec/policy lint path yet. | `internal/tooling/validation/contracts.go` ([F-001], [F-126], [NF-015]) |
+| Replay regression | Divergence policy engine exists; quick/full fixture selection, per-fixture artifacts, expected divergence policy, and invocation-latency threshold checks are wired. | implemented baseline | Regression input is fixture-builder driven; no first-class replay execution ingestion path in tooling module yet. | `internal/tooling/regression/divergence.go`, `cmd/rspp-cli/main.go` ([F-127], [F-149], [F-151], [F-152], [NF-009]) |
+| SLO gates | All seven MVP gate formulas are implemented and report violations deterministically. | implemented baseline | Primary default input path uses generated runtime baseline artifact; production trace ingestion is not yet the default gate path. | `internal/tooling/ops/slo.go`, `cmd/rspp-cli/main.go` ([NF-024], [NF-025], [NF-026], [NF-027], [NF-028], [NF-029], [NF-038]) |
+| MVP live gates | `slo-gates-mvp-report` enforces baseline + live end-to-end + fixed-decision checks (simple mode, provider policy, parity markers, LiveKit smoke). | implemented baseline | Live end-to-end includes waiver after multiple attempts (explicitly recorded), so strict threshold failure can be waived by policy. | `cmd/rspp-cli/main.go` ([NF-038], [F-078], [F-095], [F-100]) |
+| Release readiness | Release publish fails closed on missing/stale/failing contracts/replay/SLO artifacts; rollout config is validated; deterministic manifest emitted with source hashes. | implemented baseline | Readiness currently uses three artifacts only; no built-in readiness check for `security-baseline`, `codex-artifact-policy`, or `verify-mvp` artifacts in publish path. | `internal/tooling/release/release.go`, `cmd/rspp-cli/main.go` ([F-093], [F-100], [NF-016], [NF-032]) |
+| Local runner | `rspp-local-runner` exists and delegates to LiveKit command path with deterministic dry-run default. | implemented baseline | No `internal/tooling/runner` abstraction yet; no offline loopback transport simulation module in tooling layer. | `cmd/rspp-local-runner/main.go` ([F-125], [F-130]) |
+| Authoring kit | Authoring area exists only as scaffold guide. | scaffold only | No node SDK test harness implementation in `internal/tooling/authoring` yet. | `internal/tooling/authoring/node_authoring_kit_guide.md` ([F-128], [F-121], [F-122], [F-123], [F-124]) |
+| Conformance/governance gates | No dedicated conformance/skew/deprecation module in tooling folder. | not started | Post-MVP governance gates still missing as code in tooling internals. | folder inventory + tests ([F-162], [F-163], [F-164], [F-165], [NF-032]) |
+| Plugin/extension host | No gate plugin host in tooling internals. | not started | Extensibility path exists at architecture level only. | folder inventory ([F-121], [F-122], [F-123], [F-124], [F-164]) |
 
-`cmd/rspp-cli` is the primary command surface for this folder.
+## 1) Module list with responsibilities (target architecture)
 
-## Gate behavior implemented by this folder
+| Target module | Path (target) | Responsibility | Current status | Next implementation slice | Feature evidence |
+| --- | --- | --- | --- | --- | --- |
+| Gate Orchestrator | `internal/tooling/gates` | Central gate profile execution and deterministic aggregation (`quick/full/mvp/security`). | not implemented | Extract orchestration from `cmd/rspp-cli`/Makefile into reusable package. | [F-126], [F-127], [NF-016] |
+| Spec and Contract Validation | `internal/tooling/validation` | Contract + spec lint/validation with actionable diagnostics. | partial | Add PipelineSpec/policy lint entrypoints while keeping current contract fixture validation stable. | [F-001], [F-126], [F-028], [NF-015], [NF-010] |
+| Replay Regression Engine | `internal/tooling/regression` | Deterministic divergence policy and replay regression blocking rules. | implemented baseline | Add replay input adapters (recorded timeline/provider playback modes) beyond fixture builders. | [F-127], [F-149], [F-150], [F-151], [F-152], [NF-009] |
+| SLO Gate Engine | `internal/tooling/ops` | Canonical metric gate computation and threshold enforcement. | implemented baseline | Add explicit source typing (synthetic vs recorded vs live) and stricter source policy controls. | [NF-024], [NF-025], [NF-026], [NF-027], [NF-028], [NF-029], [NF-038] |
+| Evidence and Artifact Ledger | `internal/tooling/evidence` | Artifact schema/version/hash/freshness/provenance management. | partial (logic spread across CLI + release) | Consolidate artifact IO into one module and normalize schema/version metadata. | [F-149], [F-153], [F-154], [F-176] |
+| Release Readiness and Publish | `internal/tooling/release` | Fail-closed readiness + deterministic release manifest generation. | implemented baseline | Extend readiness policy inputs (optional mvp/security artifact checks) without breaking current publish path. | [F-093], [F-100], [NF-016], [NF-032], [F-165] |
+| Local Runner Harness | `internal/tooling/runner` + `cmd/rspp-local-runner` | Local single-node runtime execution + simulation harness integration. | partial | Introduce runner abstraction, keep LiveKit path, add loopback simulation mode contract. | [F-125], [F-130], [F-078] |
+| Authoring and Node Test Kit | `internal/tooling/authoring` | Node authoring scaffolds + deterministic node stream harness. | scaffold only | Implement harness APIs and fixture-driven node conformance tests. | [F-128], [F-121], [F-122], [F-123], [F-124] |
+| Conformance and Compatibility Profiles | `internal/tooling/conformance` | Adapter/node/runtime conformance packs + skew/deprecation gate rules. | not implemented | Start with MVP `N/N-1` skew checks and profile schema. | [NF-032], [F-162], [F-163], [F-164] |
+| Extension Host | `internal/tooling/extensions` | Plugin registration, capability declaration, guardrails, and execution budgets. | not implemented | Define plugin manifest + registration API, keep default no-plugin runtime. | [F-121], [F-122], [F-123], [F-124], [F-164] |
 
-Quick path (`make verify-quick`):
-- contract artifact validation and report generation
-- replay smoke report generation
-- runtime baseline generation and SLO gate reporting
-- targeted package tests across API/runtime/observability/tooling packages
-- full `./test/integration` package coverage and targeted failover smoke coverage (`TestF1`, `TestF3`, `TestF7`)
+## 2) Key interfaces
 
-Full path (`make verify-full`):
-- all quick checks
-- replay regression report with full fixture set
-- full `go test ./...` coverage
+### 2.1 Current concrete interfaces (already in code)
 
-MVP path (`make verify-mvp`):
-- all full checks
-- live-enforced MVP SLO report generation (`rspp-cli slo-gates-mvp-report`)
-- fails closed when required live artifacts are missing/invalid or fixed-decision gates are violated
+```go
+// validation
+ValidateContractFixtures(root string) (ContractValidationSummary, error)
+ValidateContractFixturesWithSchema(schemaPath, root string) (ContractValidationSummary, error)
 
-Security path (`make security-baseline-check`):
-- focused security baseline package tests via `scripts/security-check.sh`:
-  - `./api/eventabi`
-  - `./api/observability`
-  - `./internal/security/policy`
-  - `./internal/runtime/transport`
-  - `./internal/observability/replay`
-  - `./internal/observability/timeline`
+// regression
+EvaluateDivergences(divergences []ReplayDivergence, policy DivergencePolicy) DivergenceEvaluation
 
-## Validation harness (`DX-02`)
+// ops
+EvaluateMVPSLOGates(samples []TurnMetrics, thresholds MVPSLOThresholds) MVPSLOGateReport
+DefaultMVPSLOThresholds() MVPSLOThresholds
 
-Validates fixture and artifact shapes for:
-- `event`
-- `control_signal`
-- `turn_transition`
-- `resolved_turn_plan`
-- `decision_outcome`
+// release
+LoadRolloutConfig(path string) (RolloutConfig, ArtifactSource, error)
+EvaluateReadiness(in ReadinessInput) (ReadinessResult, map[string]ArtifactSource)
+BuildReleaseManifest(specRef string, cfg RolloutConfig, readiness ReadinessResult, sources map[string]ArtifactSource, now time.Time) (ReleaseManifest, error)
+```
 
-Validation policy:
-- valid fixtures must pass typed and schema validators
-- invalid fixtures must fail typed and schema validators
+### 2.2 Target interfaces (to add)
 
-PRD alignment note:
-- PRD expects spec-first CI/CD with spec lint/validation plus replay tests before deploy.
-- Current `DX-02` scope validates shared contract artifacts only (`event`, `control_signal`, `turn_transition`, `resolved_turn_plan`, `decision_outcome`).
-- Dedicated `PipelineSpec` lint/validation gate coverage is not implemented yet in this folder.
+```go
+type Gate interface {
+    ID() string
+    Stage() string // quick|full|mvp|security|publish
+    Evaluate(ctx context.Context, in GateInput) (GateResult, error)
+}
 
-## Replay regression policy (`DX-03`)
+type GateOrchestrator interface {
+    RunProfile(ctx context.Context, profile string, candidate ReleaseCandidate) (GateRun, error)
+}
 
-Fail conditions:
-- unexplained `PLAN_DIVERGENCE` or `OUTCOME_DIVERGENCE`
-- any `AUTHORITY_DIVERGENCE`
-- unapproved `ORDERING_DIVERGENCE`
-- invocation-latency timing-scope breaches
+type EvidenceStore interface {
+    Put(ctx context.Context, artifact EvidenceArtifact) error
+    Get(ctx context.Context, id string) (EvidenceArtifact, error)
+    VerifyFresh(ctx context.Context, id string, maxAge time.Duration) error
+}
 
-Replay fixture metadata file:
-- `test/replay/fixtures/metadata.json`
+type GatePlugin interface {
+    Manifest() PluginManifest
+    Register(reg GateRegistry) error
+}
 
-Metadata fields used by tooling:
-- `gate`
-- `timing_tolerance_ms`
-- `expected_divergences`
-- `final_attempt_latency_threshold_ms`
-- `total_invocation_latency_threshold_ms`
-- `invocation_latency_scopes`
+type RuntimeAdapter interface {
+    Name() string
+    Start(ctx context.Context, specRef string, opts RunnerOptions) (RuntimeHandle, error)
+    Stop(ctx context.Context, h RuntimeHandle) error
+    CollectEvidence(ctx context.Context, h RuntimeHandle) ([]EvidenceArtifact, error)
+}
+```
 
-## Ops SLO defaults (`DX-05`)
+## 3) Data model: core entities and relations
 
-Default thresholds:
-- turn-open p95 `<= 120ms`
-- first-output p95 `<= 1500ms`
-- cancel-fence p95 `<= 150ms`
-- end-to-end p50 `<= 1500ms`
-- end-to-end p95 `<= 2000ms`
-- baseline completeness ratio `== 1.0`
-- stale accepted outputs `== 0`
-- terminal lifecycle correctness ratio `== 1.0`
+### 3.1 Implemented artifacts today
 
-MVP-mode live enforcement:
-1. `rspp-cli slo-gates-mvp-report` combines baseline SLO gates with live chain evidence and fixed-decision checks.
-2. Live end-to-end threshold failures may be waived only after multiple attempts, and the waiver is recorded in the report.
-3. Fixed-decision checks fail on missing parity markers/invalid parity, unsupported provider policy, non-simple mode behavior, or missing LiveKit readiness evidence.
+| Artifact | Purpose | Default path | Defined in |
+| --- | --- | --- | --- |
+| `contractsReportArtifact` | Contract fixture validation result | `.codex/ops/contracts-report.json` | `cmd/rspp-cli/main.go` |
+| `replayRegressionReport` | Replay gate aggregate + fixture outcomes | `.codex/replay/regression-report.json` | `cmd/rspp-cli/main.go` |
+| `sloGateArtifact` | Baseline SLO gate report | `.codex/ops/slo-gates-report.json` | `cmd/rspp-cli/main.go` |
+| `mvpSLOGateArtifact` | Baseline + live + fixed-decision gate report | `.codex/ops/slo-gates-mvp-report.json` | `cmd/rspp-cli/main.go` |
+| `liveLatencyCompareArtifact` | Streaming/non-streaming paired comparison | `.codex/providers/live-latency-compare.json` | `cmd/rspp-cli/main.go` |
+| `ReleaseManifest` | Release handoff manifest | `.codex/release/release-manifest.json` | `internal/tooling/release/release.go` |
 
-## PRD MVP quality-gate alignment status
+### 3.2 Target entities to standardize
 
-| PRD MVP gate | Target | Status in tooling |
+| Entity | Purpose | Key fields |
 | --- | --- | --- |
-| Turn-open decision latency | p95 `<= 120ms` | implemented in `DX-05` |
-| First assistant output latency | p95 `<= 1500ms` | implemented in `DX-05` |
-| Cancellation fence latency | p95 `<= 150ms` | implemented in `DX-05` |
-| Authority safety | stale accepted outputs `== 0` | implemented in `DX-05` |
-| Replay baseline completeness | OR-02 completeness `== 1.0` | implemented in `DX-05` |
-| Terminal lifecycle correctness | exactly one terminal (`commit` or `abort`) then `close` | implemented in `DX-05` |
-| End-to-end latency | `P50 <= 1.5s`, `P95 <= 2s` | implemented in `DX-05` and enforced in MVP live mode |
+| `ReleaseCandidate` | Immutable input to gate/publish flow | `spec_ref`, `pipeline_version`, `execution_profile`, `rollout_config_ref`, `commit_sha` |
+| `GateDefinition` | Declarative gate rule | `gate_id`, `metric_formula`, `threshold`, `scope`, `stage`, `required` |
+| `GateRun` | One orchestrated execution | `run_id`, `profile`, `candidate_ref`, `status`, `started_at`, `ended_at` |
+| `GateResult` | One gate result | `gate_id`, `status`, `violations[]`, `metrics`, `evidence_refs[]` |
+| `EvidenceArtifact` | Versioned evidence blob | `artifact_id`, `kind`, `schema_version`, `sha256`, `generated_at_utc`, `payload_ref` |
+| `ConformanceProfile` | Required checks by runtime/adapter class | `profile_id`, `required_gates[]`, `supported_versions[]` |
+| `PluginManifest` | Plugin compatibility + safety contract | `plugin_id`, `api_version`, `capabilities[]`, `resource_limits`, `signature_ref` |
 
-## Live end-to-end latency diagnostics (current status + planned expansion)
+Core relations:
+- `ReleaseCandidate -> GateRun -> GateResult -> EvidenceArtifact`
+- `ReadinessDecision` is derived from `GateRun` + freshness policy
+- `ReleaseManifest` is emitted only when readiness passes
+- `ConformanceProfile` injects additional required gate definitions
+- `PluginManifest` contributes optional gate/validator registration
 
-Current implementation status in tooling:
-- `rspp-cli live-latency-compare-report` evaluates paired streaming/non-streaming artifacts and emits per-combo plus aggregate first-audio/completion deltas.
-- `rspp-cli slo-gates-mvp-report` consumes live provider-chain evidence and fixed-decision checks, including mode-proof validation.
-- Blocking live checks continue to enforce completion thresholds (`p50 <= 1500ms`, `p95 <= 2000ms`) plus fixed-decision checks.
+## 4) Extension points: plugins, custom nodes, custom runtimes
 
-Currently emitted/consumed live metric:
+### 4.1 Current extension seams
+- Replay fixture metadata policy (`test/replay/fixtures/metadata.json`) controls gate membership, tolerances, and expected divergences.
+- CLI artifact path overrides allow integration into alternate CI layouts.
+- Live provider chain artifacts are consumed as external evidence for MVP/fairness gates.
 
-| Metric | Current gate usage | Artifact field |
-| --- | --- | --- |
-| End-to-end first assistant audio latency | compare artifact + diagnostic summary | `first_assistant_audio_e2e_latency_ms` |
-| End-to-end turn completion latency | blocking in MVP live mode (`p50`, `p95`) | `turn_completion_e2e_latency_ms` |
+### 4.2 Target extension seams
+- Plugins: `GatePlugin` registration in `internal/tooling/extensions` with explicit compatibility and resource budgets ([F-164], [F-162], [F-163], [NF-032]).
+- Custom nodes: authoring harness + conformance packs for in-process and external-node paths ([F-011], [F-121], [F-122], [F-123], [F-124], [F-128]).
+- Custom runtimes: `RuntimeAdapter` boundary to run gates against local, cluster, or external execution backends while preserving canonical metrics/evidence ([F-125], [F-130], [F-078], [NF-032], [F-162]).
 
-Planned per-stage streaming diagnostics (not yet emitted/consumed by tooling artifacts):
+## 5) Design invariants (must preserve)
 
-| Planned metric | Planned target | Planned scope |
-| --- | --- | --- |
-| STT first partial latency | `<= 450ms` | first user audio frame -> first STT stream chunk |
-| STT partial to LLM start handoff latency | `<= 120ms` | eligible STT partial accepted -> LLM invoke start |
-| LLM first partial latency | `<= 700ms` | LLM invoke start -> first LLM stream chunk |
-| LLM partial to TTS start handoff latency | `<= 120ms` | eligible LLM partial accepted -> TTS invoke start |
-| TTS first audio latency | `<= 650ms` | TTS invoke start -> first audio chunk |
-| End-to-end first assistant audio latency | `<= 1800ms` | first user audio frame -> first assistant audio chunk |
+1. Required release artifacts fail closed on missing/read/decode/freshness failure ([F-100], [NF-016]).
+2. Gate formulas for MVP metrics use canonical PRD anchors only ([NF-024], [NF-025], [NF-026], [NF-038]).
+3. OR-02 completeness gate remains `100%` for accepted turns ([NF-028], [F-153]).
+4. Stale-epoch accepted output count remains `0` ([NF-027], [F-095]).
+5. Terminal lifecycle gate remains exactly one terminal then `close` ([NF-029]).
+6. Replay divergence policy stays deterministic for equal inputs/policies ([NF-009], [F-150], [F-152]).
+7. Invocation-latency threshold breaches are always replay-gate failures regardless of generic timing tolerance ([F-127], [NF-009]).
+8. Timeline/export pressure cannot block control progression; replay-critical evidence remains preserved ([F-154], [F-176]).
+9. MVP profile enforcement remains `simple`-only in gate policy ([F-078]).
+10. Fixed-decision provider policy remains explicit and audited in reports ([F-100], [F-165]).
+11. If live E2E waiver policy is used, waiver reason and attempt evidence must be recorded in artifact output ([NF-038], [NF-016]).
+12. Release manifest must include source artifact integrity metadata (path + hash) ([F-100], [F-149]).
+13. Validation errors must remain actionable and field-specific ([F-001], [F-126], [NF-015]).
+14. New extension execution paths must enforce timeout/resource bounds ([F-123], [F-124]).
+15. Version-skew/deprecation checks must be explicit and testable once introduced ([NF-032], [F-162], [F-163], [F-164], [F-165]).
 
-Gate rollout status:
-1. Current blocking gate scope uses end-to-end turn completion latency plus fixed-decision checks.
-2. Per-stage streaming metrics are planned and remain non-blocking until artifact schema and gate ingestion support are implemented.
-3. Baseline SLO gates remain active in parallel with live-enforced MVP mode.
-4. `verify-mvp` now requires `live-latency-compare-report` generation to succeed before MVP SLO gating.
+## 6) Tradeoffs (major)
 
-Latest implementation progress snapshot (2026-02-13):
-1. Mode-correctness and compare-report pipeline are fully wired and enforced in `verify-mvp`.
-2. Live smoke workflow requires provider enable toggles (`RSPP_*_ENABLE=1`) in addition to provider API-key env vars to avoid skip-only artifacts.
-3. Sampled paired live evidence (`stt-assemblyai|llm-anthropic|tts-elevenlabs`, combo cap 1, AssemblyAI poll interval override `250ms`) currently shows:
-   - first-audio delta (streaming - non-streaming): `+3969ms`
-   - completion delta (streaming - non-streaming): `+4925ms`
-4. Stage-level evidence in that sample points to STT latency as the dominant regression contributor.
+| Tradeoff | Current choice | Alternative | Why |
+| --- | --- | --- | --- |
+| Gate orchestration location | CLI + Makefile chains | Central in-module orchestrator | Current setup is simple and works, but duplicates orchestration logic and limits extension injection ([F-126], [F-127]). |
+| Replay source model | Fixture-builder dominated | Full replay execution ingestion | Current model is deterministic and fast; real replay ingestion is needed for richer production fidelity ([F-127], [F-151], [NF-009]). |
+| SLO baseline source | Generated runtime baseline defaults | Live/recorded-only baseline input | Synthetic baseline stabilizes CI, but can hide drift if not paired with recorded evidence policies ([NF-024], [NF-028], [NF-038]). |
+| Live E2E policy | Threshold + explicit waiver path | Hard fail with no waiver | Waiver supports unstable live envs but weakens strict gate semantics if overused ([NF-038], [NF-016]). |
+| Release readiness inputs | 3 required artifacts | Broader artifact set (security/mvp/compare) | Minimal readiness is robust today; broader policy gives stronger release confidence but adds coupling ([F-100], [NF-016], [F-165]). |
+| Extensibility path | No plugin host yet | Early plugin-first architecture | Defers complexity now; delays tenant/domain-specific gate innovation ([F-121], [F-164]). |
+| Local runner scope | LiveKit-driven dry-run path | Runtime adapter + loopback simulation suite | Current path is MVP-aligned; misses F-130 loopback intent for faster offline testing ([F-125], [F-130]). |
 
-## Live E2E latency improvement tracking (planned phases)
+## 7) Divergence matrix: current vs target
 
-The following execution phases track the five prioritized improvements:
-1. Phase A: handoff trigger correctness
-   - remove duplicate downstream starts from fallback/supersede overlap paths
-   - require handoff action lineage in artifacts
-2. Phase B: text-only partial trigger gating
-   - ensure metadata-only chunks do not open partial handoff windows
-   - require trigger-cause evidence in chain reports
-3. Phase C: STT latency tuning controls
-   - add bounded provider cadence tuning knobs (for example AssemblyAI poll interval control)
-   - require effective config echo in artifacts
-4. Phase D: native STT streaming rollout (all STT providers)
-   - upgrade STT adapters to provider-native incremental streaming paths
-   - require streaming mode confirmation per attempt
-5. Phase E: fair streaming/non-streaming parity gate
-   - add semantic parity markers and comparison validity checks
-   - only promote A/B latency deltas to gate decisions when parity is true
+| Divergence | Current evidence | Impact | Implementation action |
+| --- | --- | --- | --- |
+| No reusable gate orchestrator module | `cmd/rspp-cli/main.go`, `Makefile` | Harder reuse/composition/plugin loading | Introduce `internal/tooling/gates` and move profile wiring into package API. |
+| PipelineSpec/policy lint not in tooling validation | `internal/tooling/validation/contracts.go` | Incomplete coverage for [F-126]/PRD 3.2 | Add spec/policy validators and CLI commands under validation module. |
+| Replay regression relies on fixture builders | `replayFixtureBuilders` in `cmd/rspp-cli/main.go` | Limited fidelity to recorded-session replay pathways | Add replay artifact ingestion adapter and keep fixture mode for deterministic tests. |
+| Evidence logic is scattered | CLI artifact structs + release readers | Schema/version/freshness policy is duplicated | Create `internal/tooling/evidence` with normalized read/write/validate APIs. |
+| Publish readiness omits mvp/security/codex policy artifacts | `internal/tooling/release/release.go` | Promotion readiness can be narrower than CI policy intent | Add optional readiness profile inputs and policy mode flags. |
+| Authoring harness is not implemented | `internal/tooling/authoring/node_authoring_kit_guide.md` | Custom-node developer workflow is incomplete | Implement node stream harness + baseline fixtures + contract hooks. |
+| No conformance/skew/deprecation package | no `internal/tooling/conformance` | Governance gates are not codified as tooling checks | Add profile schema + skew gate runner (`N/N-1` first). |
+| No extension host | no `internal/tooling/extensions` | Cannot register custom gate plugins safely | Add plugin manifest, registration API, and bounded execution runner. |
+| Runner abstraction missing | only `cmd/rspp-local-runner` livekit delegation | No unified custom-runtime gate targeting | Add `internal/tooling/runner` interfaces and LiveKit adapter implementation. |
 
-Promotion readiness criteria:
-1. Stable pass trend across provider matrix runs with parity-valid comparisons.
-2. No unexplained divergence in replay/timeline evidence for handoff paths.
-3. CI live artifact completeness for required comparison markers.
+## 8) Implementation-ready execution plan
 
-## MVP fixed-decision alignment (PRD 5.2)
+### Phase P0-A: Gate orchestration extraction
+- Scope:
+  - create `internal/tooling/gates` (`orchestrator.go`, `profiles.go`, `types.go`)
+  - move profile composition from CLI/Makefile into orchestrator package
+  - keep CLI command UX stable
+- Files:
+  - `internal/tooling/gates/*` (new)
+  - `cmd/rspp-cli/main.go`
+  - `cmd/rspp-cli/main_test.go`
+  - `Makefile` (only if command chain simplification is adopted)
+- Exit criteria:
+  - `verify-quick/full/mvp` behavior is unchanged
+  - output artifact paths remain backward-compatible
 
-Current tooling alignment to PRD fixed MVP decisions:
-1. LiveKit-only transport path: enforced in MVP live mode through required passing LiveKit smoke report.
-2. Single-region authority with lease/epoch checks: represented by stale-epoch accepted output safety gate (`== 0`) in `DX-05`.
-3. Simple mode only: enforced by normalizer/registry-based validation in MVP live mode.
-4. OR-02 baseline replay evidence mandatory: enforced by completeness gate (`== 1.0`) in `DX-05`.
-5. Streaming/non-streaming parity: required parity markers and valid parity comparison in MVP live mode.
+### Phase P0-B: Validation completion for spec-first CI
+- Scope:
+  - add PipelineSpec/policy validation entrypoints under `internal/tooling/validation`
+  - add CLI commands for lint/validate with actionable diagnostics
+- Files:
+  - `internal/tooling/validation/*`
+  - `cmd/rspp-cli/main.go`
+  - contract/spec fixtures under `test/contract` (and new spec fixture folder)
+- Exit criteria:
+  - invalid spec/policy returns field-path diagnostics
+  - valid spec/policy passes strict mode
 
-## Spec-first CI/CD and release alignment (PRD 3.2)
+### Phase P0-C: Evidence normalization
+- Scope:
+  - add `internal/tooling/evidence` with typed artifact IO + schema/version metadata
+  - refactor CLI report writers to use shared evidence package
+- Files:
+  - `internal/tooling/evidence/*` (new)
+  - `cmd/rspp-cli/main.go`
+  - `internal/tooling/release/release.go`
+- Exit criteria:
+  - no duplicated freshness/hash/version parsing logic
+  - release readiness consumes shared evidence interfaces
 
-1. PRD target: lint/validate pipeline specs and run replay tests before deploy.
-2. Implemented in this folder:
-   - replay smoke/regression gating (`DX-03`)
-   - release readiness artifact checks and deterministic release manifest generation (`DX-04`)
-3. Not implemented yet in this folder:
-   - dedicated `PipelineSpec` lint/validation gate under `DX-02`/`DX-04` (current readiness checks consume gate artifacts and rollout config, but do not parse/validate pipeline specs directly)
+### Phase P1-A: Replay ingestion upgrade
+- Scope:
+  - keep fixture mode for deterministic unit tests
+  - add replay-result ingestion mode for regression reporting
+- Files:
+  - `internal/tooling/regression/*`
+  - `cmd/rspp-cli/main.go`
+  - `test/replay/*`
+- Exit criteria:
+  - replay report can be generated from either fixture mode or replay artifact mode
+  - divergence policy behavior remains deterministic
 
-## Release readiness (`DX-04`)
+### Phase P1-B: Conformance + extension foundations
+- Scope:
+  - add `internal/tooling/conformance` (`ConformanceProfile`, skew/deprecation checks)
+  - add `internal/tooling/extensions` plugin manifest and guarded loader
+- Files:
+  - `internal/tooling/conformance/*` (new)
+  - `internal/tooling/extensions/*` (new)
+  - `cmd/rspp-cli/main.go` (registration/wiring)
+- Exit criteria:
+  - base conformance profile can run and fail deterministically
+  - plugin registration is explicit and bounded
 
-Release publish fails closed when required artifacts are missing, stale, or failing:
-- contracts report
-- replay regression report
-- SLO gates report
+### Phase P1-C: Runner abstraction + loopback simulation
+- Scope:
+  - add `internal/tooling/runner` adapter contract
+  - keep `rspp-local-runner` LiveKit path and add loopback simulation path
+- Files:
+  - `internal/tooling/runner/*` (new)
+  - `cmd/rspp-local-runner/main.go`
+  - `cmd/rspp-local-runner/main_test.go`
+- Exit criteria:
+  - offline loopback mode emits Event ABI-compatible artifacts
+  - LiveKit mode behavior remains unchanged
 
-## Authoring scaffolds (`DX-06`)
-
-`internal/tooling/authoring` reserves scaffolds/tests for future node authoring workflows.
-Current rule: no runtime contract bypasses; any generated scaffolds must validate through `DX-02` and replay gates.
-
-## Test and gate touchpoints
-
-- `go test ./internal/tooling/regression ./internal/tooling/ops ./internal/tooling/release` (via `make verify-quick`)
-- `go run ./cmd/rspp-cli ...` command surface (via `make verify-quick` and `make verify-full`)
+### Common validation commands for each phase
+- `GOCACHE=/tmp/go-build go test ./internal/tooling/... ./cmd/rspp-cli ./cmd/rspp-local-runner`
 - `make verify-quick`
 - `make verify-full`
-- `make verify-mvp`
-
-## Change checklist
-
-1. Keep artifact schemas stable unless intentionally versioned.
-2. Update tests for every policy branch change.
-3. Keep replay fail-policy behavior explicit and deterministic.
-4. Re-run CLI and tooling tests for command-surface changes.
-
-## Related repo-level docs
-
-- `docs/repository_docs_index.md`
-- `docs/CIValidationGates.md`
-- `docs/ContractArtifacts.schema.json`
-- `docs/SecurityDataHandlingBaseline.md`
+- `make verify-mvp` (for changes touching live/mvp gate logic)

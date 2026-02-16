@@ -1,159 +1,225 @@
-# Internal Observability Guide
+# Internal Observability Module Guide (Implementation-Ready)
 
-This folder implements telemetry, timeline evidence recording, replay divergence/access, audit logging, and retention/deletion enforcement.
+This guide is both:
+- the target architecture for observability, and
+- the execution reference for what is implemented today vs what is still missing.
 
-## Ownership and module map
+Validation timestamp: `2026-02-16` (code audit focused on `internal/observability/*`).
 
-| Module | Path | Primary owner | Cross-review |
+Evidence baseline:
+- PRD: `2.1`, `4.1.3`, `4.1.5`, `4.1.6`, `4.2.2`, `4.2.3`, `4.3`, `4.4.2`, `4.4.3`, `4.4.4`, `5.1`, `5.2`.
+- Feature catalog: `F-067` to `F-077`, `F-131`, `F-142`, `F-149`, `F-150`, `F-151`, `F-152`, `F-153`, `F-154`, `F-160`, `F-170`, `F-176`, `NF-002`, `NF-008`, `NF-009`, `NF-011`, `NF-014`, `NF-018`, `NF-024`, `NF-025`, `NF-026`, `NF-027`, `NF-028`, `NF-029`, `NF-038`.
+
+Status legend:
+- `Implemented`: code exists and is usable now.
+- `Partial`: foundational code exists, but contract is incomplete.
+- `Planned`: module is target-only and not implemented yet.
+
+## 1) Current State and Divergence Matrix
+
+| Module | Status | Code evidence | Current capability | Divergence to close |
+| --- | --- | --- | --- | --- |
+| `OBS-01 Correlation Context` | `Planned` | no dedicated package under `internal/observability/telemetry/context` | Telemetry accepts ad-hoc correlation metadata. | Add canonical correlation derivation/enforcement for tenant/session/turn/node/edge/event/epoch (`F-067`, `NF-008`). |
+| `OBS-02 TelemetryLane Intake` | `Implemented` | `internal/observability/telemetry/pipeline.go`, `internal/observability/telemetry/env.go` | Bounded queue, sampling, deterministic drop/accounting, non-blocking intake posture. | Split intake concerns from processors/exporters; enforce canonical correlation contract (`F-069`, `F-142`, `NF-002`). |
+| `OBS-03 Telemetry Processors/Exporters` | `Partial` | `internal/observability/telemetry/otlp_http.go`, `internal/observability/telemetry/memory_sink.go` | Sink abstraction with OTLP HTTP + memory sink. | Missing separate metrics/tracing/logging processing modules and richer backend isolation (`F-068`, `F-070`). |
+| `OBS-04 OR-02 Local Timeline Append` | `Implemented` | `internal/observability/timeline/recorder.go` | Stage-A recorder, bounded capacities, baseline/detail tracking, deterministic downgrade signaling. | Formalize append API boundary to runtime callers and make OR-02 manifest versioning explicit (`F-153`, `NF-028`). |
+| `OBS-05 OR-02 Evidence Builder` | `Partial` | `internal/observability/timeline/recorder.go`, `internal/observability/timeline/artifact.go` | Baseline evidence structures, completeness helpers, artifact serialization. | Missing dedicated evidence builder module that guarantees canonical gate-anchor population end-to-end (`NF-024`, `NF-025`, `NF-026`, `NF-038`). |
+| `OBS-06 Timeline Durable Export` | `Planned` | no `internal/observability/timeline/exporter` package | No async durable export/retry pipeline. | Implement local-append vs durable-export separation required by PRD `4.1.6` (`F-154`, `F-176`). |
+| `OBS-07 Replay Engine/Cursor` | `Planned` | no `internal/observability/replay/engine` or cursor package | Replay execution engine is absent. | Add replay modes and deterministic cursor execution (`F-072`, `F-151`, `F-152`, `NF-009`). |
+| `OBS-08 Divergence and Reporting` | `Partial` | `internal/observability/replay/comparator.go` | Divergence classes/helpers exist. | Missing report builder and CI/operator artifact publishing (`F-077`, `NF-009`). |
+| `OBS-09 Access Control/Redaction` | `Implemented` | `internal/observability/replay/access.go`, `internal/observability/timeline/redaction.go` | Deny-by-default replay access + redaction policy wiring. | Expand policy hooks and complete audit linkage for all denial/redaction paths (`F-073`, `NF-011`, `NF-014`). |
+| `OBS-10 Audit/Retention/Deletion` | `Implemented` | `internal/observability/replay/service.go`, `internal/observability/replay/audit_backend*.go`, `internal/observability/replay/retention*.go` | Immutable append flow, backend fallback, retention policies, deletion modes. | Harden toward tamper-evident post-MVP path and unify operational reporting (`F-116`, `F-170`). |
+| `OBS-11 Extension Host/Conformance` | `Planned` | no `internal/observability/extensions` package | No plugin surface for exporter/comparator/redactor extensions. | Add extension points + conformance tests for custom integrations (`F-164`). |
+
+## 2) Implemented Surfaces (Now)
+
+### Telemetry
+
+Implemented surfaces:
+- Non-blocking, bounded telemetry queue with drop accounting and sampling controls:
+  - `internal/observability/telemetry/pipeline.go`
+  - `internal/observability/telemetry/env.go`
+- Export backends:
+  - OTLP HTTP sink: `internal/observability/telemetry/otlp_http.go`
+  - Memory sink: `internal/observability/telemetry/memory_sink.go`
+- Default emitter wiring:
+  - global emitter override pattern in `internal/observability/telemetry` package
+
+Contract posture:
+- Strong on `F-069`, `F-142`, `NF-002` foundations.
+- Partial for end-to-end correlation completeness (`NF-008`) because canonical correlation contract is not yet centralized.
+
+### Timeline (OR-02)
+
+Implemented surfaces:
+- Stage-A evidence recorder with bounded capacities, baseline/detail evidence, and downgrade control signal emission:
+  - `internal/observability/timeline/recorder.go`
+- Artifact serialization:
+  - `internal/observability/timeline/artifact.go`
+- Redaction policy resolution:
+  - `internal/observability/timeline/redaction.go`
+
+Contract posture:
+- Strong on baseline data-model scaffolding for `F-149`, `F-150`, `F-153`.
+- Partial for PRD `4.1.6` export split (`F-154`) because durable export pipeline is still missing.
+
+### Replay/Audit/Retention
+
+Implemented surfaces:
+- Replay authorization service with deny-by-default behavior:
+  - `internal/observability/replay/access.go`
+- Audit logging service + backend fallback:
+  - `internal/observability/replay/service.go`
+  - `internal/observability/replay/audit_backend*.go`
+- Retention/deletion model and sweeper:
+  - `internal/observability/replay/retention*.go`
+- Divergence helper primitives:
+  - `internal/observability/replay/comparator.go`
+
+Contract posture:
+- Strong on access control + retention/audit foundations.
+- Partial on replay execution (`F-072`, `F-151`, `F-152`) and report artifacts (`F-077`).
+
+## 3) Key Interfaces (Implementation and Planned Additions)
+
+Current implementation patterns exist in package code, but the following interfaces are the required implementation contracts to close known gaps.
+
+```go
+package observability
+
+// Missing central correlation contract (OBS-01).
+type CorrelationContextResolver interface {
+    ResolveFromEvent(e EventEnvelope) (CorrelationContext, error)
+    ValidateCanonical(c CorrelationContext) error
+}
+
+// Implemented conceptually via telemetry pipeline; keep non-blocking guarantee.
+type TelemetryIngress interface {
+    EmitMetric(c CorrelationContext, m MetricSample) EmitOutcome
+    EmitLog(c CorrelationContext, l LogRecord) EmitOutcome
+    EmitSpan(c CorrelationContext, s SpanRecord) EmitOutcome
+}
+
+// Implemented locally in timeline recorder; split durable export is missing.
+type TimelineAppender interface {
+    Append(e EventEnvelope) (LocalAppendAck, error)
+    AppendEvidence(delta OR02EvidenceDelta) (LocalAppendAck, error)
+}
+
+// Missing (OBS-06).
+type TimelineDurableExporter interface {
+    Export(batch []TimelineRecord) (ExportResult, error)
+}
+
+// Missing (OBS-07).
+type ReplayEngine interface {
+    Run(req ReplayRequest) (ReplayResult, error)
+}
+
+// Partially implemented in comparator helpers; report artifact layer missing.
+type DivergenceReporter interface {
+    Compare(baseline ReplayResult, candidate ReplayResult) ([]Divergence, error)
+    BuildReport(findings []Divergence) ([]byte, error)
+}
+```
+
+## 4) Data Model: Core Entities and Relations
+
+Core entities currently present in code and/or required for completion:
+- `BaselineEvidence`, `ProviderAttemptEvidence`, `HandoffEdgeEvidence`, `InvocationSnapshotEvidence` (implemented in `internal/observability/timeline/recorder.go`).
+- `ReplayAccessRequest`/decision types (implemented in `internal/observability/replay/access.go`).
+- Audit and retention entities (implemented in `internal/observability/replay/service.go` and `internal/observability/replay/retention*.go`).
+- Divergence records (implemented in `internal/observability/replay/comparator.go`).
+
+Required relation guarantees:
+- One accepted turn must map to one complete OR-02 baseline evidence record (`NF-028`).
+- Replay access decisions must be auditable and tenant-scoped (`NF-011`, `NF-014` posture).
+- Timeline local records must be exportable later without changing correlation identity.
+
+## 5) Prioritized Implementation Backlog (To Close Divergence)
+
+### P0 - Correlation Contract Completion (`OBS-01`)
+
+Deliverables:
+- Add `internal/observability/telemetry/context` package.
+- Implement canonical correlation resolver/validator for IDs used by logs/metrics/traces/timeline.
+- Enforce usage from telemetry and timeline entrypoints.
+
+Done criteria:
+- Correlation completeness checks pass across telemetry types (`NF-008`).
+- Missing/invalid correlation fails deterministically with explicit diagnostics.
+
+### P0 - Durable Timeline Export (`OBS-06`)
+
+Deliverables:
+- Add `internal/observability/timeline/exporter` package with async queue, retry policy, and export lag metrics.
+- Wire recorder local append to exporter pipeline with eventual-consistency markers.
+
+Done criteria:
+- Control progression and cancel paths remain non-blocking during exporter outage (`F-154`, `NF-026`).
+- Deterministic downgrade under pressure remains valid (`F-176`).
+
+### P0 - Replay Engine and Cursor (`OBS-07`)
+
+Deliverables:
+- Add replay engine package with explicit mode selection (`re-simulate`, `recorded-provider-playback`).
+- Add cursor-based deterministic stepping and resume support.
+
+Done criteria:
+- Replay reproducibility tests pass (`NF-009`).
+- Mode is explicit in replay outputs (`F-151`, `F-152`).
+
+### P1 - Divergence Reporting Pipeline (`OBS-08`)
+
+Deliverables:
+- Build machine-readable report artifact layer on top of comparator findings.
+- Add report publishing path for CI and operator tooling.
+
+Done criteria:
+- Replay diff reports include output/timing/provider-choice divergence (`F-077`).
+
+### P1 - Extension and Conformance Surface (`OBS-11`)
+
+Deliverables:
+- Add extension interfaces for exporter/comparator/redaction plugins.
+- Add conformance tests for extension behavior and observability invariants.
+
+Done criteria:
+- Extension integrations cannot bypass correlation/redaction/access invariants (`F-164` posture).
+
+## 6) Design Invariants (Implementation Must Preserve)
+
+1. Telemetry must be non-blocking under pressure; drops/sampling are explicit and counted (`F-069`, `F-142`, `NF-002`).
+2. Correlation IDs must be consistent across logs/metrics/traces/timeline (`F-067`, `NF-008`).
+3. OR-02 accepted-turn completeness must remain `100%` for required baseline fields (`NF-028`).
+4. Timeline persistence must never block control progression or cancel fencing (`F-154`, `NF-026`).
+5. Recording-level downgrade is deterministic and replay-visible (`F-176`).
+6. Replay access is deny-by-default with auditable outcomes (`replay/access.go` + audit service).
+7. Secrets/PII must be redacted before persistence/export (`F-117`, `NF-011`, `NF-014`).
+8. Divergence classes remain stable when extending replay diagnostics (`F-077`, `NF-009`).
+9. Gate-anchor timestamp integrity must be validated for gate calculations (`NF-024`, `NF-025`, `NF-026`, `NF-038`).
+10. Retention/deletion remains tenant-scoped and auditable (`F-116`).
+
+## 7) Tradeoffs (Current and Planned)
+
+| Decision | Current choice | Alternative | Why this remains correct now |
 | --- | --- | --- | --- |
-| `OR-01` Telemetry | `internal/observability/telemetry` | `ObsReplay-Team` | Runtime-Team |
-| `OR-02` Timeline Recorder | `internal/observability/timeline` | `ObsReplay-Team` | Runtime-Team |
-| `OR-03` Replay Engine | `internal/observability/replay` | `ObsReplay-Team` | Security-Team |
+| Telemetry under overload | Best-effort + bounded queue/drops | Blocking reliable telemetry | Protects hot path latency and lane priority (`F-142`, `NF-002`). |
+| Timeline persistence | Local recorder first | Fully synchronous durable writes | Keeps runtime control/cancel responsiveness while export layer is added (`F-154`). |
+| Replay maturity | Comparator/access/retention first | Full replay engine first | De-risked security + governance baseline early; replay execution is next P0 (`F-151`, `F-152`). |
+| Security posture | Deny-by-default + redaction hooks | Open-by-default debug access | Aligns with `NF-011`/`NF-014` and minimizes leak risk in early stages. |
+| Extensibility timing | Delay plugin surface until invariants are stable | Add plugins immediately | Prevents premature API freeze before core replay/export contracts settle. |
 
-Security-sensitive paths:
-- `internal/observability/replay`
-- redaction and replay-access enforcement paths
+## 8) Verification Commands
 
-## OR-01 telemetry guarantees
-
-1. Best-effort, non-blocking pipeline behavior under pressure.
-2. Deterministic sampling decisions for telemetry channels; queue-overflow drops are bounded/non-blocking and explicitly counted.
-3. Runtime instrumentation entrypoints remain safe for hot paths.
-
-## PRD MVP quality-gate measurement contract
-
-Observability ownership for PRD production targets:
-1. Turn-open decision latency (`p95 <= 120 ms`): measured from `turn_open_proposed` acceptance marker to `turn_open`.
-2. First assistant output latency (`p95 <= 1500 ms`): measured from `turn_open` to first DataLane output chunk marker when `first_output_at` evidence is present.
-3. Cancellation fence latency (`p95 <= 150 ms`): measured from cancel-accept marker to egress fence marker.
-4. Authority safety (`0` accepted stale-epoch outputs): enforced by stale-epoch outcome evidence and failover/lease-rotation test artifacts.
-5. Replay baseline completeness (`100%` accepted-turn coverage): verified from OR-02 required baseline evidence fields.
-6. Terminal lifecycle correctness (`100%`): verified from OR-02 terminal fields (`terminal_outcome`, `close_emitted`) plus runtime terminal transition evidence (`active -> terminal -> close`).
-7. End-to-end latency (`P50 <= 1.5s`, `P95 <= 2s`): measured from turn-open to terminal completion markers.
-
-Current implementation note:
-- `turn_open`/terminal/cancel-fence evidence is synthesized in runtime baseline normalization; `first_output_at` is not auto-synthesized there and must be provided by integration paths that emit first-output markers.
-
-## OR-02 timeline baseline requirements
-
-Accepted-turn evidence must preserve:
-- lifecycle markers (open/terminal/close ordering)
-- authority epoch and authority outcomes
-- determinism markers
-- snapshot provenance references
-- replay-correlation metadata
-
-Failure-path evidence mapping (current baseline + adjacent runtime signals):
-- `F1`: admission/scheduling-point outcomes and policy snapshot refs (`decision_outcomes`, `snapshot_provenance`).
-- `F3`: provider invocation outcome class and retry/switch provenance (`invocation_outcomes`; optional per-attempt recorder evidence).
-- `F4`/`F5`: pressure/discontinuity markers are emitted in runtime control signals and comparator lineage checks; dedicated OR-02 baseline fields for these markers are not yet first-class.
-- `F7`/`F8`: authority epoch mismatch/revoke/migration markers (`authority_epoch`, authority decision outcomes, `migration_markers`).
-
-Deterministic downgrade rule:
-- Stage-A detail evidence may downgrade/drop under pressure with deterministic `recording_level_downgraded` signaling.
-- Baseline append remains capacity-bounded; if baseline append is unavailable on terminalization, runtime converts the terminal path to `abort(recording_evidence_unavailable)`.
-
-Replay fidelity and mode policy (PRD-aligned):
-1. `L0` baseline recording is mandatory for MVP and must preserve replay-critical control evidence.
-2. `L1` and `L2` fidelity identifiers exist in API/security policy surfaces; current OR-02 baseline artifact and completeness gate remain `L0`-centric.
-3. Replay comparator currently provides deterministic divergence comparison across plan/outcome/ordering/authority/timing dimensions and lineage checks.
-4. Replay-mode and decision-handling-mode policy (`replay-decisions` vs `recompute-decisions`) remains a contract target; these mode fields are not yet first-class in OR-02 baseline artifacts.
-5. Any pressure-triggered downgrade must preserve `L0` baseline evidence invariants for accepted-turn completeness checks.
-
-Streaming-handoff evidence requirements (implemented MVP baseline + pending expansion):
-1. Per-attempt provider evidence is captured in OR-02 recorder entries with raw payload and timing fields:
-   - `input_payload`, `output_payload`, `output_status_code`, `payload_truncated`
-   - `attempt_latency_ms`, `first_chunk_latency_ms`, `chunk_count`, `bytes_out`, `streaming_used`
-2. Cross-stage handoff timing is captured via `HandoffEdgeEvidence`:
-   - `stt_to_llm` and `llm_to_tts` edges
-   - `handoff_id`, `upstream_revision`, `action`, queue/watermark snapshot fields
-3. When live provider smoke runs, it publishes operator artifacts:
-   - `.codex/providers/live-provider-chain-report.json`
-   - `.codex/providers/live-provider-chain-report.md`
-   - `.codex/providers/live-provider-chain-report.streaming.json`
-   - `.codex/providers/live-provider-chain-report.streaming.md`
-   - `.codex/providers/live-provider-chain-report.nonstreaming.json`
-   - `.codex/providers/live-provider-chain-report.nonstreaming.md`
-   - artifacts include per-step input snapshot, raw I/O samples, and latency/handoff rollups
-4. Raw payload capture remains policy-controlled by:
-   - `RSPP_PROVIDER_IO_CAPTURE_MODE`
-   - `RSPP_PROVIDER_IO_CAPTURE_MAX_BYTES`
-5. Pending expansion:
-   - replay divergence policy for missing handoff markers/chunk-order markers will be promoted once API-level handoff schema extensions are finalized.
-6. Persistence scope note:
-   - baseline JSON artifacts persist OR-02 `BaselineEvidence` entries.
-   - per-attempt/handoff/invocation-snapshot recorder entries are currently consumed by runtime/integration/test/report paths and are not yet serialized into the baseline artifact schema.
-
-## Live latency diagnosis requirements (implemented MVP baseline)
-
-For streaming/non-streaming performance investigations and MVP live gate checks, live-chain artifacts include the following explicit markers:
-1. Execution identity:
-   - `execution_mode`: `streaming` or `non_streaming`
-   - `effective_handoff_policy`: effective overlap toggles/thresholds used for the run
-   - `effective_provider_streaming`: effective provider-streaming enable/disable posture
-   - `semantic_parity`: whether completion semantics are equivalent for compared runs
-   - `parity_comparison_valid`: whether the comparison is gate-valid
-   - `parity_invalid_reason`: reason when parity/validity is false
-2. Per-step timing and I/O:
-   - raw input/output capture fields already emitted at attempt level
-   - per-attempt `attempt_latency_ms`, `first_chunk_latency_ms`, `chunk_count`, `bytes_out`, `streaming_used`
-3. Handoff decision lineage:
-   - explicit handoff actions (`forward`, `coalesce`, `supersede`, `final_fallback`)
-   - queue/watermark context when action selection occurs
-4. Comparison validity fields:
-   - provider-combination identity for both runs (`comparison_identity`)
-   - per-step input snapshots are emitted in report step payloads (not currently enforced as parity-equality markers)
-   - invalid-comparison reason when parity constraints are not met
-
-Replay and gate policy:
-1. Missing required compare markers (`execution_mode`, `comparison_identity`, parity fields) fail comparison validity.
-2. MVP live fixed-decision checks fail when parity markers are missing or invalid.
-3. Streaming reports must include overlap proof (`handoffs` and/or non-zero first-audio timing); non-streaming reports must not contain `streaming_used=true`.
-4. Comparison output distinguishes true latency regressions from semantic mismatch.
-
-## OR-03 replay and access guarantees
-
-1. Divergence classes remain stable (`PLAN_DIVERGENCE`, `OUTCOME_DIVERGENCE`, `ORDERING_DIVERGENCE`, `TIMING_DIVERGENCE`, `AUTHORITY_DIVERGENCE`).
-2. Replay access is deny-by-default when required authorization attributes are missing.
-3. Audit append path is immutable and fail-closed.
-4. Audit backend supports HTTP primary with deterministic JSONL fallback.
-5. Retention/deletion supports hard-delete or cryptographic inaccessibility semantics.
-
-Required replay request attributes:
-- `tenant_id`
-- `principal_id`
-- `role`
-- `purpose`
-- `requested_scope`
-- `requested_fidelity`
-
-PRD MVP fixed-scope alignment:
-1. Replay scope for MVP is OR-02 baseline (`L0`) completeness as a required production gate.
-2. Observability evidence for runtime MVP gates is produced for the active MVP transport path (LiveKit integration lane).
-
-## Integration touchpoints
-
-- `cmd/rspp-runtime retention-sweep` consumes replay retention APIs.
-- `cmd/rspp-cli` consumes timeline and divergence artifacts.
-- Runtime modules append OR-02 evidence and emit OR-01 telemetry markers.
-
-## Test and gate touchpoints
-
+Current required checks:
 - `go test ./internal/observability/...`
-- `make security-baseline-check`
 - `make verify-quick`
 - `make verify-full`
+- `make security-baseline-check`
 
-## Change checklist
+Add when missing modules are implemented:
+- replay engine deterministic smoke suite (`OBS-07`)
+- timeline export outage/retry suite (`OBS-06`)
+- divergence report artifact schema validation (`OBS-08`)
 
-1. Preserve replay-critical OR-02 evidence on accepted-turn paths.
-2. Keep telemetry non-blocking behavior under stress.
-3. Keep replay access/audit failure modes fail-closed.
-4. Re-run observability and security baseline tests for replay-path changes.
-
-## Related repo-level docs
-
-- `docs/repository_docs_index.md`
-- `docs/SecurityDataHandlingBaseline.md`
-- `docs/CIValidationGates.md`
-- `docs/ContractArtifacts.schema.json`

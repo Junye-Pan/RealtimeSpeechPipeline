@@ -1,4 +1,4 @@
-# RSPP Voice Runtime Framework — Report (Transport-Agnostic, with LiveKit as an Optional Integration)
+# RSPP Voice Runtime Framework — Report (Transport-Agnostic)
 
 > Goal: step beyond the current implementation constraints and redefine RSPP as a **foundational runtime framework for voice agents**—the way **NVIDIA Triton** provides a kernel and contract for inference.
 > Developers implement business logic (Nodes / Policies / custom operators); the framework guarantees **low latency, controllability, observability, and swap-ability**.
@@ -171,6 +171,26 @@ A versioned, declarative artifact that defines: graph topology, node types, edge
 2) **ExecutionProfile**  
 A named profile that defines default runtime semantics (e.g., **Simple** vs **Advanced**) including default budgets, default buffering strategies, and which knobs are opt‑in. ExecutionProfile is applied during spec normalization so behavior is explicit and replayable.
 
+ExecutionProfile `simple/v1` (MVP normative baseline)  
+For MVP, the `simple` profile MUST resolve deterministic defaults into every ResolvedTurnPlan and annotate each derived field with `defaulting_source=execution_profile/simple/v1`.
+- Default lane behavior:
+  - ControlLane: prioritized, bounded queue, `drop=never`, minimal buffering.
+  - DataLane: bounded queue with deterministic shedding (`merge/coalesce` or `latest-only` for interim data) and bounded block behavior.
+  - TelemetryLane: bounded queue with aggressive sampling/drop behavior under pressure.
+- Default flow control:
+  - ControlLane: `signal` mode with immediate preemption.
+  - DataLane: `signal` mode with bounded `max_block_time` and deterministic shedding after bound expiry.
+  - TelemetryLane: `signal` mode with permissive XOFF and best-effort resume.
+- Default budgets:
+  - turn budget: `2000ms` wall-clock target envelope.
+  - per-node soft budget: `800ms` before deterministic degrade/fallback evaluation.
+  - provider invocation timeout default: `1000ms` unless stricter per-provider caps apply.
+  - cancellation grace window before forced termination: `75ms`.
+- Default fallback/degrade posture:
+  - fallback activation is deterministic and plan-resolved at turn start.
+  - downgrade order is monotonic (fidelity reductions only under pressure, no spontaneous re-upgrade inside the same turn).
+If these defaults change, profile version MUST increment (for example `simple/v2`), and replay compatibility checks MUST treat profile version as a determinism boundary.
+
 3) **GraphDefinition**  
 The canonical directed streaming dataflow implied by a normalized PipelineSpec for a given pipeline version. It defines legal paths and declared semantics (fan‑out/fan‑in, merge rules, fallback graph, terminal outcomes).
 
@@ -200,6 +220,7 @@ A `close` marker is emitted after terminal outcome to finalize lifecycle.
 `commit` indicates the runtime has completed generation for the turn and will emit no further DataLane outputs for that turn. Delivery completion (e.g., playback finished / transport accepted) is represented separately via ControlLane delivery signals. `commit` is also valid for control-only turns (no DataLane output) when terminal control outcomes are recorded and no further DataLane output will follow. In this context, "recorded" means appended to the runtime's non-blocking local timeline append path; durable export/persistence remains asynchronous.
 A turn begins when the runtime accepts a `turn_open` ControlLane event, typically emitted after a non-authoritative `turn_open_proposed` intent from session-scoped detection and/or transport boundary signals.
 `turn_open_proposed` MAY be emitted as a non-authoritative runtime-internal intent signal; it does not create turn lifecycle state and is not a stable external client-facing signal.
+Canonical accepted-turn lifecycle states are `OPEN -> ACTIVE -> (COMMIT | ABORT) -> CLOSE`; `PROPOSED` is pre-turn intent only and is never a turn lifecycle state.
 `turn_open` acceptance is valid only when a ResolvedTurnPlan has been successfully materialized for that turn.
 `turn_open` acceptance also requires current authority validation (valid lease/epoch); stale or de-authorized authority outcomes at this pre-turn gate MUST remain pre-turn and MUST NOT emit `abort` or `close`.
 If authority is revoked after a turn is already `Active`, runtime emits `deauthorized_drain`, then `abort(reason=authority_loss)`, then `close`.
@@ -334,6 +355,34 @@ ExecutionProfile MUST declare a recording level (L0/L1/L2) that defines capture 
 Replay/timeline recording semantics MUST separate low-latency local append from asynchronous durable export so timeline persistence cannot block ControlLane progression, cancellation propagation, or turn terminalization.
 If timeline pressure forces fidelity reduction, runtime MUST apply deterministic recording-level downgrade behavior while preserving replay-critical control evidence.
 
+OR-02 baseline replay evidence manifest (L0 mandatory)  
+For every accepted turn, OR-02 baseline evidence MUST include at minimum:
+- Identity and plan provenance:
+  - `session_id`, `turn_id`, `pipeline_version`, `resolved_turn_plan_id`, `plan_hash`, `execution_profile_version`.
+- Authority and admission provenance:
+  - `lease_epoch_at_turn_open`, `lease_epoch_at_terminal`, `admission_outcome`, and policy/routing snapshot references used for turn resolution.
+- Determinism markers:
+  - `determinism_seed`, `merge_rule_id`, `merge_rule_version`, stable ordering markers, and captured nondeterministic input references.
+- Lifecycle markers:
+  - `turn_open_timestamp`, exactly one terminal outcome (`commit|abort`) with reason, and `turn_close_timestamp`.
+- Cancellation and output-safety markers (when applicable):
+  - `cancel_scope`, `cancel_accepted_timestamp`, `cancel_fence_timestamp`, and post-cancel output rejection markers.
+- Provider invocation outcome summary:
+  - normalized invocation identifiers/outcomes for provider work included in the turn path.
+This manifest is versioned as `or02_evidence_schema_version` and validated by release gates; missing required fields constitute replay baseline incompleteness.
+
+Deterministic recording-level downgrade policy (`simple/v1`)  
+When timeline pressure occurs, recording fidelity transitions MUST follow a deterministic policy:
+- Transition order: `L2 -> L1 -> L0` only (no level skipping).
+- Default downgrade triggers:
+  - `L2 -> L1` when `timeline_queue_fill_ratio >= 0.80` for at least `500ms`, or durable-export lag >= `2000ms`.
+  - `L1 -> L0` when `timeline_queue_fill_ratio >= 0.90` for at least `500ms`, or durable-export lag >= `5000ms`.
+- Re-upgrade policy:
+  - allowed only at turn boundaries after pressure metrics remain below recovery thresholds for a full stability window.
+- Required control evidence preservation:
+  - all OR-02 baseline fields remain mandatory regardless of level.
+- Every transition MUST emit a replay-visible control marker with policy id, old/new level, trigger class, and timestamp.
+
 ---
 
 #### 4.1.7 Providers and external execution boundaries
@@ -456,34 +505,143 @@ After `cancel(scope)` acceptance, runtime and transport egress queues for that s
 - **Lane priority:** ControlLane preempts everything; DataLane is latency-protected; TelemetryLane is best-effort.  
 - **Bounded buffering:** Every Edge must have BufferSpec and watermarks (explicit or via profile defaults) so latency accumulation is always observable and controllable.  
 - **No hidden blocking:** In low-latency profiles, DataLane edges MUST NOT block indefinitely. If blocking is permitted, BufferSpec MUST declare a bounded `max_block_time` after which deterministic shedding (drop/merge/degrade) occurs.  
-- **Cancellation scope:** cancel propagation is explicit and must cancel provider invocations and buffered output generation where applicable. This guarantee includes transport-bound egress buffers (output fencing/flush).  
+- **Cancellation scope:** cancel propagation is explicit and must cancel provider invocations and buffered output generation where applicable. This guarantee includes transport-bound egress buffers (output fencing/flush). After `cancel(scope)` acceptance, new `output_accepted` or `playback_started` signals for that scope are invalid and MUST be rejected.  
 - **Failover safety:** PlacementLease epochs prevent split-brain outputs; HotState may reset; DurableState survives with declared consistency.  
 - **Replayability:** EventTimeline + plan + determinism context define what can be replayed; provider determinism is not assumed unless recorded outputs are used.
+- **Recording downgrade safety:** if timeline pressure forces fidelity reduction, runtime MUST apply deterministic recording-level downgrade behavior while preserving replay-critical control evidence.
+
+### 4.4 Spec quality standards (PRD + feature catalog)
+
+This section defines document-level quality constraints so PRD requirements and feature entries remain testable, unambiguous, and release-gate compatible.
+
+#### 4.4.1 Normative language policy and determinism levels
+
+Normative keywords in this PRD use RFC-style force:
+- `MUST` / `MUST NOT`: mandatory for conformance and release-gate eligibility
+- `SHOULD` / `SHOULD NOT`: recommended default; exceptions require documented rationale
+- `MAY`: optional behavior that must still preserve invariants
+
+Determinism levels (required declaration per feature and per replay mode):
+- `D0 (best effort)`: no strict replay guarantee; diagnostics only
+- `D1 (order-stable)`: lane/edge ordering, terminal outcomes, and cancel-fence behavior are stable for identical inputs and plan hash
+- `D2 (decision-stable)`: includes D1 plus stable provider binding, merge-rule identity/version, fallback/degrade decision path, and authority outcomes under identical inputs and snapshots
+
+MVP baseline:
+- accepted turns MUST satisfy `D1`
+- OR-02 replay evidence and release replay suites SHOULD target `D2` for decision-bearing paths
+
+#### 4.4.2 Canonical metric anchors for quality gates
+
+To avoid ambiguous timing windows, all gate and feature-level latency assertions MUST use canonical anchors:
+- `turn_open_proposed_ingress_accepted_ts`: runtime accepted a pre-turn `turn_open_proposed` intent at ingress normalization boundary
+- `turn_open_emitted_ts`: runtime emitted authoritative `turn_open`
+- `first_datalane_output_emitted_ts`: first DataLane output chunk emitted by runtime
+- `cancel_accepted_ts`: runtime accepted `cancel(scope)`
+- `cancel_fence_applied_ts`: runtime/egress fence active for scope
+- `audio_input_ingress_ts`: first user audio frame accepted for turn intent path
+- `assistant_audio_playback_started_ts`: first assistant playback start accepted on transport egress
+
+Gate-metric mapping contract:
+- gate 1: `turn_open_emitted_ts - turn_open_proposed_ingress_accepted_ts`
+- gate 2: `first_datalane_output_emitted_ts - turn_open_emitted_ts`
+- gate 3: `cancel_fence_applied_ts - cancel_accepted_ts`
+- gate 7: `assistant_audio_playback_started_ts - audio_input_ingress_ts`
+
+#### 4.4.3 Turn-boundary precedence rules (tie-break contract)
+
+When competing terminal or lifecycle triggers occur in the same scheduling window, runtime MUST resolve precedence deterministically:
+1) `authority_loss`
+2) explicit `cancel(scope)` acceptance
+3) budget exhaustion with `terminate`
+4) unrecoverable runtime/provider error
+5) disconnect/cleanup timeout
+
+Additional boundary rules:
+- pre-turn outcomes (`admit/reject/defer`) remain pre-turn and MUST NOT emit `abort` or `close`
+- after terminal emission, only `close` and telemetry markers are valid for that turn
+- `turn_open_proposed` remains non-authoritative and never creates turn lifecycle state
+
+#### 4.4.4 State consistency and error-action matrix (document contract)
+
+State consistency contract:
+
+| State class | Durability requirement | Migration behavior | Consistency requirement |
+|---|---|---|---|
+| Turn-Ephemeral | Disposable | Must reset on turn end or abort | None |
+| Session Hot State | Not required to survive failover | May reset during migration/failover | Best-effort only; no correctness dependency |
+| Session Durable State | Must survive failover | Reattached on placement change | Declared consistency mode (`strong` or `bounded-staleness`) with deployment-specific max staleness |
+| Control-Plane Configuration State | Durable control artifact | Versioned snapshot handoff | Snapshot version must be explicit and replay-visible |
+| Fleet-Scoped Provider Health/Circuit State | Durable enough for policy resolution | Refreshed at turn boundary | Snapshot freshness bound must be declared and recorded |
+
+Error-action matrix baseline:
+
+| Error class | Default action | Retryability | Required control evidence |
+|---|---|---|---|
+| `schema_validation_error` | reject event/session request | no | explicit validation code + field path |
+| `authority_epoch_mismatch` | reject ingress/egress attempt | no | `stale_epoch_reject` marker |
+| `provider_timeout` | retry within remaining budget, else fallback/degrade | conditional | timeout code + budget-at-failure |
+| `provider_overload` | switch provider per policy or degrade | conditional | provider switch/degrade marker |
+| `runtime_internal_error` | isolate node/session path, abort turn if unrecoverable | no | normalized runtime error code + terminal reason |
+
+#### 4.4.5 Capability intent vs MVP delivery boundary
+
+This table is normative for scope communication and traceability.
+
+| Capability area | Framework intent | MVP delivery baseline | Post-MVP expansion |
+|---|---|---|---|
+| Transport adapters | Transport-agnostic contract (RTC/WebSocket/telephony) | LiveKit adapter only | WebSocket + telephony adapters |
+| Execution profiles | Named profiles with deterministic defaults | `simple/v1` only | additional named profiles |
+| Authority/routing | Lease/epoch safety with regional routing | single-region authority | active-active multi-region routing/failover |
+| Compatibility governance | version-skew and deprecation lifecycle | baseline schema compatibility checks | explicit skew window + conformance profiles |
+| External node trust boundary | isolated external-node execution contract | baseline isolation/timeouts | stronger sandbox + supply-chain attestations |
+
+#### 4.4.6 Feature authoring quality rules (document-level, schema-agnostic)
+
+Effective for all new or edited feature entries on or after **March 1, 2026**:
+- feature `description` SHOULD be normative and testable (`System MUST ...`)
+- `steps` SHOULD include: setup, stimulus, observable, assertion
+- each feature MUST include at least one negative-path validation step (reject/invalid/failure path)
+- each feature MUST include at least one measurable assertion statement in prose (for example p95 bounds, zero-count invariant, or exact outcome count)
+- each feature SHOULD include direct PRD trace references (`source_refs`) even when legacy fields are still present
+- a feature SHOULD NOT move to verified-equivalent state unless evidence artifacts (logs/report path/test output) are recorded
+
+#### 4.4.7 Suggested NFRs for specification quality discipline
+
+- `Suggested NFR-SQ-01`: plan build latency measurement exists and is enforced (`resolved_turn_plan_build_ms`)
+- `Suggested NFR-SQ-02`: control-lane preemption delay is bounded under saturation (`control_preempt_delay_ms`)
+- `Suggested NFR-SQ-03`: replay order mismatch count is zero for deterministic suites (`replay_order_mismatch_count == 0`)
+- `Suggested NFR-SQ-04`: timebase mapping accuracy bound is declared and tested (`media_runtime_mapping_error_ms` p99 bound)
+- `Suggested NFR-SQ-05`: feature-catalog quality coverage reaches 100% for traceability + measurable assertion on active-phase features
+- `Suggested NFR-SQ-06`: stale-epoch output acceptance remains zero in authority/failover suites
+- `Suggested NFR-SQ-07`: sensitive-field redaction coverage remains 100% across logs/traces/recordings
+- `Suggested NFR-SQ-08`: observability overhead budget is explicit and regression-tested
+
+---
 
 ## 5) MVP standards
 ### 5.1 MVP quality gates (decided SLO/SLI targets)
 
 #### 1. Turn-open decision latency:
-   - p95 <= 120 ms from `turn_open_proposed` acceptance point to `turn_open` emission.
+   - p95 <= 120 ms from `turn_open_proposed_ingress_accepted_ts` to `turn_open_emitted_ts`.
 
 #### 2. First assistant output latency:
-   - p95 <= 1500 ms from `turn_open` to first DataLane output chunk on the happy path.
+   - p95 <= 1500 ms from `turn_open_emitted_ts` to `first_datalane_output_emitted_ts` on the happy path.
 
 #### 3. Cancellation fence latency:
-   - p95 <= 150 ms from cancel acceptance to egress output fencing.
+   - p95 <= 150 ms from `cancel_accepted_ts` to `cancel_fence_applied_ts`.
 
 #### 4. Authority safety:
    - 0 accepted stale-epoch outputs in failover/lease-rotation tests.
 
 #### 5. Replay baseline completeness:
-   - 100% of accepted turns include required OR-02 baseline evidence fields.
+   - 100% of accepted turns include required OR-02 baseline evidence fields (as defined in 4.1.6 OR-02 baseline replay evidence manifest).
 
 #### 6. Terminal lifecycle correctness:
    - 100% of accepted turns emit exactly one terminal (`commit` or `abort`) followed by `close`.
 
 #### 7. End to end latency
-   - P50 <= 1.5s
-   - P95 <= 2s
+   - P50 <= 1.5s for `assistant_audio_playback_started_ts - audio_input_ingress_ts`
+   - P95 <= 2s for `assistant_audio_playback_started_ts - audio_input_ingress_ts`
 
 ### 5.2 Fixed decisions for MVP
 - Transport path: LiveKit only
@@ -496,7 +654,29 @@ After `cancel(scope)` acceptance, runtime and transport egress queues for that s
 - Replay scope: OR-02 baseline replay evidence (L0 baseline contract) is mandatory.
 - Streaming and non-streaming mode for STT/LLM/TTS
 
-### 5.3 Execution progress snapshot (2026-02-13)
+### 5.3 Requirement phasing and feature-catalog traceability
+
+To align requirement scope with delivery scope, features in `docs/RSPP_features_framework.json` MUST follow `docs/RSPPFeatureSpec.schema.json` and include:
+- `release_phase`: one of `mvp`, `post_mvp`, or `future`
+- `source_refs` for normative semantics that trace to this PRD
+- `priority` (`P0|P1|P2`) and lifecycle `status` (`proposed|in_progress|blocked|implemented|verified|waived`)
+- `owner` (team + DRI)
+- `dependencies` (feature IDs) and `risk` (level + mitigation summary)
+- structured `acceptance_criteria` entries (metric/operator/target/scope)
+- `test_plan` with explicit `test_types` and `negative_tests`
+- `observability_hooks` (metrics, traces, logs, alerts)
+
+Migration note:
+- Legacy fields (`description`, `steps`, `passes`) remain temporarily allowed for backward compatibility while feature entries are migrated.
+- `passes` is transitional and SHOULD be replaced by `status=verified` once a feature is fully validated.
+
+MVP alignment rules:
+- LiveKit transport is MVP; WebSocket and telephony transport requirements are post-MVP.
+- Simple execution profile is MVP; additional named profiles are post-MVP.
+- Single-region authority with lease/epoch checks is MVP; active-active multi-region routing/failover is post-MVP.
+- The feature catalog's MVP quality gates MUST include all seven gates from 5.1, including the end-to-end latency gate (`P50 <= 1.5s`, `P95 <= 2s`).
+
+### 5.4 Execution progress snapshot (2026-02-13)
 
 1. Mode correctness and fairness controls are implemented:
    - explicit provider-streaming disable path for non-streaming mode in scheduler->invocation flow

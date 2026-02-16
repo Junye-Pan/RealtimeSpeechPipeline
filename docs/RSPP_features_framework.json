@@ -1,0 +1,3404 @@
+[
+  {
+    "id": "F-001",
+    "category": "functional",
+    "group": "PipelineSpec & Graph Execution",
+    "description": "PipelineSpec can be validated against a published schema",
+    "steps": [
+      "Create a PipelineSpec file with required fields and a few nodes/edges",
+      "Run `rspp lint` (or equivalent) against the spec",
+      "Verify schema errors include file/line/field paths",
+      "Verify a valid spec is accepted without warnings (in strict mode)"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-002",
+    "category": "functional",
+    "group": "PipelineSpec & Graph Execution",
+    "description": "Runtime can load a PipelineSpec and instantiate an executable session graph",
+    "steps": [
+      "Publish a PipelineSpec version to the registry (or local runner)",
+      "Request a new session using that version",
+      "Verify nodes are constructed and edges are connected",
+      "Verify the session enters RUNNING state with an initial event"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-003",
+    "category": "functional",
+    "group": "PipelineSpec & Graph Execution",
+    "description": "PipelineSpec supports explicit node definitions with typed inputs/outputs",
+    "steps": [
+      "Define a node with declared input/output event types",
+      "Connect it in PipelineSpec with compatible edges",
+      "Attempt to connect incompatible types",
+      "Verify the runtime rejects incompatible edges at validation time"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-004",
+    "category": "functional",
+    "group": "PipelineSpec & Graph Execution",
+    "description": "PipelineSpec supports directed edges with fan-out (one-to-many) routing",
+    "steps": [
+      "Define a node with one output routed to two downstream nodes",
+      "Send a single upstream event",
+      "Verify both downstream nodes receive the event",
+      "Verify delivery order rules match the runtime contract"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-005",
+    "category": "functional",
+    "group": "PipelineSpec & Graph Execution",
+    "description": "PipelineSpec supports fan-in via merge (many-to-one) with deterministic ordering rules",
+    "steps": [
+      "Define two upstream nodes feeding a single merge node",
+      "Send interleaved events from both upstream nodes",
+      "Verify merge node receives a single merged stream",
+      "Verify ordering follows the declared merge policy (e.g., timestamp or source priority)"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-006",
+    "category": "functional",
+    "group": "PipelineSpec & Graph Execution",
+    "description": "PipelineSpec supports fan-in via select (many-to-one) based on policy/conditions",
+    "steps": [
+      "Define two upstream candidates and a selector node",
+      "Configure selection conditions (e.g., provider health or language)",
+      "Trigger condition changes during a session",
+      "Verify the selector chooses the correct stream and emits an audit event"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-007",
+    "category": "functional",
+    "group": "PipelineSpec & Graph Execution",
+    "description": "PipelineSpec supports fallback paths triggered by timeout or error",
+    "steps": [
+      "Configure a primary node with a budget and a fallback node",
+      "Force the primary node to timeout or error",
+      "Verify the fallback path is activated",
+      "Verify a fallback activation event is emitted with reason codes"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-008",
+    "category": "functional",
+    "group": "PipelineSpec & Graph Execution",
+    "description": "Runtime enforces a deterministic event contract per edge (ordering, at-most-once delivery)",
+    "steps": [
+      "Send a burst of events through a pipeline with multiple edges",
+      "Record downstream event sequence",
+      "Restart runtime and replay the same inputs",
+      "Verify the same contract-defined ordering and delivery semantics are preserved"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-009",
+    "category": "functional",
+    "group": "PipelineSpec & Graph Execution",
+    "description": "Nodes can emit multiple output streams (e.g., partial and final) from a single input stream",
+    "steps": [
+      "Use an ASR node that emits partial and final transcript events",
+      "Stream audio into the pipeline",
+      "Verify partial transcript events stream continuously",
+      "Verify a final transcript event is emitted at end-of-utterance"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-010",
+    "category": "functional",
+    "group": "PipelineSpec & Graph Execution",
+    "description": "Runtime supports built-in node types for common speech pipelines",
+    "steps": [
+      "Create a PipelineSpec using built-in nodes (VAD, ASR, LLM, TTS)",
+      "Start a session and stream audio",
+      "Verify the pipeline returns synthesized audio",
+      "Verify built-in nodes expose standard metrics and config fields"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-011",
+    "category": "functional",
+    "group": "PipelineSpec & Graph Execution",
+    "description": "Developers can register custom nodes with a stable Node API (Event stream in/out)",
+    "steps": [
+      "Implement a custom node using the Node SDK",
+      "Package and register the node with the runtime",
+      "Reference the node in a PipelineSpec",
+      "Verify the node executes and emits events according to the ABI"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-012",
+    "category": "functional",
+    "group": "PipelineSpec & Graph Execution",
+    "description": "Node lifecycle hooks are supported (init/start/stop) with timeouts",
+    "steps": [
+      "Implement a node with init/start/stop hooks",
+      "Start and stop a session",
+      "Verify hooks are invoked exactly once per node instance",
+      "Verify hook timeouts produce controlled errors and shutdown"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-013",
+    "category": "functional",
+    "group": "PipelineSpec & Graph Execution",
+    "description": "Runtime propagates session/turn correlation context to every node",
+    "steps": [
+      "Start a session and produce multiple turns",
+      "Inspect events emitted by several nodes",
+      "Verify every event includes session_id and turn_id",
+      "Verify logs/traces use the same correlation identifiers"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-014",
+    "category": "functional",
+    "group": "PipelineSpec & Graph Execution",
+    "description": "Runtime provides turn segmentation primitives (turn start/end events)",
+    "steps": [
+      "Stream audio with multiple utterances separated by silence",
+      "Verify turn_start and turn_end control events are emitted",
+      "Verify downstream nodes can reset state on turn boundaries",
+      "Verify turns are numbered and correlated across the session"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-015",
+    "category": "functional",
+    "group": "PipelineSpec & Graph Execution",
+    "description": "PipelineSpec artifacts are versioned and immutable once published",
+    "steps": [
+      "Publish PipelineSpec version v1",
+      "Attempt to modify v1 in place",
+      "Verify the control plane rejects modification",
+      "Publish v2 and verify both versions remain available"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-016",
+    "category": "functional",
+    "group": "PipelineSpec & Graph Execution",
+    "description": "Runtime can run multiple PipelineSpec versions concurrently across sessions",
+    "steps": [
+      "Publish v1 and v2 of a PipelineSpec",
+      "Start two sessions pinned to different versions",
+      "Stream identical audio into both sessions",
+      "Verify each session executes only its pinned pipeline version and no events, state, or correlation IDs leak between sessions"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-017",
+    "category": "functional",
+    "group": "PipelineSpec & Graph Execution",
+    "description": "Turn detection nodes (VAD/endpointing) are first-class and swappable via policy",
+    "steps": [
+      "Run a pipeline with default VAD node",
+      "Switch to an alternate VAD implementation via policy",
+      "Verify turn boundaries change according to the new VAD behavior",
+      "Verify downstream nodes remain unchanged"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-018",
+    "category": "functional",
+    "group": "PipelineSpec & Graph Execution",
+    "description": "Edges can be conditional based on event attributes (e.g., language, confidence, sentiment)",
+    "steps": [
+      "Define conditional routing on an edge (e.g., confidence < threshold)",
+      "Run a session that triggers both branches",
+      "Verify events route to the correct branch",
+      "Verify routing decisions are recorded as control events"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-019",
+    "category": "functional",
+    "group": "PipelineSpec & Graph Execution",
+    "description": "Graph supports subgraphs/modules for reusable pipeline components",
+    "steps": [
+      "Define a reusable subgraph (e.g., transcription + normalization)",
+      "Reference the subgraph from two pipelines",
+      "Publish both pipelines and run sessions",
+      "Verify updates to the module can be versioned and applied intentionally"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-020",
+    "category": "functional",
+    "group": "Unified Event ABI & Schema",
+    "description": "All data exchanged between nodes uses a unified Event envelope with explicit unknown_event_action handling policy",
+    "steps": [
+      "Send audio and control events through a pipeline",
+      "Inspect events at multiple edges",
+      "Verify a common envelope with type, timestamp, and IDs",
+      "Run with unknown_event_action=drop and unknown_event_action=pass_through in separate runs, and verify handling plus audit logs match configuration"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-021",
+    "category": "functional",
+    "group": "Unified Event ABI & Schema",
+    "description": "Event envelope includes schema_version for compatibility and replay",
+    "steps": [
+      "Emit events with schema_version set",
+      "Replay the recorded event stream",
+      "Verify the runtime uses schema_version to decode events",
+      "Verify incompatible versions fail with actionable errors"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-022",
+    "category": "functional",
+    "group": "Unified Event ABI & Schema",
+    "description": "Runtime supports event types: audio, text, control, metrics, debug, and error",
+    "steps": [
+      "Create a pipeline that emits at least one event of each type",
+      "Run a session end-to-end",
+      "Verify audio/text/control/metrics/debug/error events are emitted and delivered to their declared edges or subscribers",
+      "Verify consumers can subscribe/filter by event type"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-023",
+    "category": "functional",
+    "group": "Unified Event ABI & Schema",
+    "description": "Audio events support streaming chunks with explicit encoding metadata",
+    "steps": [
+      "Stream PCM or Opus audio into the runtime via a transport adapter",
+      "Verify audio_chunk events include sample rate, channels, and codec",
+      "Verify audio_end indicates end-of-stream for a turn",
+      "Verify downstream ASR nodes receive audio with correct metadata"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-024",
+    "category": "functional",
+    "group": "Unified Event ABI & Schema",
+    "description": "Text events support partial and final semantics with monotonic updates",
+    "steps": [
+      "Run ASR/LLM nodes that emit partial text events",
+      "Verify partial updates are monotonic (no reordering)",
+      "Verify final text is emitted once per segment",
+      "Verify final text is immutable in the event stream"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-025",
+    "category": "functional",
+    "group": "Unified Event ABI & Schema",
+    "description": "Control events support cancellation, barge-in, and turn boundary signaling",
+    "steps": [
+      "Inject a barge_in control event mid-turn",
+      "Verify cancellation propagates downstream",
+      "Verify a turn_end event is emitted for the interrupted turn",
+      "Verify a new turn_start occurs for the new utterance"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-026",
+    "category": "functional",
+    "group": "Unified Event ABI & Schema",
+    "description": "Metrics events can be emitted by runtime and nodes for in-band observability",
+    "steps": [
+      "Enable in-band metrics events",
+      "Run a session with multiple nodes",
+      "Verify metrics events appear for latency and queue depth",
+      "Verify metrics events are tagged with node_id and edge_id"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-027",
+    "category": "functional",
+    "group": "Unified Event ABI & Schema",
+    "description": "Debug events can be enabled/disabled per session for low overhead by default",
+    "steps": [
+      "Run a session in default mode",
+      "Verify debug events are not emitted by default",
+      "Enable debug events for a session",
+      "Verify additional debug events appear without changing business logic"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-028",
+    "category": "functional",
+    "group": "Unified Event ABI & Schema",
+    "description": "Event schema changes are validated via compatibility rules in CI and at publish time",
+    "steps": [
+      "Introduce a breaking schema change in a node event payload",
+      "Run schema compatibility checks in CI",
+      "Verify the check fails with details about the breaking change",
+      "Verify publish is blocked until compatibility is restored or version is bumped"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-029",
+    "category": "functional",
+    "group": "Unified Event ABI & Schema",
+    "description": "Recorded event streams can be replayed to reproduce a session timeline",
+    "steps": [
+      "Enable session recording",
+      "Run an end-to-end session",
+      "Replay the session using the replay tool",
+      "Verify the timeline and node outputs match the recorded run"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-030",
+    "category": "functional",
+    "group": "Unified Event ABI & Schema",
+    "description": "Runtime supports multiple event encodings (e.g., JSON for debug, Protobuf for production) with negotiation per transport",
+    "steps": [
+      "Configure JSON encoding for a debug session",
+      "Configure binary encoding for a production session",
+      "Run both sessions over the same transport adapter",
+      "Verify encoding negotiation and correct decoding on both sides"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-031",
+    "category": "functional",
+    "group": "Unified Event ABI & Schema",
+    "description": "Event streams can be optionally compressed on transport boundaries without changing node contracts",
+    "steps": [
+      "Enable compression on a WebSocket transport",
+      "Run a session with high event volume",
+      "Verify compressed payload sizes decrease and the runtime emits a CPU-overhead metric for compression",
+      "Verify node-level events remain identical after decompression"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-032",
+    "category": "functional",
+    "group": "Unified Event ABI & Schema",
+    "description": "Schema registry can serve schema definitions by version for tools (linting, replay, SDK generation)",
+    "steps": [
+      "Query schema registry for a specific schema_version",
+      "Verify schema is returned with documentation and field types",
+      "Use schema to validate a recorded event stream offline",
+      "Verify tooling uses the same schemas as runtime"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-033",
+    "category": "functional",
+    "group": "Cancellation & Turn Interrupts",
+    "description": "Barge-in triggers immediate cancellation of downstream generation (LLM/TTS) for the current turn",
+    "steps": [
+      "Start a session and produce a long TTS response",
+      "Begin speaking over the agent (barge-in)",
+      "Verify TTS audio output stops quickly",
+      "Verify LLM/TTS provider calls are cancelled where supported"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-034",
+    "category": "functional",
+    "group": "Cancellation & Turn Interrupts",
+    "description": "Cancellation propagates across the graph following edge directions and fan-in/fan-out rules",
+    "steps": [
+      "Create a pipeline with fan-out and fan-in",
+      "Trigger a cancellation event at the transport adapter",
+      "Verify all affected downstream nodes receive cancellation",
+      "Verify unaffected branches (different turn/session) are not cancelled"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-035",
+    "category": "functional",
+    "group": "Cancellation & Turn Interrupts",
+    "description": "Runtime exposes cancellation reason codes (barge-in, timeout, user cancel, provider error)",
+    "steps": [
+      "Trigger barge-in, timeout, user cancel, and provider-error cancellation paths",
+      "Inspect cancellation events and logs",
+      "Verify each path maps to the expected reason code (barge_in, timeout, user_cancel, provider_error)",
+      "Verify reason codes are reflected in metrics"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-036",
+    "category": "functional",
+    "group": "Cancellation & Turn Interrupts",
+    "description": "Nodes can implement cooperative cancellation checks during long-running work",
+    "steps": [
+      "Implement a custom node that loops over streaming input",
+      "Trigger cancellation mid-loop",
+      "Verify the node stops processing and returns",
+      "Verify the node emits a cancellation acknowledgement event"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-037",
+    "category": "functional",
+    "group": "Cancellation & Turn Interrupts",
+    "description": "Runtime can forcefully terminate node work that ignores cancellation after a grace period",
+    "steps": [
+      "Configure a node with a cancellation grace period",
+      "Simulate a node that does not honor cancellation",
+      "Trigger cancellation",
+      "Verify the runtime force-stops the node and marks the session degraded"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-038",
+    "category": "functional",
+    "group": "Cancellation & Turn Interrupts",
+    "description": "After cancellation, runtime flushes relevant queues and resets node state for the next turn",
+    "steps": [
+      "Start a turn that queues multiple events",
+      "Cancel the turn mid-flight",
+      "Verify downstream queues are drained/cleared as configured",
+      "Start a new turn and verify state does not leak from the cancelled turn"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-039",
+    "category": "functional",
+    "group": "Cancellation & Turn Interrupts",
+    "description": "Runtime provides a configurable 'commit point' to prevent cancelling already-played audio",
+    "steps": [
+      "Configure commit semantics on the output edge",
+      "Stream TTS audio and then trigger cancellation",
+      "Verify audio already sent before the commit point is not retracted",
+      "Verify remaining audio is suppressed after cancellation"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-040",
+    "category": "functional",
+    "group": "Cancellation & Turn Interrupts",
+    "description": "Cancellation latency is measured and emitted as a metric per node and end-to-end",
+    "steps": [
+      "Run a session and trigger barge-in multiple times",
+      "Collect metrics",
+      "Verify cancellation latency histograms exist",
+      "Verify p95/p99 cancellation latency can be queried per node and per session"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-041",
+    "category": "functional",
+    "group": "Cancellation & Turn Interrupts",
+    "description": "Runtime supports 'soft cancel' vs 'hard cancel' semantics for nodes that need to finalize output",
+    "steps": [
+      "Configure one node for soft cancel (finish current chunk) and one node for hard cancel (stop immediately and clear buffered output)",
+      "Trigger cancellation during streaming output for both modes",
+      "Verify soft cancel completes only the in-flight chunk before stopping, while hard cancel stops immediately without emitting buffered chunks",
+      "Verify cancel mode, reason code, and output-fence timing are visible in control events and resolved spec"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-042",
+    "category": "functional",
+    "group": "Cancellation & Turn Interrupts",
+    "description": "Client can signal explicit end-of-utterance (manual push-to-talk) to bypass VAD",
+    "steps": [
+      "Connect a client that sends an end_of_utterance control event",
+      "Stream audio and then send end_of_utterance",
+      "Verify ASR finalizes immediately without waiting for VAD",
+      "Verify turn_end is emitted promptly"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-043",
+    "category": "functional",
+    "group": "Backpressure, Budgets & Degradation",
+    "description": "Each edge uses a bounded queue with configurable capacity",
+    "steps": [
+      "Define an edge with capacity N in PipelineSpec",
+      "Send more than N events quickly",
+      "Verify the edge enforces the bound",
+      "Verify the configured backpressure strategy is applied"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-044",
+    "category": "functional",
+    "group": "Backpressure, Budgets & Degradation",
+    "description": "Runtime supports queue strategies: block, drop_newest, drop_oldest, merge/coalesce",
+    "steps": [
+      "Configure each strategy on different edges",
+      "Overflow each edge with events",
+      "Verify the correct overflow behavior per strategy",
+      "Verify dropped/merged events are counted and observable"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-045",
+    "category": "functional",
+    "group": "Backpressure, Budgets & Degradation",
+    "description": "Node-level processing budgets enforce max compute time per event or per turn",
+    "steps": [
+      "Set a processing budget on a node",
+      "Cause the node to exceed the budget",
+      "Verify a timeout event is raised",
+      "Verify the pipeline activates fallback or degrade behavior"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-046",
+    "category": "functional",
+    "group": "Backpressure, Budgets & Degradation",
+    "description": "Provider call budgets enforce request timeouts and cancellation propagation",
+    "steps": [
+      "Set provider request timeout budgets",
+      "Force a slow provider response",
+      "Verify the call is cancelled at the provider boundary",
+      "Verify fallback behavior executes within remaining turn budget"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-047",
+    "category": "functional",
+    "group": "Backpressure, Budgets & Degradation",
+    "description": "Budget exhaustion can trigger fallback to alternate nodes/providers",
+    "steps": [
+      "Define a primary and secondary ASR provider adapter",
+      "Force primary to exceed budget",
+      "Verify secondary is used for subsequent segments",
+      "Verify routing change is recorded in the timeline"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-048",
+    "category": "functional",
+    "group": "Backpressure, Budgets & Degradation",
+    "description": "Runtime supports degrade behaviors under load (reduced fidelity, shorter context, simplified TTS)",
+    "steps": [
+      "Configure degrade posture for overload",
+      "Simulate high load or low capacity",
+      "Verify runtime applies degrade posture (e.g., lower sample rate, shorter context)",
+      "Verify degrade posture is reversible when load recovers"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-049",
+    "category": "functional",
+    "group": "Backpressure, Budgets & Degradation",
+    "description": "Admission control rejects or queues new sessions when resources are constrained",
+    "steps": [
+      "Set a max concurrent sessions limit",
+      "Attempt to start sessions above the limit",
+      "Verify admission control response indicates throttling",
+      "Verify admitted sessions continue without disruption"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-050",
+    "category": "functional",
+    "group": "Backpressure, Budgets & Degradation",
+    "description": "Per-tenant quotas and rate limits can be enforced at session creation and per turn",
+    "steps": [
+      "Configure tenant quotas (sessions/minute, tokens/minute)",
+      "Start sessions and generate turns exceeding quotas",
+      "Verify enforcement actions (reject, throttle, degrade) are applied",
+      "Verify quota metrics are emitted per tenant"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-051",
+    "category": "functional",
+    "group": "Backpressure, Budgets & Degradation",
+    "description": "Runtime can optionally enable dynamic batching for compatible provider calls",
+    "steps": [
+      "Enable dynamic batching for an embedding/LLM call where supported",
+      "Run multiple sessions concurrently",
+      "Verify requests are batched within a time window",
+      "Verify batching does not violate per-session latency budgets"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-052",
+    "category": "functional",
+    "group": "Backpressure, Budgets & Degradation",
+    "description": "Runtime measures its own overhead and attributes latency to kernel vs. node work",
+    "steps": [
+      "Run a session with instrumentation enabled",
+      "Collect per-node latency and kernel overhead metrics",
+      "Verify overhead is reported separately from node compute",
+      "Verify overhead can be budgeted and alerted on"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-053",
+    "category": "functional",
+    "group": "Backpressure, Budgets & Degradation",
+    "description": "Partial transcript events can be coalesced/merged to reduce downstream load",
+    "steps": [
+      "Configure coalescing for partial text events on an edge",
+      "Stream rapid partial updates from ASR",
+      "Verify downstream receives coalesced updates at the configured cadence",
+      "Verify coalescing preserves final transcript correctness"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-054",
+    "category": "functional",
+    "group": "Backpressure, Budgets & Degradation",
+    "description": "Audio buffering strategy can be tuned per pipeline (latency-first vs accuracy-first)",
+    "steps": [
+      "Configure latency-first buffering",
+      "Run a session and measure ASR responsiveness",
+      "Configure accuracy-first buffering",
+      "Verify buffering changes latency/accuracy tradeoff and emits metrics"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-055",
+    "category": "functional",
+    "group": "Provider Adapters & Policies",
+    "description": "Provider adapters implement a stable contract for STT, LLM, and TTS calls",
+    "steps": [
+      "Select built-in adapters for STT/LLM/TTS",
+      "Configure each adapter via policy/config",
+      "Run a session and verify each adapter is invoked",
+      "Swap one adapter and verify business nodes do not change"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-056",
+    "category": "functional",
+    "group": "Provider Adapters & Policies",
+    "description": "Policies can select providers/models per tenant, language, region, or cost tier",
+    "steps": [
+      "Define a policy with routing rules",
+      "Start sessions for different tenants/languages",
+      "Verify provider selection follows the policy",
+      "Verify selection decisions are logged and traceable"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-057",
+    "category": "functional",
+    "group": "Provider Adapters & Policies",
+    "description": "Policies can define circuit-breakers for provider error rates with automatic failover",
+    "steps": [
+      "Configure a circuit-breaker threshold for a provider",
+      "Simulate repeated provider errors",
+      "Verify the circuit opens and routes to an alternate provider",
+      "Verify the circuit half-opens after cooldown and recovers on success"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-058",
+    "category": "functional",
+    "group": "Provider Adapters & Policies",
+    "description": "Policies can cap cost by enforcing token, audio duration, and TTS character budgets",
+    "steps": [
+      "Configure cost caps in policy",
+      "Generate an LLM response that would exceed caps",
+      "Verify the runtime truncates or summarizes according to policy",
+      "Verify cost-related enforcement events are emitted"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-059",
+    "category": "functional",
+    "group": "Provider Adapters & Policies",
+    "description": "Policies support retries with backoff that respect remaining budgets",
+    "steps": [
+      "Configure retry policy for a flaky provider",
+      "Force transient errors",
+      "Verify retries occur with backoff",
+      "Verify retries stop when remaining budget is insufficient"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-060",
+    "category": "functional",
+    "group": "Provider Adapters & Policies",
+    "description": "Provider health checks influence routing decisions in near real-time",
+    "steps": [
+      "Mark a provider unhealthy via health probe or error spike",
+      "Start a new session",
+      "Verify the runtime avoids the unhealthy provider",
+      "Verify routing returns when provider health recovers"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-061",
+    "category": "functional",
+    "group": "Provider Adapters & Policies",
+    "description": "Provider configuration supports secret references (not raw secrets) for API keys and endpoints",
+    "steps": [
+      "Configure provider adapter with a secret reference",
+      "Verify runtime loads secret from the configured secret store",
+      "Verify secrets are not printed in logs or events",
+      "Rotate secret and verify new sessions use the rotated value"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-062",
+    "category": "functional",
+    "group": "Provider Adapters & Policies",
+    "description": "Policies can inject compliance and safety nodes into a pipeline at runtime (where allowed)",
+    "steps": [
+      "Define a policy that inserts a compliance node between LLM and TTS",
+      "Start a session under that policy",
+      "Verify the effective graph includes the compliance node",
+      "Verify insertion is recorded for auditing"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-063",
+    "category": "functional",
+    "group": "Provider Adapters & Policies",
+    "description": "LLM adapter supports streaming token output and emits token events in real time",
+    "steps": [
+      "Enable streaming on the LLM adapter",
+      "Run a session with a long response",
+      "Verify token/partial text events stream as the model generates",
+      "Verify cancellation stops token streaming promptly"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-064",
+    "category": "functional",
+    "group": "Provider Adapters & Policies",
+    "description": "TTS adapter supports streaming audio output and can begin playback before full text is available",
+    "steps": [
+      "Enable streaming TTS",
+      "Provide a streaming text input from the LLM",
+      "Verify TTS begins emitting audio chunks before the final text",
+      "Verify barge-in cancels streaming playback promptly"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-065",
+    "category": "functional",
+    "group": "Provider Adapters & Policies",
+    "description": "Provider adapters expose standardized metrics (latency, retries, error codes, payload sizes)",
+    "steps": [
+      "Run sessions against multiple providers",
+      "Collect provider metrics",
+      "Verify standardized labels across adapters",
+      "Verify provider-specific details are included without breaking dashboards"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-066",
+    "category": "functional",
+    "group": "Provider Adapters & Policies",
+    "description": "Policies can route to different providers using real-time price/availability signals and must fall back to a deterministic default when signals are unavailable",
+    "steps": [
+      "Configure a policy with price/availability input and deterministic fallback provider order",
+      "Simulate price changes or quota exhaustion and verify provider selection updates for new sessions/turns",
+      "Simulate missing or stale signal input and verify fallback selection follows deterministic default order",
+      "Verify every routing decision records either source signals or explicit fallback reason metadata"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-067",
+    "category": "functional",
+    "group": "Observability, Recording & Replay",
+    "description": "Runtime emits structured logs with session/turn/node correlation IDs",
+    "steps": [
+      "Run an end-to-end session",
+      "Collect logs from runtime and nodes",
+      "Verify logs include session_id, turn_id, node_id, and pipeline_version",
+      "Verify log format is machine-parseable (JSON)"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-068",
+    "category": "functional",
+    "group": "Observability, Recording & Replay",
+    "description": "Runtime emits metrics for per-node and per-edge latency distributions (p50/p95/p99)",
+    "steps": [
+      "Run sessions under load",
+      "Query metrics backend",
+      "Verify latency histograms exist for nodes and edges",
+      "Verify labels include pipeline_version and provider"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-069",
+    "category": "functional",
+    "group": "Observability, Recording & Replay",
+    "description": "Runtime emits queue depth and drop/merge counters per edge",
+    "steps": [
+      "Configure one overflow path with drop strategy and another with merge strategy, then overflow both under load",
+      "Query queue metrics",
+      "Verify queue depth time series is present",
+      "Verify drop counters increase only on the drop-strategy path and merge counters increase only on the merge-strategy path"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-070",
+    "category": "functional",
+    "group": "Observability, Recording & Replay",
+    "description": "Runtime exports traces compatible with OpenTelemetry for end-to-end session tracing",
+    "steps": [
+      "Enable OpenTelemetry export",
+      "Run a session with multiple nodes",
+      "Verify traces show spans per node and provider call",
+      "Verify trace links include session_id and turn_id"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-071",
+    "category": "functional",
+    "group": "Observability, Recording & Replay",
+    "description": "Runtime can record an event timeline for sessions with configurable sampling and retention",
+    "steps": [
+      "Enable recording with a retention policy",
+      "Run multiple sessions",
+      "Verify only sampled sessions are recorded when sampling is enabled",
+      "Verify recorded sessions are deleted after retention expires"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-072",
+    "category": "functional",
+    "group": "Observability, Recording & Replay",
+    "description": "Replay tool can run a recorded session against a new PipelineSpec version for regression testing",
+    "steps": [
+      "Record a baseline session on pipeline v1",
+      "Publish pipeline v2",
+      "Replay the recorded session against v2",
+      "Compare outputs/latency against v1 with a report"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-073",
+    "category": "functional",
+    "group": "Observability, Recording & Replay",
+    "description": "Recording supports configurable redaction of sensitive text and audio",
+    "steps": [
+      "Enable redaction for PII patterns and/or audio masking",
+      "Run a session containing PII",
+      "Verify stored recording is redacted",
+      "Verify control/text/audio event sequence and latency budgets remain within configured tolerances, with only payload redaction differences"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-074",
+    "category": "functional",
+    "group": "Observability, Recording & Replay",
+    "description": "Runtime provides an event timeline view (CLI/UI) for debugging sessions",
+    "steps": [
+      "Run a session with recording enabled",
+      "Open the timeline view for that session",
+      "Verify events are displayed ordered by timestamp with node labels",
+      "Verify filtering by event type and node is supported"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-075",
+    "category": "functional",
+    "group": "Observability, Recording & Replay",
+    "description": "Runtime provides per-session summaries (turn count, total tokens, total audio seconds, total cost estimate)",
+    "steps": [
+      "Run a multi-turn session",
+      "Query the session summary endpoint or export",
+      "Verify summary includes counts and estimated costs",
+      "Verify summaries are tenant-scoped and exportable"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-076",
+    "category": "functional",
+    "group": "Observability, Recording & Replay",
+    "description": "On-demand debug capture can be triggered for a single session without increasing unrelated-session overhead beyond configured thresholds",
+    "steps": [
+      "Run multiple sessions with debug disabled and record baseline CPU, memory, and latency metrics",
+      "Trigger debug capture for one session ID",
+      "Verify only that session emits additional debug events",
+      "Verify unrelated sessions stay within configured overhead thresholds and capture expires after configured time"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-077",
+    "category": "functional",
+    "group": "Observability, Recording & Replay",
+    "description": "Replay tool supports diffing two runs (outputs, timings, provider choices) and producing a report artifact",
+    "steps": [
+      "Replay a recorded session against two pipeline versions",
+      "Generate a diff report",
+      "Verify report highlights output differences, timing regressions, and provider/model choice differences",
+      "Verify report can be exported in a machine-readable format"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-078",
+    "title": "Simple Profile Defaults Are Runtime-Resolved for MVP",
+    "category": "functional",
+    "group": "Simple Mode & Configuration",
+    "description": "Runtime supports named execution profiles. MVP requires the simple profile; additional profiles (e.g., balanced, aggressive) are post-MVP.",
+    "steps": [
+      "Select the `simple` profile in PipelineSpec or at session start",
+      "Start a session without specifying advanced knobs",
+      "Verify default budgets/queues are applied from the selected profile and surfaced in resolved turn plans with profile default provenance",
+      "Attempt to enable a post-MVP profile (for example `balanced`) in MVP mode and verify deterministic rejection with actionable diagnostics"
+    ],
+    "passes": false,
+    "priority": "P0",
+    "status": "proposed",
+    "owner": {
+      "team": "runtime-kernel",
+      "dri": "runtime-oncall"
+    },
+    "dependencies": [
+      "F-079",
+      "F-143",
+      "F-148"
+    ],
+    "risk": {
+      "level": "high",
+      "summary": "Implicit defaults create cross-environment behavior drift and replay inconsistency.",
+      "mitigation": "Version profile defaults (`simple/v1`) and require resolved-plan default provenance for all derived fields."
+    },
+    "acceptance_criteria": [
+      {
+        "id": "AC-078-1",
+        "statement": "Every accepted turn running `simple` includes resolved default provenance for budget and buffering fields.",
+        "type": "functional",
+        "metric": "resolved_default_provenance_coverage",
+        "operator": "==",
+        "target": 1.0,
+        "scope": "contract-tests"
+      },
+      {
+        "id": "AC-078-2",
+        "statement": "MVP deployments reject non-simple profile selection with deterministic error codes.",
+        "type": "reliability",
+        "metric": "invalid_profile_rejection_rate",
+        "operator": "==",
+        "target": 1.0,
+        "scope": "mvp-gate"
+      }
+    ],
+    "test_plan": {
+      "test_types": [
+        "contract",
+        "integration",
+        "lint"
+      ],
+      "steps": [
+        "Start a session with `simple` profile and inspect resolved turn plan defaults.",
+        "Run replay for identical inputs and verify profile-derived defaults remain stable.",
+        "Attempt session start with `balanced` in MVP mode and verify deterministic reject diagnostics."
+      ],
+      "negative_tests": [
+        "Unknown profile id should fail fast.",
+        "Runtime-local default mutation should fail determinism checks during replay."
+      ]
+    },
+    "observability_hooks": {
+      "metrics": [
+        "profile_resolution_total",
+        "profile_resolution_error_total",
+        "resolved_default_provenance_coverage"
+      ],
+      "traces": [
+        "profile.resolve"
+      ],
+      "logs": [
+        "profile_resolution_result"
+      ],
+      "alerts": [
+        "profile_resolution_error_total_gt_0_in_mvp"
+      ]
+    },
+    "release_phase": "mvp",
+    "source_refs": [
+      "PRD 4.1.1 ExecutionProfile",
+      "PRD 4.1.1 ExecutionProfile simple/v1 (MVP normative baseline)",
+      "PRD 5.2 Fixed decisions for MVP"
+    ]
+  },
+  {
+    "id": "F-079",
+    "category": "functional",
+    "group": "Simple Mode & Configuration",
+    "description": "Simple mode allows running a pipeline with minimal required fields (template + provider config)",
+    "steps": [
+      "Pick a built-in template PipelineSpec",
+      "Provide only required provider credentials and endpoints",
+      "Start a session via local runner",
+      "Verify the same turn emits a final ASR transcript and corresponding TTS response within configured turn budgets using only required template and provider settings"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-080",
+    "category": "functional",
+    "group": "Simple Mode & Configuration",
+    "description": "Configuration supports layering (defaults -> environment -> tenant -> session overrides)",
+    "steps": [
+      "Define defaults for budgets and providers",
+      "Apply environment-level overrides for budgets and providers",
+      "Override settings for one tenant",
+      "Override settings for a single session",
+      "Verify final resolved configuration is visible, traceable, and follows defaults -> environment -> tenant -> session precedence"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-081",
+    "category": "functional",
+    "group": "Simple Mode & Configuration",
+    "description": "Runtime exposes a 'resolved spec' view that shows the effective graph after applying policies, inserts, and defaults",
+    "steps": [
+      "Start a session with policies that insert nodes and select providers",
+      "Request the resolved spec from the runtime/control plane",
+      "Verify inserted nodes and chosen providers appear in the resolved spec",
+      "Verify the resolved spec is tied to a session_id for auditability"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-082",
+    "category": "functional",
+    "group": "Simple Mode & Configuration",
+    "description": "PipelineSpec supports human-friendly comments/metadata without affecting execution semantics",
+    "steps": [
+      "Add metadata and comments to PipelineSpec",
+      "Validate and publish the spec",
+      "Verify execution is unchanged by metadata",
+      "Verify metadata is retained in registry for audit/search"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-083",
+    "category": "functional",
+    "group": "Transport Adapters (LiveKit/WebSocket/Telephony)",
+    "description": "LiveKit transport adapter maps audio tracks to runtime audio events and returns synthesized audio",
+    "steps": [
+      "Join a LiveKit room with a client that publishes microphone audio",
+      "Start an RSPP session connected to that room",
+      "Verify audio chunks are delivered to the pipeline as events",
+      "Verify TTS audio is published back to LiveKit for playback"
+    ],
+    "passes": false,
+    "release_phase": "mvp",
+    "source_refs": [
+      "PRD 5.2 Fixed decisions for MVP (LiveKit only transport path)"
+    ]
+  },
+  {
+    "id": "F-084",
+    "category": "functional",
+    "group": "Transport Adapters (LiveKit/WebSocket/Telephony)",
+    "description": "WebSocket transport adapter supports bi-directional streaming of audio and events",
+    "steps": [
+      "Connect to the WebSocket endpoint with a client",
+      "Stream audio frames and receive partial/final events",
+      "Verify control events (cancel, end turn) work over WebSocket",
+      "Verify connection close triggers graceful session shutdown"
+    ],
+    "passes": false,
+    "release_phase": "post_mvp",
+    "source_refs": [
+      "PRD 5.2 Fixed decisions for MVP (LiveKit only transport path)"
+    ]
+  },
+  {
+    "id": "F-085",
+    "category": "functional",
+    "group": "Transport Adapters (LiveKit/WebSocket/Telephony)",
+    "description": "Telephony gateway adapter maps phone call audio to runtime events and returns audio to caller",
+    "steps": [
+      "Initiate a call via the supported gateway (SIP or provider API)",
+      "Bind the call to an RSPP session",
+      "Verify caller audio is streamed into ASR",
+      "Verify TTS output is streamed back to the caller"
+    ],
+    "passes": false,
+    "release_phase": "post_mvp",
+    "source_refs": [
+      "PRD 5.2 Fixed decisions for MVP (LiveKit only transport path)"
+    ]
+  },
+  {
+    "id": "F-086",
+    "category": "functional",
+    "group": "Transport Adapters (LiveKit/WebSocket/Telephony)",
+    "description": "Transport adapters implement a shared contract for session creation, audio streaming, and control events",
+    "steps": [
+      "Implement or use two adapters (e.g., LiveKit and WebSocket)",
+      "Run the same PipelineSpec over both transports",
+      "Verify the runtime sees the same Event ABI",
+      "Collect Event ABI samples from both transports and verify payload types, timestamps, ordering, and orchestration metadata are contract-equivalent"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-087",
+    "category": "functional",
+    "group": "Transport Adapters (LiveKit/WebSocket/Telephony)",
+    "description": "Transport adapters perform jitter buffering and packet loss handling according to a profile",
+    "steps": [
+      "Simulate jitter and packet loss in audio delivery",
+      "Run a session over the affected transport",
+      "Verify audio is buffered and decoded without crashes",
+      "Verify jitter buffer adds bounded latency and emits metrics"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-088",
+    "category": "functional",
+    "group": "Transport Adapters (LiveKit/WebSocket/Telephony)",
+    "description": "Transport adapters authenticate sessions using tokens issued by the control plane",
+    "steps": [
+      "Request a session token from the control plane",
+      "Connect to a transport endpoint with the token",
+      "Verify unauthorized tokens are rejected",
+      "Verify authorized sessions are mapped to the correct tenant/pipeline version"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-089",
+    "category": "functional",
+    "group": "Transport Adapters (LiveKit/WebSocket/Telephony)",
+    "description": "Transport adapters can emit transport-specific control signals (e.g., DTMF) into the Event stream",
+    "steps": [
+      "Send a DTMF digit (telephony) or equivalent control message",
+      "Verify a control event is emitted with the signal",
+      "Verify downstream nodes can react to the signal",
+      "Verify transport-specific fields are namespaced to avoid ABI conflicts"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-090",
+    "category": "functional",
+    "group": "Transport Adapters (LiveKit/WebSocket/Telephony)",
+    "description": "Transport adapter can transcode inbound audio codecs into the runtime's preferred format (e.g., Opus -> PCM)",
+    "steps": [
+      "Connect a client that sends Opus audio",
+      "Verify adapter transcodes to PCM events for ASR nodes",
+      "Verify transcoding latency is measured and bounded",
+      "Verify audio metadata correctly describes the post-transcode stream"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-091",
+    "category": "functional",
+    "group": "Transport Adapters (LiveKit/WebSocket/Telephony)",
+    "description": "Network disconnects are handled gracefully with configurable session timeout and cleanup",
+    "steps": [
+      "Start a session over WebSocket and stream audio",
+      "Simulate network disconnect",
+      "Verify session enters a waiting/timeout state",
+      "Verify session is cleaned up after timeout with an audit event"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-092",
+    "category": "functional",
+    "group": "Control Plane (Registry, Routing, Rollouts)",
+    "description": "Control plane provides a pipeline registry for publishing and retrieving PipelineSpec versions",
+    "steps": [
+      "Publish a new PipelineSpec version",
+      "List available versions",
+      "Fetch a specific version by ID",
+      "Verify registry responses include metadata (created_at, author, hash)"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-093",
+    "category": "functional",
+    "group": "Control Plane (Registry, Routing, Rollouts)",
+    "description": "Control plane supports rollout policies (canary, percentage, tenant allowlists)",
+    "steps": [
+      "Publish pipeline v1 and v2",
+      "Configure a canary rollout to 10% of sessions",
+      "Start multiple sessions",
+      "Verify approximately 10% route to v2 and the rest to v1"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-094",
+    "category": "functional",
+    "group": "Control Plane (Registry, Routing, Rollouts)",
+    "description": "Control plane routes sessions to runtime instances based on health, capacity, and policy",
+    "steps": [
+      "Register multiple runtime instances",
+      "Mark one instance unhealthy",
+      "Start new sessions",
+      "Verify sessions route only to healthy instances with available capacity"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-095",
+    "category": "functional",
+    "group": "Control Plane (Registry, Routing, Rollouts)",
+    "description": "Control plane issues placement leases/epochs to enforce single-authority execution per session",
+    "steps": [
+      "Start a session and obtain a lease on a runtime",
+      "Simulate runtime failure",
+      "Attempt to run the same session on a second runtime without lease transfer",
+      "Verify the second runtime rejects execution until a new lease is issued"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-096",
+    "category": "functional",
+    "group": "Control Plane (Registry, Routing, Rollouts)",
+    "description": "Control plane can trigger failover by reassigning sessions when a region or fleet becomes unhealthy",
+    "steps": [
+      "Start sessions in region A",
+      "Simulate region A health degradation",
+      "Verify new sessions are routed to region B",
+      "For the configured mode (drain or migrate), verify either graceful completion in region A or migration with the same session_id and no duplicate responses"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-097",
+    "category": "functional",
+    "group": "Control Plane (Registry, Routing, Rollouts)",
+    "description": "Control plane exposes an audit log for pipeline changes, policy changes, and rollouts",
+    "steps": [
+      "Publish a pipeline version and change a routing policy",
+      "Query audit logs",
+      "Verify logs include actor, timestamp, and change details",
+      "Verify audit logs are immutable and exportable"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-098",
+    "category": "functional",
+    "group": "Control Plane (Registry, Routing, Rollouts)",
+    "description": "Control plane can enforce admission control decisions at session start (rate limits, quotas)",
+    "steps": [
+      "Configure a strict rate limit for a tenant",
+      "Attempt to start sessions above the limit",
+      "Verify control plane rejects or throttles requests",
+      "Verify enforcement is observable via metrics and logs"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-099",
+    "category": "functional",
+    "group": "Control Plane (Registry, Routing, Rollouts)",
+    "description": "Control plane provides session route metadata to clients (transport endpoint + token)",
+    "steps": [
+      "Request a session route for a given tenant/pipeline",
+      "Verify response includes endpoint address and short-lived token",
+      "Use the response to connect via a transport adapter",
+      "Verify the session binds to the intended pipeline version"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-100",
+    "category": "functional",
+    "group": "Control Plane (Registry, Routing, Rollouts)",
+    "description": "Control plane supports explicit rollback to a prior pipeline version",
+    "steps": [
+      "Deploy pipeline v2 via rollout",
+      "Detect a regression via metrics",
+      "Initiate rollback to v1",
+      "Verify new sessions route to v1 and rollback is audited"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-101",
+    "category": "functional",
+    "group": "Control Plane (Registry, Routing, Rollouts)",
+    "description": "Control plane exposes session status APIs (connected, running, degraded, ended) for operations",
+    "steps": [
+      "Start a session and progress through turns",
+      "Query session status API",
+      "Verify status reflects runtime state transitions",
+      "Verify status queries are tenant-scoped and permissioned"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-102",
+    "category": "functional",
+    "group": "Control Plane (Registry, Routing, Rollouts)",
+    "description": "Policies and provider configurations are versioned and can be rolled forward/back independently",
+    "steps": [
+      "Publish policy v1 and v2 for the same tenant",
+      "Route sessions using each policy version",
+      "Rollback policy without changing PipelineSpec",
+      "Verify policy version used is recorded per session"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-103",
+    "category": "functional",
+    "group": "Kubernetes Runtime, Scaling & Scheduling",
+    "description": "Runtime runs as stateless pods that can be horizontally scaled",
+    "steps": [
+      "Deploy runtime on Kubernetes with multiple replicas",
+      "Start many sessions",
+      "Verify sessions are distributed across replicas",
+      "Scale replicas up/down and verify new sessions continue to route correctly"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-104",
+    "category": "functional",
+    "group": "Kubernetes Runtime, Scaling & Scheduling",
+    "description": "Runtime exposes metrics suitable for autoscaling (CPU, queue depth, latency)",
+    "steps": [
+      "Deploy runtime with HPA configured",
+      "Generate load to increase latency/queue depth",
+      "Verify HPA scales up replicas",
+      "Reduce load and verify HPA scales down after cooldown"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-105",
+    "category": "functional",
+    "group": "Kubernetes Runtime, Scaling & Scheduling",
+    "description": "Runtime supports pooled execution and multiplexing to reduce per-session overhead",
+    "steps": [
+      "Enable pooled execution mode",
+      "Run multiple concurrent sessions",
+      "Verify pooled metrics confirm shared provider connections or worker reuse (for example, connection reuse and worker allocation counters)",
+      "Verify per-session isolation by checking per-session latency and queue metrics stay within configured thresholds during pooling"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-106",
+    "category": "functional",
+    "group": "Kubernetes Runtime, Scaling & Scheduling",
+    "description": "Runtime supports graceful shutdown that drains sessions before terminating",
+    "steps": [
+      "Start long-running sessions",
+      "Initiate pod termination",
+      "Verify runtime stops accepting new sessions and drains existing ones",
+      "Verify no session state is lost during drain period (within policy)"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-107",
+    "category": "functional",
+    "group": "Kubernetes Runtime, Scaling & Scheduling",
+    "description": "Node resource limits can be configured (CPU/memory) and enforced via runtime settings",
+    "steps": [
+      "Configure resource limits for a heavy node",
+      "Trigger the node with large inputs",
+      "Verify the node stays within configured limits or is throttled",
+      "Verify limit violations emit events and metrics"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-108",
+    "category": "functional",
+    "group": "Kubernetes Runtime, Scaling & Scheduling",
+    "description": "Runtime exposes standard liveness and readiness probes for Kubernetes",
+    "steps": [
+      "Deploy runtime with liveness/readiness probes enabled",
+      "Simulate dependency failure (e.g., cannot reach provider)",
+      "Verify readiness fails while liveness remains healthy during dependency failure",
+      "Verify Kubernetes stops routing new sessions to unready pods"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-109",
+    "category": "functional",
+    "group": "Kubernetes Runtime, Scaling & Scheduling",
+    "description": "Runtime supports node-level concurrency controls to prevent noisy-neighbor effects",
+    "steps": [
+      "Configure concurrency limit for a heavy provider node",
+      "Generate concurrent sessions that call the node",
+      "Verify concurrency limit is enforced and excess work queues or degrades",
+      "Measure unaffected-node latency and throughput before and during saturation, and verify they remain within defined SLO thresholds"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-110",
+    "category": "functional",
+    "group": "Multi-Region Routing & Failover",
+    "description": "Control plane selects the lowest-latency healthy region for new sessions based on policy",
+    "steps": [
+      "Configure two regions with different client latencies",
+      "Request sessions from a client near region A",
+      "Verify sessions are routed to region A when healthy",
+      "Mark region A degraded and verify routing shifts to region B"
+    ],
+    "passes": false,
+    "release_phase": "post_mvp",
+    "source_refs": [
+      "PRD 2.1 capability target",
+      "PRD 5.2 Fixed decisions for MVP (single-region authority)"
+    ]
+  },
+  {
+    "id": "F-111",
+    "category": "functional",
+    "group": "Multi-Region Routing & Failover",
+    "description": "Active-active routing distributes sessions across regions while enforcing single-authority execution per session",
+    "steps": [
+      "Start many sessions across multiple regions",
+      "Verify sessions are distributed according to policy",
+      "Attempt to concurrently execute a session in two regions",
+      "Verify lease/epoch prevents split-brain execution"
+    ],
+    "passes": false,
+    "release_phase": "post_mvp",
+    "source_refs": [
+      "PRD 2.1 capability target",
+      "PRD 5.2 Fixed decisions for MVP (single-region authority)"
+    ]
+  },
+  {
+    "id": "F-112",
+    "category": "functional",
+    "group": "Multi-Region Routing & Failover",
+    "description": "Failover decisions consider capacity, provider health, and region-level incidents",
+    "steps": [
+      "Simulate provider outage in region A only",
+      "Start new sessions",
+      "Verify sessions are routed to region B or alternate providers per policy",
+      "Verify incident triggers are logged and observable"
+    ],
+    "passes": false,
+    "release_phase": "post_mvp",
+    "source_refs": [
+      "PRD 2.1 capability target",
+      "PRD 5.2 Fixed decisions for MVP (single-region authority)"
+    ]
+  },
+  {
+    "id": "F-113",
+    "category": "functional",
+    "group": "Multi-Region Routing & Failover",
+    "description": "Failover policy can choose between draining in-flight sessions vs migrating sessions across regions",
+    "steps": [
+      "Configure failover mode to drain",
+      "Simulate region incident and verify in-flight sessions drain locally",
+      "Configure failover mode to migrate",
+      "Simulate incident and verify sessions migrate with the same session_id, without duplicate responses, and with audit events emitted"
+    ],
+    "passes": false,
+    "release_phase": "post_mvp",
+    "source_refs": [
+      "PRD 2.1 capability target",
+      "PRD 5.2 Fixed decisions for MVP (single-region authority)"
+    ]
+  },
+  {
+    "id": "F-114",
+    "category": "functional",
+    "group": "Security, Tenancy & Compliance",
+    "description": "Sessions are isolated by tenant_id with independent quotas, policies, and provider configs",
+    "steps": [
+      "Create two tenants with different policies",
+      "Start sessions for both tenants",
+      "Verify provider selection and limits differ per tenant",
+      "Verify no events or logs leak across tenant boundaries"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-115",
+    "category": "functional",
+    "group": "Security, Tenancy & Compliance",
+    "description": "Control plane and runtime support RBAC for administrative operations",
+    "steps": [
+      "Define roles (viewer, operator, admin)",
+      "Attempt privileged actions with insufficient role",
+      "Verify actions are denied and audited",
+      "Verify allowed roles can perform publish/rollout operations"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-116",
+    "category": "functional",
+    "group": "Security, Tenancy & Compliance",
+    "description": "Runtime supports configurable data retention for recordings, logs, and traces",
+    "steps": [
+      "Enable recording and logging for a tenant",
+      "Set retention to a short duration",
+      "Verify artifacts expire and are deleted after retention",
+      "Verify retention settings are auditable and tenant-scoped"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-117",
+    "category": "functional",
+    "group": "Security, Tenancy & Compliance",
+    "description": "Sensitive values (API keys, tokens) are redacted from logs and debug events",
+    "steps": [
+      "Configure provider secrets and session tokens",
+      "Run sessions with debug enabled",
+      "Search logs/events for secret values",
+      "Verify secrets are not present in any output"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-118",
+    "category": "functional",
+    "group": "Security, Tenancy & Compliance",
+    "description": "Compliance nodes can be inserted to filter or redact outputs before transport",
+    "steps": [
+      "Add a compliance node to a pipeline",
+      "Generate content that should be blocked or redacted",
+      "Verify compliance node modifies or blocks the output",
+      "Verify an audit event records the compliance action"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-119",
+    "category": "functional",
+    "group": "Security, Tenancy & Compliance",
+    "description": "Session tokens are short-lived and cryptographically verifiable (signed) to prevent tampering",
+    "steps": [
+      "Request a session token",
+      "Attempt to modify token claims (tenant_id, pipeline_version)",
+      "Verify modified tokens are rejected",
+      "Verify token expiry prevents reuse after TTL"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-120",
+    "category": "functional",
+    "group": "Security, Tenancy & Compliance",
+    "description": "Inter-service communication can be secured with mTLS (optional deployment mode)",
+    "steps": [
+      "Deploy runtime and control plane with mTLS enabled",
+      "Verify services refuse plaintext connections",
+      "Run sessions successfully with mTLS",
+      "Rotate certificates and verify services continue operating"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-121",
+    "category": "functional",
+    "group": "Extensibility: Custom/External Nodes",
+    "description": "Custom nodes can be packaged and versioned independently from PipelineSpec",
+    "steps": [
+      "Build and publish a custom node v1",
+      "Reference node v1 in a PipelineSpec",
+      "Publish node v2",
+      "Update PipelineSpec to reference v2 and verify reproducibility with pinned versions"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-122",
+    "category": "functional",
+    "group": "Extensibility: Custom/External Nodes",
+    "description": "External nodes can run out-of-process via an isolation boundary (e.g., gRPC)",
+    "steps": [
+      "Configure an external node endpoint",
+      "Run a session that calls the external node",
+      "Verify events are sent and received over the boundary",
+      "Verify timeouts and cancellation propagate to the external node"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-123",
+    "category": "functional",
+    "group": "Extensibility: Custom/External Nodes",
+    "description": "Runtime can apply resource/time limits to external nodes separately from in-process nodes",
+    "steps": [
+      "Configure strict timeouts and concurrency for an external node",
+      "Generate concurrent sessions that call the node",
+      "Verify concurrency limits are enforced",
+      "Verify excess requests are queued or rejected per policy"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-124",
+    "category": "functional",
+    "group": "Extensibility: Custom/External Nodes",
+    "description": "Runtime can run untrusted custom nodes in a sandbox mode (future: WASM) behind a stable boundary",
+    "steps": [
+      "Configure a node to run in sandbox/external mode",
+      "Attempt filesystem/network access beyond allowed policy",
+      "Verify access is denied",
+      "Verify sandboxing overhead is measured and observable"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-125",
+    "category": "functional",
+    "group": "Tooling: Local Runner, CI/CD & Testing",
+    "description": "Local runner can execute a PipelineSpec on a single machine with minimal control-plane stubs",
+    "steps": [
+      "Install local runner CLI",
+      "Run `rspp run` with a PipelineSpec and provider config",
+      "Connect via WebSocket or local transport",
+      "Verify streaming outputs and local metrics are available"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-126",
+    "category": "functional",
+    "group": "Tooling: Local Runner, CI/CD & Testing",
+    "description": "CLI provides lint/validate commands for PipelineSpec and policy config",
+    "steps": [
+      "Create an invalid PipelineSpec and policy file",
+      "Run `rspp lint` and `rspp validate`",
+      "Verify errors are actionable and point to the correct fields",
+      "Verify valid files pass in both strict and relaxed modes"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-127",
+    "category": "functional",
+    "group": "Tooling: Local Runner, CI/CD & Testing",
+    "description": "Replay tests can be run in CI to prevent regressions in outputs and latency budgets",
+    "steps": [
+      "Add a set of recorded sessions to a test suite",
+      "Run replay in CI against a new PipelineSpec/node version",
+      "Verify CI fails when outputs diverge beyond thresholds",
+      "Verify CI fails when latency budgets regress beyond thresholds"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-128",
+    "category": "functional",
+    "group": "Tooling: Local Runner, CI/CD & Testing",
+    "description": "Node SDK includes a unit test harness for event streams",
+    "steps": [
+      "Write unit tests for a custom node using the harness",
+      "Feed synthetic events into the node",
+      "Verify output events match expected sequence",
+      "Verify cancellation and timeout behavior can be tested deterministically"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-129",
+    "category": "functional",
+    "group": "Tooling: Local Runner, CI/CD & Testing",
+    "description": "Spec and policy docs can be generated automatically from schemas (developer reference)",
+    "steps": [
+      "Run `rspp docs` command",
+      "Verify docs are generated for PipelineSpec, policies, and event schemas",
+      "Verify docs include field descriptions and examples",
+      "Verify generated docs include schema_version that matches the source schema version/tag for each artifact"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-130",
+    "category": "functional",
+    "group": "Tooling: Local Runner, CI/CD & Testing",
+    "description": "Local runner can simulate transport adapters (loopback audio) for fast offline testing",
+    "steps": [
+      "Start local runner in loopback mode",
+      "Provide a WAV file or synthetic audio source",
+      "Verify pipeline runs and produces outputs without external transport",
+      "Verify loopback mode produces the same Event ABI as real transports"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-131",
+    "category": "functional",
+    "group": "Error Handling & Recovery",
+    "description": "Runtime uses a standard error taxonomy and emits error events with codes, context, and deterministic default actions",
+    "steps": [
+      "Trigger representative error classes (`schema_validation_error`, `authority_epoch_mismatch`, `provider_timeout`, `provider_overload`, `runtime_internal_error`)",
+      "Inspect emitted error events and mapped default actions (reject, retry/fallback, degrade, abort)",
+      "Verify error_code, node_id, and actionable message are included",
+      "Verify retryability flags and control evidence markers align with the error-action matrix",
+      "Verify errors can be filtered and aggregated in observability tooling"
+    ],
+    "passes": false,
+    "release_phase": "mvp",
+    "source_refs": [
+      "PRD 4.4.4 State consistency and error-action matrix (document contract)",
+      "PRD 4.1.7 Provider Contract"
+    ]
+  },
+  {
+    "id": "F-132",
+    "category": "functional",
+    "group": "Error Handling & Recovery",
+    "description": "Unrecoverable node errors can route events to a dead-letter stream for analysis",
+    "steps": [
+      "Configure a dead-letter stream for a pipeline",
+      "Trigger an unrecoverable node error",
+      "Verify the event is emitted to dead-letter output",
+      "Verify the session ends or degrades according to policy"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-133",
+    "category": "functional",
+    "group": "Error Handling & Recovery",
+    "description": "Runtime can automatically activate fallback nodes on provider errors",
+    "steps": [
+      "Define primary and fallback provider adapters",
+      "Force the primary to error",
+      "Verify fallback is invoked immediately",
+      "Verify fallback activation is recorded with the original error context"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-134",
+    "category": "functional",
+    "group": "Error Handling & Recovery",
+    "description": "Runtime isolates node crashes and prevents a single session from bringing down the process",
+    "steps": [
+      "Implement a node that throws an exception/panics",
+      "Run a session that triggers the crash",
+      "Verify the runtime catches the failure and ends/degrades the session",
+      "Verify other sessions remain unaffected"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-135",
+    "category": "functional",
+    "group": "Error Handling & Recovery",
+    "description": "Runtime supports configurable user-facing error responses (e.g., apologize + retry prompt)",
+    "steps": [
+      "Configure an error response policy for TTS output",
+      "Trigger an error during response generation",
+      "Verify the user receives a polite error message via TTS",
+      "Verify the session is ready for the next user turn"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-136",
+    "category": "functional",
+    "group": "Error Handling & Recovery",
+    "description": "Circuit-breaker and fallback activation events include enough context for debugging without leaking sensitive payloads",
+    "steps": [
+      "Trigger provider errors that open a circuit-breaker",
+      "Inspect emitted events and logs",
+      "Verify context includes provider name, error code, and thresholds",
+      "Verify request payloads and secrets are not included"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-137",
+    "category": "functional",
+    "group": "Error Handling & Recovery",
+    "description": "Runtime can optionally continue a session in 'degraded' mode when one capability fails (e.g., fallback to text-only)",
+    "steps": [
+      "Configure a pipeline with a text-only fallback",
+      "Force TTS provider to fail",
+      "Verify session continues returning text events only",
+      "Verify degraded mode is surfaced to the client via a control event"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "NF-001",
+    "category": "non-functional",
+    "group": "Latency & Performance",
+    "description": "End-to-end p95 latency (audio-in to audio-out) is measurable and configurable per pipeline profile",
+    "steps": [
+      "Define target p95 budget in pipeline profile",
+      "Run a representative load test",
+      "Verify p95 is computed and reported",
+      "Verify alerting thresholds can be configured"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "NF-002",
+    "category": "non-functional",
+    "group": "Latency & Performance",
+    "description": "Runtime overhead added by the kernel remains within an explicit budget and is continuously measured",
+    "steps": [
+      "Enable kernel overhead measurement",
+      "Run sessions across multiple pipelines",
+      "Verify overhead metrics are emitted and stored",
+      "Verify alerts can be set on overhead regressions"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "NF-003",
+    "category": "non-functional",
+    "group": "Latency & Performance",
+    "description": "Cancellation propagation p95 is within a configured threshold under load",
+    "steps": [
+      "Run concurrent sessions with frequent barge-ins",
+      "Measure cancellation propagation time end-to-end",
+      "Verify p95/p99 meet configured thresholds",
+      "Verify slow cancellations are attributed to nodes or providers"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "NF-004",
+    "category": "non-functional",
+    "group": "Reliability & Resilience",
+    "description": "System avoids unbounded memory growth via bounded queues and leak detection",
+    "steps": [
+      "Run soak tests with continuous sessions",
+      "Observe memory usage over time",
+      "Verify memory remains stable within expected bounds",
+      "Verify queue capacities prevent unbounded buffering"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "NF-005",
+    "category": "non-functional",
+    "group": "Reliability & Resilience",
+    "description": "Runtime maintains service availability according to a published SLO (configurable per deployment)",
+    "steps": [
+      "Define availability SLO (e.g., 99.9%)",
+      "Collect uptime and error metrics",
+      "Verify SLO reporting is available",
+      "Verify incident thresholds are defined"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "NF-006",
+    "category": "non-functional",
+    "group": "Reliability & Resilience",
+    "description": "Runtime degrades gracefully under overload rather than failing catastrophically",
+    "steps": [
+      "Load the system beyond normal capacity",
+      "Verify admission control, throttling, or degrade posture engages",
+      "Verify existing sessions remain stable where possible",
+      "Verify overload conditions are surfaced via metrics and logs"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "NF-007",
+    "category": "non-functional",
+    "group": "Portability",
+    "description": "Kubernetes portability: runtime deploys and operates on any CNCF-conformant Kubernetes cluster",
+    "steps": [
+      "Deploy to two different Kubernetes providers/distributions",
+      "Run standard conformance smoke tests",
+      "Verify no provider-specific dependencies are required",
+      "Verify manifests/helm charts are portable"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "NF-008",
+    "category": "non-functional",
+    "group": "Observability",
+    "description": "Observability completeness: every event/span/metric includes consistent correlation identifiers",
+    "steps": [
+      "Run sessions and collect logs/metrics/traces",
+      "Sample records from each telemetry type",
+      "Verify session_id/turn_id/pipeline_version are present",
+      "Verify identifiers are consistent across telemetry backends"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "NF-009",
+    "category": "non-functional",
+    "group": "Testability",
+    "description": "Replay determinism: recorded sessions can be replayed with stable ordering and outputs within documented determinism tolerances",
+    "steps": [
+      "Record sessions with timing metadata",
+      "Replay multiple times",
+      "Verify event ordering matches the recorded timeline contract",
+      "Verify output differences stay within documented determinism tolerance thresholds (for example transcript variance and latency deltas) and violations are reported"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "NF-010",
+    "category": "non-functional",
+    "group": "Compatibility & Evolution",
+    "description": "Backward compatibility policy: schema and PipelineSpec changes are governed by versioning rules",
+    "steps": [
+      "Attempt to publish a breaking change without version bump",
+      "Verify publish is rejected",
+      "Publish with correct version bump",
+      "Verify old and new versions can run concurrently"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "NF-011",
+    "category": "non-functional",
+    "group": "Security",
+    "description": "Security: secrets (API keys, tokens) never appear in logs, traces, or recordings",
+    "steps": [
+      "Configure secrets and enable verbose debug mode",
+      "Run sessions that exercise all providers and transports",
+      "Search telemetry and recordings for secret patterns",
+      "Verify no secrets are present"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "NF-012",
+    "category": "non-functional",
+    "group": "Security",
+    "description": "Security: control-plane operations enforce least privilege via RBAC",
+    "steps": [
+      "Create roles with limited permissions",
+      "Attempt privileged operations with limited roles",
+      "Verify operations are denied and audited",
+      "Verify admin role can perform full operations"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "NF-013",
+    "category": "non-functional",
+    "group": "Security",
+    "description": "Input validation: malformed audio/event payloads are rejected safely without crashing the runtime",
+    "steps": [
+      "Send malformed event payloads and invalid audio frames",
+      "Verify runtime returns validation errors",
+      "Verify session remains stable or ends cleanly",
+      "Verify errors are logged with minimal sensitive content"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "NF-014",
+    "category": "non-functional",
+    "group": "Security & Privacy",
+    "description": "Privacy: configurable PII redaction is available for recordings and logs",
+    "steps": [
+      "Enable PII redaction rules",
+      "Run a session containing PII",
+      "Verify stored artifacts are redacted",
+      "Verify redaction actions are auditable"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "NF-015",
+    "category": "non-functional",
+    "group": "Usability",
+    "description": "Operational clarity: configuration errors fail fast with actionable messages",
+    "steps": [
+      "Create invalid provider config and invalid PipelineSpec",
+      "Start the runtime/local runner",
+      "Verify errors are clear and point to corrective actions",
+      "Verify partial startup does not proceed with undefined behavior"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "NF-016",
+    "category": "non-functional",
+    "group": "Operability",
+    "description": "Upgradeability: rolling updates do not drop sessions unexpectedly (drain or migrate per policy)",
+    "steps": [
+      "Deploy a new runtime version with rolling update",
+      "Run active sessions during update",
+      "Verify sessions drain or migrate according to policy",
+      "Verify no silent session loss occurs"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "NF-017",
+    "category": "non-functional",
+    "group": "Cost",
+    "description": "Cost control: budgets and quotas prevent unbounded provider spend",
+    "steps": [
+      "Set tight cost budgets per tenant",
+      "Generate high-volume traffic",
+      "Verify spend is capped via token/audio/character limits",
+      "Verify enforcement is visible and auditable"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "NF-018",
+    "category": "non-functional",
+    "group": "Correctness",
+    "description": "Time correctness: session timestamps are monotonic, ordering follows timeline contract, and clock skew stays within configured bounds",
+    "steps": [
+      "Run a session with multiple nodes and transports while collecting monotonic runtime time, wall-clock time, and media time fields",
+      "Validate lane and edge ordering against timeline contract using canonical timebase mappings",
+      "Verify observed clock skew remains within configured `max_skew_ms` and media-runtime mapping error remains within configured p99 bound",
+      "Inject skew/jitter out-of-bound scenarios and verify deterministic rejection or correction behavior"
+    ],
+    "passes": false,
+    "release_phase": "mvp",
+    "source_refs": [
+      "PRD 4.1.5 Timebase Contract",
+      "PRD 4.4.7 Suggested NFR-SQ-04"
+    ]
+  },
+  {
+    "id": "NF-019",
+    "category": "non-functional",
+    "group": "Boundaries (Non-goals)",
+    "description": "Boundary: runtime does not implement SFU/WebRTC/ICE/TURN; it integrates with external transport systems via adapters",
+    "steps": [
+      "Inspect runtime codebase and deployment artifacts",
+      "Verify no ICE/TURN/SFU responsibilities are implemented",
+      "Verify transport adapters depend on external transport endpoints",
+      "Verify documentation clearly states transport is out of scope"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "NF-020",
+    "category": "non-functional",
+    "group": "Boundaries (Non-goals)",
+    "description": "Boundary: runtime is not a voice SDK/agent framework; agent planning/memory/tooling can be implemented as nodes",
+    "steps": [
+      "Inspect public APIs for agent-framework abstractions",
+      "Verify the Node API remains a generic event-stream operator model",
+      "Verify example pipelines show agent logic as nodes, not baked into runtime",
+      "Verify documentation clarifies the separation"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "NF-021",
+    "category": "non-functional",
+    "group": "Boundaries (Non-goals)",
+    "description": "Boundary: runtime does not guarantee model quality; it guarantees runtime semantics and operational behavior",
+    "steps": [
+      "Review documentation and SLAs",
+      "Verify no accuracy claims are used as runtime guarantees",
+      "Verify observability focuses on latency/reliability/correctness",
+      "Verify quality evaluation is positioned as separate tooling"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "NF-022",
+    "category": "non-functional",
+    "group": "Boundaries (Non-goals)",
+    "description": "Boundary: runtime does not own business-system integrations (CRM/ticketing/payments); these are implemented in application nodes",
+    "steps": [
+      "Review built-in node catalog",
+      "Verify business-system integrations are optional examples, not mandatory platform coupling",
+      "Verify Node SDK enables implementing integrations externally",
+      "Verify documentation clarifies ownership boundaries"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "NF-023",
+    "category": "non-functional",
+    "group": "Boundaries (Non-goals)",
+    "description": "Boundary: runtime is not a model API; it integrates with model providers via adapters and policies",
+    "steps": [
+      "Review provider adapter interfaces",
+      "Verify model provider calls are delegated to adapters",
+      "Verify no proprietary model endpoint is required",
+      "Verify providers can be swapped via configuration"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-138",
+    "category": "functional",
+    "group": "Runtime Semantics & Lifecycle",
+    "description": "System MUST enforce a session lifecycle state machine, allow only valid transitions, and reject invalid transitions with deterministic diagnostics.",
+    "steps": [
+      "Set up lifecycle tracing for session states (`CONNECTING -> ACTIVE -> DRAINING -> ENDED`) under representative load.",
+      "Trigger valid transition paths including disconnect and reconnect handling.",
+      "Attempt invalid transitions (for example `ENDED -> ACTIVE` and duplicate session-end terminal signals).",
+      "Observe lifecycle control events and explicit rejection markers for each invalid transition attempt.",
+      "Assert invalid transition rejection rate is 100% and no invalid attempt mutates authoritative session state."
+    ],
+    "passes": false,
+    "release_phase": "mvp",
+    "source_refs": [
+      "PRD 4.1.2 Runtime scopes",
+      "PRD 4.2.2 ControlLane signals",
+      "PRD 4.4.6 Feature authoring quality rules (document-level, schema-agnostic)"
+    ]
+  },
+  {
+    "id": "F-139",
+    "title": "Turn Lifecycle State Machine Enforcement",
+    "category": "functional",
+    "group": "Runtime Semantics & Lifecycle",
+    "description": "System MUST enforce accepted-turn lifecycle transitions `OPEN -> ACTIVE -> (COMMIT|ABORT) -> CLOSE`; `turn_open_proposed` remains pre-turn intent and never creates turn lifecycle state.",
+    "steps": [
+      "Set up turn-lifecycle tracing keyed by `turn_id` and run representative conversational traffic.",
+      "Emit `turn_open_proposed` without accepting `turn_open` and verify no turn lifecycle state is created.",
+      "Execute commit and abort paths, then inject invalid transitions and duplicate terminal emission attempts.",
+      "Observe lifecycle transitions and deterministic rejection diagnostics for invalid and duplicate-terminal attempts.",
+      "Assert `terminal_lifecycle_correctness == 1.0` and invalid transition rejection rate `== 1.0` for accepted turns."
+    ],
+    "passes": false,
+    "priority": "P0",
+    "status": "proposed",
+    "owner": {
+      "team": "runtime-kernel",
+      "dri": "runtime-oncall"
+    },
+    "dependencies": [
+      "F-138",
+      "F-141",
+      "NF-029"
+    ],
+    "risk": {
+      "level": "high",
+      "summary": "Lifecycle drift causes duplicate terminal outcomes and replay divergence.",
+      "mitigation": "Use one shared lifecycle state machine implementation across runtime, replay tooling, and contract tests."
+    },
+    "acceptance_criteria": [
+      {
+        "id": "AC-139-1",
+        "statement": "Accepted turns emit exactly one terminal outcome followed by close.",
+        "type": "reliability",
+        "metric": "terminal_lifecycle_correctness",
+        "operator": "==",
+        "target": 1.0,
+        "scope": "ci-gate"
+      },
+      {
+        "id": "AC-139-2",
+        "statement": "Invalid transitions are rejected deterministically with stable error codes.",
+        "type": "functional",
+        "metric": "invalid_turn_transition_rejection_rate",
+        "operator": "==",
+        "target": 1.0,
+        "scope": "contract-tests"
+      }
+    ],
+    "test_plan": {
+      "test_types": [
+        "unit",
+        "contract",
+        "integration",
+        "replay"
+      ],
+      "steps": [
+        "Execute canonical OPEN -> ACTIVE -> COMMIT -> CLOSE and OPEN -> ACTIVE -> ABORT -> CLOSE traces.",
+        "Replay the same traces and verify terminal outcomes and state transitions remain identical.",
+        "Inject out-of-order turn events and verify deterministic rejections."
+      ],
+      "negative_tests": [
+        "Emit COMMIT before ACTIVE.",
+        "Emit duplicate terminal outcomes for one accepted turn."
+      ]
+    },
+    "observability_hooks": {
+      "metrics": [
+        "turn_transition_total",
+        "turn_invalid_transition_total",
+        "terminal_lifecycle_correctness"
+      ],
+      "traces": [
+        "turn.lifecycle.transition"
+      ],
+      "logs": [
+        "turn_state_transition",
+        "turn_state_reject"
+      ],
+      "alerts": [
+        "terminal_lifecycle_correctness_below_100_percent"
+      ]
+    },
+    "release_phase": "mvp",
+    "source_refs": [
+      "PRD 4.1.2 Turn",
+      "PRD 4.3 Minimal rule set",
+      "PRD 4.4.3 Turn-boundary precedence rules (tie-break contract)",
+      "PRD 5.1 gate 6"
+    ]
+  },
+  {
+    "id": "F-140",
+    "category": "functional",
+    "group": "Runtime Semantics & Lifecycle",
+    "description": "System MUST apply deterministic turn arbitration for overlap, preemption, and late-event handling according to configured policy.",
+    "steps": [
+      "Configure a session policy that allows overlapping turn proposals with explicit preempt-or-queue behavior.",
+      "Trigger barge-in while a prior turn is active across repeated runs with identical inputs.",
+      "Inject late events from the preempted turn and conflicting control triggers (`cancel(scope)` and budget exhaustion).",
+      "Observe arbitration decisions, terminal ownership markers, and late-event handling outcomes.",
+      "Assert identical inputs and plan hash produce identical arbitration and late-event outcomes across run and replay."
+    ],
+    "passes": false,
+    "release_phase": "mvp",
+    "source_refs": [
+      "PRD 4.1.2 Turn Arbitration Rules",
+      "PRD 4.2.2 ControlLane signals",
+      "PRD 4.4.3 Turn-boundary precedence rules (tie-break contract)"
+    ]
+  },
+  {
+    "id": "F-141",
+    "category": "functional",
+    "group": "Runtime Semantics & Lifecycle",
+    "description": "System MUST emit `admit`, `reject`, and `defer` as pre-turn control outcomes and MUST NOT emit turn terminal events for non-admitted requests.",
+    "steps": [
+      "Set up three requests that should yield `admit`, `reject`, and `defer` outcomes under policy and capacity controls.",
+      "Execute all three requests and capture control-lane outcomes.",
+      "Observe that `reject` and `defer` outcomes remain pre-turn and do not create turn lifecycle state.",
+      "Inject forced terminal emission attempts on rejected and deferred requests.",
+      "Assert `abort|close` count is zero for rejected/deferred requests and forced terminal attempts are deterministically rejected."
+    ],
+    "passes": false,
+    "release_phase": "mvp",
+    "source_refs": [
+      "PRD 4.1.2 Turn",
+      "PRD 4.2.2 ControlLane signals",
+      "PRD 4.4.3 Turn-boundary precedence rules (tie-break contract)"
+    ]
+  },
+  {
+    "id": "F-142",
+    "category": "functional",
+    "group": "Edge Buffering, Lanes & Flow Control",
+    "description": "Lane priority contract is enforced as ControlLane over DataLane over TelemetryLane under pressure",
+    "steps": [
+      "Create load that saturates queues across all lanes",
+      "Emit cancellation and turn-control signals during saturation",
+      "Verify control signals are delivered before queued data/telemetry work",
+      "Verify telemetry shedding does not delay control signal delivery"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-143",
+    "category": "functional",
+    "group": "Edge Buffering, Lanes & Flow Control",
+    "description": "Edge BufferSpec supports bounds by items, bytes, time-in-queue, and latency contribution with explicit defaulting source",
+    "steps": [
+      "Define edge BufferSpec bounds for items, bytes, and time",
+      "Run traffic that independently exceeds each bound type",
+      "Verify edge behavior follows configured bound-specific actions",
+      "Verify resolved plan shows whether each bound came from explicit config or profile defaults"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-144",
+    "category": "functional",
+    "group": "Edge Buffering, Lanes & Flow Control",
+    "description": "Watermark crossings emit pressure signals and trigger deterministic actions resolved in the turn plan",
+    "steps": [
+      "Configure high and low watermarks on a busy edge",
+      "Drive queue depth above high watermark then below low watermark",
+      "Verify watermark crossing events are emitted with edge and lane context",
+      "Verify configured actions (block, drop, merge, degrade, fallback) match the resolved plan"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-145",
+    "category": "functional",
+    "group": "Edge Buffering, Lanes & Flow Control",
+    "description": "Flow control modes support signal, credit, and hybrid behavior with explicit flow_xoff, flow_xon, and credit_grant semantics",
+    "steps": [
+      "Configure one edge in signal mode, one in credit mode, and one in hybrid mode",
+      "Overload producer throughput on all three edges",
+      "Verify signal mode emits flow_xoff and flow_xon transitions, and credit mode blocks sends without credit_grant then resumes after grants",
+      "Verify hybrid mode enforces both signal transitions and credit gating according to declared semantics"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-146",
+    "category": "functional",
+    "group": "Edge Buffering, Lanes & Flow Control",
+    "description": "SyncDropPolicy supports atomic_drop and drop_with_discontinuity behaviors for synchronized streams",
+    "steps": [
+      "Create synchronized stream groups using sync identifiers",
+      "Trigger a drop event under atomic_drop policy",
+      "Verify all events in the affected sync group are dropped together on that edge",
+      "Switch to drop_with_discontinuity and verify discontinuity markers are emitted"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-147",
+    "category": "functional",
+    "group": "Edge Buffering, Lanes & Flow Control",
+    "description": "Per-edge lane handling rules are explicit so DataLane, ControlLane, and TelemetryLane behaviors are independently verifiable",
+    "steps": [
+      "Configure lane-specific buffering rules on a shared edge",
+      "Inject mixed-lane traffic under normal load",
+      "Inject mixed-lane traffic under overload",
+      "Verify each lane follows its configured buffering and shedding behavior"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-148",
+    "category": "functional",
+    "group": "Edge Buffering, Lanes & Flow Control",
+    "description": "Low-latency profiles enforce bounded max_block_time and deterministic shedding instead of indefinite blocking",
+    "steps": [
+      "Enable a low-latency execution profile with max_block_time",
+      "Saturate upstream producers so edges attempt to block",
+      "Verify blocking duration is capped by max_block_time",
+      "Verify deterministic shedding behavior begins after cap is reached"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-149",
+    "category": "functional",
+    "group": "Determinism, Replay & Provenance",
+    "description": "Each turn records a ResolvedTurnPlan artifact with plan hash and snapshot provenance references",
+    "steps": [
+      "Start a session and execute at least one turn",
+      "Retrieve turn-level resolved plan metadata",
+      "Verify metadata includes plan hash, provider bindings, and policy snapshot references",
+      "Verify replay tooling can resolve the same turn using the recorded provenance"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-150",
+    "category": "functional",
+    "group": "Determinism, Replay & Provenance",
+    "description": "DeterminismContext captures replay-critical fields including seed, merge-rule identity, ordering markers, and nondeterministic inputs",
+    "steps": [
+      "Execute a turn that includes fan-in merge and external provider calls",
+      "Export determinism context for that turn",
+      "Verify seed, merge_rule_id/version, and ordering markers are present",
+      "Verify nondeterministic input entries are captured for external decisions"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-151",
+    "category": "functional",
+    "group": "Determinism, Replay & Provenance",
+    "description": "Replay supports both node re-simulation mode and recorded-provider-playback mode with explicit mode selection",
+    "steps": [
+      "Record a session with provider outputs enabled",
+      "Run replay in re-simulation mode",
+      "Run replay in recorded-provider-playback mode",
+      "Verify outputs and decision traces are tagged with the selected replay mode"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-152",
+    "category": "functional",
+    "group": "Determinism, Replay & Provenance",
+    "description": "ReplayCursor supports deterministic stepping, pause/resume, and resume-from-cursor behavior",
+    "steps": [
+      "Run replay and capture cursor position at a chosen event",
+      "Pause replay and persist cursor metadata",
+      "Resume replay from the saved cursor",
+      "Verify replay proceeds deterministically from the same event boundary"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-153",
+    "category": "functional",
+    "group": "Determinism, Replay & Provenance",
+    "description": "Recording levels (L0, L1, L2) define capture fidelity and required evidence fields",
+    "steps": [
+      "Configure recording level L0 and run a session",
+      "Configure recording level L2 and run a session",
+      "Verify L0 contains required replay-critical control evidence fields",
+      "Verify L2 includes higher payload fidelity while retaining required baseline evidence"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-154",
+    "category": "functional",
+    "group": "Determinism, Replay & Provenance",
+    "description": "Timeline persistence separates non-blocking local append from asynchronous durable export",
+    "steps": [
+      "Run sessions while durable export backend is healthy",
+      "Introduce durable export latency or temporary outage",
+      "Verify local timeline append continues without blocking control progression",
+      "Verify asynchronous export retries and eventual consistency markers are emitted"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-155",
+    "category": "functional",
+    "group": "State, Authority & Migration",
+    "description": "State contract explicitly classifies turn-ephemeral, session-hot, and session-durable state with migration expectations",
+    "steps": [
+      "Define state usage across turn-ephemeral, session-hot, session-durable, control-plane configuration, and fleet-scoped provider health/circuit scopes",
+      "Trigger a migration or failover event",
+      "Verify turn-ephemeral and session-hot state follow declared reset/loss behavior",
+      "Verify session-durable state is reattached according to declared consistency mode and staleness policy",
+      "Verify control-plane and fleet-scoped snapshots are versioned/freshness-bounded and replay-visible"
+    ],
+    "passes": false,
+    "release_phase": "mvp",
+    "source_refs": [
+      "PRD 4.1.8 State Contract (Hot vs Durable)",
+      "PRD 4.4.4 State consistency and error-action matrix (document contract)"
+    ]
+  },
+  {
+    "id": "F-156",
+    "title": "Lease Epoch Enforcement on Ingress and Egress",
+    "category": "functional",
+    "group": "State, Authority & Migration",
+    "description": "Lease epoch is enforced on ingress and egress so stale-authority events and outputs are rejected",
+    "steps": [
+      "Start a session with a valid placement lease epoch",
+      "Rotate lease epoch during session execution",
+      "Inject events or output attempts with stale epoch metadata",
+      "Verify stale-authority attempts are rejected and authority-validation events are emitted"
+    ],
+    "passes": false,
+    "priority": "P0",
+    "status": "proposed",
+    "owner": {
+      "team": "controlplane-runtime",
+      "dri": "routing-oncall"
+    },
+    "dependencies": [
+      "F-095",
+      "F-157",
+      "NF-027"
+    ],
+    "risk": {
+      "level": "high",
+      "summary": "Stale authority acceptance can produce split-brain outputs during failover.",
+      "mitigation": "Enforce epoch checks at ingress and egress in runtime and transport boundaries with reject telemetry."
+    },
+    "acceptance_criteria": [
+      {
+        "id": "AC-156-1",
+        "statement": "No stale-epoch output is accepted in failover and lease-rotation tests.",
+        "type": "reliability",
+        "metric": "stale_epoch_outputs_accepted",
+        "operator": "==",
+        "target": 0,
+        "scope": "chaos-failover-suite"
+      },
+      {
+        "id": "AC-156-2",
+        "statement": "Stale ingress attempts are rejected with deterministic authority-validation markers.",
+        "type": "functional",
+        "metric": "stale_epoch_ingress_rejection_rate",
+        "operator": "==",
+        "target": 1.0,
+        "scope": "contract-tests"
+      }
+    ],
+    "test_plan": {
+      "test_types": [
+        "contract",
+        "integration",
+        "chaos"
+      ],
+      "steps": [
+        "Rotate lease epoch during active sessions and verify old-epoch egress is fenced.",
+        "Inject stale ingress events after epoch rotation and verify deterministic rejection.",
+        "Run failover drills and verify epoch checks remain enforced across reconnect and migration."
+      ],
+      "negative_tests": [
+        "Replay stale-epoch events after epoch bump.",
+        "Emit stale-epoch output acceptance signals during migration handoff."
+      ]
+    },
+    "observability_hooks": {
+      "metrics": [
+        "authority_epoch_check_total",
+        "authority_epoch_reject_total",
+        "stale_epoch_outputs_accepted"
+      ],
+      "traces": [
+        "authority.epoch.verify"
+      ],
+      "logs": [
+        "authority_epoch_accept",
+        "authority_epoch_reject"
+      ],
+      "alerts": [
+        "stale_epoch_outputs_accepted_gt_0"
+      ]
+    },
+    "release_phase": "mvp",
+    "source_refs": [
+      "PRD 4.1.8 PlacementLease (Epoch / Lease Token)",
+      "PRD 4.3 Minimal rule set",
+      "PRD 5.1 gate 4"
+    ]
+  },
+  {
+    "id": "F-157",
+    "category": "functional",
+    "group": "State, Authority & Migration",
+    "description": "Migration handoff emits explicit start and finish markers while preserving session identity continuity",
+    "steps": [
+      "Start an active session and trigger migration",
+      "Capture control events during handoff",
+      "Verify migration_start and migration_finish markers are emitted",
+      "Verify the post-migration runtime continues the same session_id"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-158",
+    "category": "functional",
+    "group": "State, Authority & Migration",
+    "description": "Idempotency keys and dedupe semantics are enforced across retries, reconnects, and failovers",
+    "steps": [
+      "Replay duplicate ingress events with identical idempotency keys",
+      "Trigger client reconnect with retry of recent events",
+      "Trigger failover while replaying last acknowledged events",
+      "Verify duplicates are deduped according to contract and lineage markers are retained"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-159",
+    "category": "functional",
+    "group": "State, Authority & Migration",
+    "description": "Routing view snapshots are versioned and include staleness bounds used by adapters during endpoint resolution",
+    "steps": [
+      "Request route resolution from transport adapter",
+      "Capture routing view version and staleness metadata",
+      "Simulate stale routing snapshot and refresh",
+      "Verify adapter refreshes before executing migration-sensitive operations"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-160",
+    "category": "functional",
+    "group": "State, Authority & Migration",
+    "description": "ProviderInvocation is tracked as a first-class unit with invocation ID, cancellation scope, and normalized outcome",
+    "steps": [
+      "Trigger provider calls across STT, LLM, and TTS adapters",
+      "Collect invocation events and metrics",
+      "Verify each invocation has a unique provider_invocation_id and linked cancellation scope",
+      "Verify outcomes are normalized into success, timeout, overload, or policy-block classes"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "F-161",
+    "category": "functional",
+    "group": "Governance, Compatibility & Change Management",
+    "description": "Capability discovery captures transport and provider capabilities at turn start and freezes them in the resolved turn plan",
+    "steps": [
+      "Run a turn with current transport/provider capabilities",
+      "Change a capability mid-session (for example supported codec or streaming mode)",
+      "Start a new turn and capture resolved plan details",
+      "Verify capability snapshot changes apply at turn boundary and are recorded in plan provenance"
+    ],
+    "passes": false,
+    "release_phase": "post_mvp"
+  },
+  {
+    "id": "F-162",
+    "category": "functional",
+    "group": "Governance, Compatibility & Change Management",
+    "description": "Version-skew policy defines supported runtime-control-plane-schema combinations and rejects unsupported combinations",
+    "steps": [
+      "Deploy a supported version combination",
+      "Deploy an unsupported skew combination",
+      "Start sessions through both combinations",
+      "Verify unsupported combinations are rejected with explicit compatibility errors"
+    ],
+    "passes": false,
+    "release_phase": "post_mvp"
+  },
+  {
+    "id": "F-163",
+    "category": "functional",
+    "group": "Governance, Compatibility & Change Management",
+    "description": "Deprecation lifecycle for schema and spec fields includes warning phase, enforcement date, and removal gate",
+    "steps": [
+      "Mark a field as deprecated with effective timeline metadata",
+      "Use the deprecated field in lint and runtime validation",
+      "Verify warnings include removal date and migration guidance",
+      "Verify enforcement and removal behavior activate at declared lifecycle phases"
+    ],
+    "passes": false,
+    "release_phase": "post_mvp"
+  },
+  {
+    "id": "F-164",
+    "category": "functional",
+    "group": "Governance, Compatibility & Change Management",
+    "description": "Conformance profiles define mandatory contract tests for transport adapters, provider adapters, and external nodes",
+    "steps": [
+      "Define a conformance profile manifest listing mandatory contract categories",
+      "Run conformance suites for transport adapter, provider adapter, and external node boundary against that profile",
+      "Attempt certification with one mandatory category omitted",
+      "Verify certification output reports pass/fail per category and rejects results missing mandatory categories"
+    ],
+    "passes": false,
+    "release_phase": "post_mvp"
+  },
+  {
+    "id": "F-165",
+    "category": "functional",
+    "group": "Governance, Compatibility & Change Management",
+    "description": "Change management requires review and approval metadata for pipeline, policy, and rollout mutations",
+    "steps": [
+      "Submit a pipeline or policy change through control-plane workflow",
+      "Require explicit reviewer approval before activation",
+      "Attempt activation without required approval",
+      "Verify activation is blocked and audit log records decision metadata"
+    ],
+    "passes": false,
+    "release_phase": "post_mvp"
+  },
+  {
+    "id": "F-166",
+    "category": "functional",
+    "group": "Resilience, DR & Chaos",
+    "description": "Disaster recovery runbook can restore control-plane artifacts and resume session admission within defined objectives",
+    "steps": [
+      "Backup control-plane registry and policy artifacts",
+      "Simulate control-plane data loss event",
+      "Restore from backup using documented runbook",
+      "Verify new session admission resumes with correct pipeline and policy versions"
+    ],
+    "passes": false,
+    "release_phase": "post_mvp"
+  },
+  {
+    "id": "F-167",
+    "category": "functional",
+    "group": "Resilience, DR & Chaos",
+    "description": "Fault-injection and chaos scenarios are defined for cancellation, failover, admission, and provider-outage paths",
+    "steps": [
+      "Run a scenario that injects provider outage and high queue pressure",
+      "Run a scenario that injects lease rotation during active turns",
+      "Run a scenario that injects transport disconnect and reconnect",
+      "Verify scenario outputs include expected contract outcomes and regressions"
+    ],
+    "passes": false,
+    "release_phase": "post_mvp"
+  },
+  {
+    "id": "F-168",
+    "category": "functional",
+    "group": "Data Governance, Key Management & Trust",
+    "description": "Data residency policy constrains where session data, timelines, and recordings may be processed and stored",
+    "steps": [
+      "Configure tenant residency policy for an allowed region set",
+      "Start sessions near multiple regions",
+      "Inspect storage and processing locations for session artifacts",
+      "Verify artifacts remain within allowed regions or are rejected by policy"
+    ],
+    "passes": false,
+    "release_phase": "post_mvp"
+  },
+  {
+    "id": "F-169",
+    "category": "functional",
+    "group": "Data Governance, Key Management & Trust",
+    "description": "Signing and encryption keys support online rotation via KMS-backed references without service interruption",
+    "steps": [
+      "Configure runtime and control-plane secrets as KMS-backed key references",
+      "Rotate signing and encryption keys",
+      "Run sessions during key rotation window",
+      "Verify token validation, event signing, and decryption continue without downtime"
+    ],
+    "passes": false,
+    "release_phase": "post_mvp"
+  },
+  {
+    "id": "F-170",
+    "category": "functional",
+    "group": "Data Governance, Key Management & Trust",
+    "description": "Audit trails are tamper-evident through digest chaining or signed checkpoints",
+    "steps": [
+      "Generate audit entries for pipeline and policy changes",
+      "Export chained digest or signed checkpoint metadata",
+      "Attempt post-hoc mutation of an older audit entry",
+      "Verify integrity check fails and tamper evidence is surfaced"
+    ],
+    "passes": false,
+    "release_phase": "post_mvp"
+  },
+  {
+    "id": "F-171",
+    "category": "functional",
+    "group": "Data Governance, Key Management & Trust",
+    "description": "External node onboarding requires provenance, SBOM, and attestation checks before execution",
+    "steps": [
+      "Prepare one external node package with valid provenance and attestation",
+      "Prepare one package missing attestation or SBOM",
+      "Attempt to register both packages",
+      "Verify only compliant package is accepted for execution"
+    ],
+    "passes": false,
+    "release_phase": "post_mvp"
+  },
+  {
+    "id": "F-172",
+    "category": "functional",
+    "group": "Capacity Planning & Fairness",
+    "description": "Capacity model defines utilization headroom and admission thresholds that are enforced before overload",
+    "steps": [
+      "Define headroom policy for CPU, queue depth, and provider concurrency",
+      "Increase traffic toward threshold boundaries",
+      "Verify admission and defer/reject behavior activates at configured thresholds",
+      "Verify threshold decisions are observable in capacity-control events"
+    ],
+    "passes": false,
+    "release_phase": "post_mvp"
+  },
+  {
+    "id": "F-173",
+    "category": "functional",
+    "group": "Capacity Planning & Fairness",
+    "description": "Priority-aware load shedding preserves control-path and interactive turn continuity under severe overload",
+    "steps": [
+      "Create overload with mixed interactive and low-priority background sessions",
+      "Apply load-shedding policy",
+      "Verify low-priority work is shed first",
+      "Verify control signals and active interactive turns remain within contract bounds"
+    ],
+    "passes": false,
+    "release_phase": "post_mvp"
+  },
+  {
+    "id": "F-174",
+    "category": "functional",
+    "group": "Capacity Planning & Fairness",
+    "description": "Fairness scheduling across tenant, session, and turn keys prevents starvation in shared execution pools",
+    "steps": [
+      "Create two tenants with asymmetric load in shared pools",
+      "Run sustained contention",
+      "Verify scheduler enforces configured fairness keys and quotas",
+      "Verify lower-volume tenant continues to receive service without starvation"
+    ],
+    "passes": false,
+    "release_phase": "post_mvp"
+  },
+  {
+    "id": "NF-024",
+    "category": "non-functional",
+    "group": "MVP Quality Gates",
+    "description": "System MUST enforce gate 1: p95(`turn_open_emitted_ts - turn_open_proposed_ingress_accepted_ts`) <= 120 ms.",
+    "steps": [
+      "Set up representative load generation and canonical anchor collection for gate 1.",
+      "Collect `turn_open_proposed_ingress_accepted_ts` and `turn_open_emitted_ts` for accepted turns.",
+      "Compute p95 latency for (`turn_open_emitted_ts - turn_open_proposed_ingress_accepted_ts`).",
+      "Inject missing or invalid anchor timestamp cases and observe deterministic gate failure diagnostics.",
+      "Assert p95 <= 120 ms for valid traffic and assert gate failure blocks release promotion on violation."
+    ],
+    "passes": false,
+    "release_phase": "mvp",
+    "source_refs": [
+      "PRD 4.4.2 Canonical metric anchors for quality gates",
+      "PRD 5.1 gate 1"
+    ]
+  },
+  {
+    "id": "NF-025",
+    "category": "non-functional",
+    "group": "MVP Quality Gates",
+    "description": "System MUST enforce gate 2: p95(`first_datalane_output_emitted_ts - turn_open_emitted_ts`) <= 1500 ms on the happy path.",
+    "steps": [
+      "Set up happy-path traffic generation with canonical anchor collection for gate 2.",
+      "Collect `turn_open_emitted_ts` and `first_datalane_output_emitted_ts` for eligible turns.",
+      "Compute p95 latency for (`first_datalane_output_emitted_ts - turn_open_emitted_ts`).",
+      "Inject delayed or missing first-output anchor cases and observe deterministic gate failure diagnostics.",
+      "Assert p95 <= 1500 ms for valid traffic and assert gate failure blocks release promotion on violation."
+    ],
+    "passes": false,
+    "release_phase": "mvp",
+    "source_refs": [
+      "PRD 4.4.2 Canonical metric anchors for quality gates",
+      "PRD 5.1 gate 2"
+    ]
+  },
+  {
+    "id": "NF-026",
+    "category": "non-functional",
+    "group": "MVP Quality Gates",
+    "description": "System MUST enforce gate 3: p95(`cancel_fence_applied_ts - cancel_accepted_ts`) <= 150 ms.",
+    "steps": [
+      "Set up cancellation-heavy traffic and canonical anchor collection for gate 3.",
+      "Collect `cancel_accepted_ts` and `cancel_fence_applied_ts` for canceled scopes.",
+      "Compute p95 latency for (`cancel_fence_applied_ts - cancel_accepted_ts`).",
+      "Inject delayed fence-application scenarios and observe deterministic gate failure diagnostics.",
+      "Assert p95 <= 150 ms for valid traffic and assert gate failure blocks release promotion on violation."
+    ],
+    "passes": false,
+    "release_phase": "mvp",
+    "source_refs": [
+      "PRD 4.4.2 Canonical metric anchors for quality gates",
+      "PRD 5.1 gate 3"
+    ]
+  },
+  {
+    "id": "NF-027",
+    "category": "non-functional",
+    "group": "MVP Quality Gates",
+    "description": "System MUST enforce gate 4 authority safety: accepted stale-epoch outputs MUST equal 0 in failover and lease-rotation tests.",
+    "steps": [
+      "Set up failover and lease-rotation scenarios with authority epoch validation enabled on ingress and egress.",
+      "Inject stale-epoch output attempts during normal execution, failover, and lease rotation windows.",
+      "Observe authority-validation markers and rejection diagnostics for stale-epoch attempts.",
+      "Count accepted stale-epoch outputs across the full test window.",
+      "Assert accepted stale-epoch output count == 0 and assert gate failure blocks release promotion on violation."
+    ],
+    "passes": false,
+    "release_phase": "mvp",
+    "source_refs": [
+      "PRD 4.1.8 PlacementLease (Epoch / Lease Token)",
+      "PRD 4.4.3 Turn-boundary precedence rules (tie-break contract)",
+      "PRD 5.1 gate 4"
+    ]
+  },
+  {
+    "id": "NF-028",
+    "category": "non-functional",
+    "group": "MVP Quality Gates",
+    "description": "System MUST enforce gate 5 replay baseline completeness: 100% of accepted turns include required OR-02 replay-critical evidence fields.",
+    "steps": [
+      "Set up representative accepted-turn traffic and declare the target `or02_evidence_schema_version`.",
+      "Validate each accepted turn includes all required OR-02 identity, authority/admission, determinism, lifecycle, and conditional cancellation/output-safety fields.",
+      "Inject missing or corrupted OR-02 fields and schema-version mismatches in negative-path validation runs.",
+      "Compute completeness percentage for valid traffic and verify mismatch detection for injected invalid runs.",
+      "Assert completeness == 100% for valid traffic and assert gate failure blocks release promotion on any missing required field."
+    ],
+    "passes": false,
+    "release_phase": "mvp",
+    "source_refs": [
+      "PRD 4.1.6 OR-02 baseline replay evidence manifest (L0 mandatory)",
+      "PRD 4.4.1 Normative language policy and determinism levels",
+      "PRD 5.1 gate 5"
+    ]
+  },
+  {
+    "id": "NF-029",
+    "category": "non-functional",
+    "group": "MVP Quality Gates",
+    "description": "System MUST enforce gate 6 terminal lifecycle correctness: 100% of accepted turns emit exactly one terminal outcome followed by close.",
+    "steps": [
+      "Set up representative session traffic and capture turn lifecycle events keyed by `turn_id`.",
+      "Inject duplicate terminal emission attempts on selected accepted turns.",
+      "Observe terminal and close ordering for valid and injected-invalid runs.",
+      "Compute terminal lifecycle correctness ratio and invalid duplicate-terminal rejection ratio.",
+      "Assert terminal lifecycle correctness == 100% and assert gate failure blocks release promotion on any violation."
+    ],
+    "passes": false,
+    "release_phase": "mvp",
+    "source_refs": [
+      "PRD 4.1.2 Turn",
+      "PRD 4.4.3 Turn-boundary precedence rules (tie-break contract)",
+      "PRD 5.1 gate 6"
+    ]
+  },
+  {
+    "id": "NF-030",
+    "category": "non-functional",
+    "group": "Reliability & Resilience",
+    "description": "Error-budget governance is defined with burn-rate alerting and rollout freeze criteria",
+    "steps": [
+      "Define SLO error budget and burn-rate thresholds",
+      "Simulate elevated error rate to consume budget",
+      "Verify burn-rate alerts fire at configured thresholds",
+      "Verify rollout policy enforces freeze when budget policy is violated"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "NF-031",
+    "category": "non-functional",
+    "group": "Reliability & Resilience",
+    "description": "Disaster recovery objectives (RTO and RPO) are published and validated by recovery drills",
+    "steps": [
+      "Publish RTO and RPO targets for control-plane and critical data artifacts",
+      "Run scheduled recovery drill from backup",
+      "Measure restoration time and data loss window",
+      "Verify measured values satisfy published objectives"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "NF-032",
+    "category": "non-functional",
+    "group": "Compatibility & Evolution",
+    "description": "Supported version-skew window across runtime, control plane, and schemas is explicitly tested (for example N and N-1)",
+    "steps": [
+      "Define allowed version-skew matrix",
+      "Run conformance tests for each allowed matrix cell",
+      "Run negative tests for disallowed matrix cells",
+      "Verify only allowed combinations pass and disallowed combinations fail with explicit diagnostics"
+    ],
+    "passes": false,
+    "release_phase": "mvp"
+  },
+  {
+    "id": "NF-033",
+    "category": "non-functional",
+    "group": "Capacity Planning & Fairness",
+    "description": "Fairness SLO ensures no tenant experiences starvation under sustained shared-pool contention",
+    "steps": [
+      "Run sustained contention with asymmetric tenant load",
+      "Measure per-tenant service rate and wait time",
+      "Verify each tenant remains above minimum service threshold",
+      "Verify starvation incidents remain zero during test window"
+    ],
+    "passes": false,
+    "release_phase": "post_mvp"
+  },
+  {
+    "id": "NF-034",
+    "category": "non-functional",
+    "group": "Data Governance, Key Management & Trust",
+    "description": "Residency compliance requires session artifacts to remain in policy-approved jurisdictions",
+    "steps": [
+      "Configure jurisdiction rules for one tenant",
+      "Run sessions from multiple geographies",
+      "Audit artifact storage and processing locations",
+      "Verify no artifact is persisted outside approved jurisdictions"
+    ],
+    "passes": false,
+    "release_phase": "post_mvp"
+  },
+  {
+    "id": "NF-035",
+    "category": "non-functional",
+    "group": "Data Governance, Key Management & Trust",
+    "description": "Cryptographic hygiene requires periodic key rotation with documented maximum key age",
+    "steps": [
+      "Define maximum key age policy",
+      "Run automated key rotation process",
+      "Verify active keys are rotated before maximum age",
+      "Verify rotation evidence is recorded for audit"
+    ],
+    "passes": false,
+    "release_phase": "post_mvp"
+  },
+  {
+    "id": "NF-036",
+    "category": "non-functional",
+    "group": "Security Supply Chain",
+    "description": "Supply-chain policy requires attestation and SBOM coverage for executable external-node artifacts",
+    "steps": [
+      "Collect artifact inventory for external-node packages",
+      "Validate attestation and SBOM presence for each artifact",
+      "Attempt deployment of non-compliant artifact",
+      "Verify deployment is blocked and compliance findings are reported"
+    ],
+    "passes": false,
+    "release_phase": "post_mvp"
+  },
+  {
+    "id": "NF-037",
+    "category": "non-functional",
+    "group": "Security Supply Chain",
+    "description": "Change provenance coverage requires framework-critical artifact changes to be traceable to signed identity and approval records",
+    "steps": [
+      "Submit a framework-critical artifact change",
+      "Capture signer identity and approval chain",
+      "Query provenance records for the deployed artifact",
+      "Verify provenance includes signed actor identity and approval trail"
+    ],
+    "passes": false,
+    "release_phase": "post_mvp"
+  },
+  {
+    "id": "F-175",
+    "category": "functional",
+    "group": "Runtime Semantics & Lifecycle",
+    "description": "System MUST fence runtime and transport egress after `cancel(scope)` acceptance and MUST reject new `output_accepted` or `playback_started` signals for the canceled scope.",
+    "steps": [
+      "Set up an active turn/session scope and emit baseline `output_accepted` and `playback_started` signals before cancellation.",
+      "Accept `cancel(scope)` and capture `cancel_accepted_ts` plus fence markers for that scope.",
+      "Attempt new `output_accepted` and `playback_started` signals for the canceled scope after fence activation.",
+      "Observe deterministic rejection diagnostics and control evidence for each post-cancel attempt.",
+      "Assert post-cancel acceptance count for those signals is exactly 0 and cancel-fence evidence is present for 100% of tested turns."
+    ],
+    "passes": false,
+    "release_phase": "mvp",
+    "source_refs": [
+      "PRD 4.2.2 ControlLane signals",
+      "PRD 4.3 Minimal rule set",
+      "PRD 4.4.3 Turn-boundary precedence rules (tie-break contract)",
+      "PRD 5.1 gate 3"
+    ]
+  },
+  {
+    "id": "F-176",
+    "title": "Deterministic Recording-Level Downgrade Under Pressure",
+    "category": "functional",
+    "group": "Determinism, Replay & Provenance",
+    "description": "When timeline pressure forces recording fidelity reduction, runtime applies deterministic recording-level downgrade while preserving replay-critical control evidence",
+    "steps": [
+      "Run with recording level L2 and create timeline/export pressure",
+      "Verify runtime applies a deterministic downgrade path defined by profile/policy",
+      "Verify replay-critical control evidence is still recorded after downgrade",
+      "Verify control progression, cancellation propagation, and turn terminalization remain non-blocking"
+    ],
+    "passes": false,
+    "priority": "P0",
+    "status": "proposed",
+    "owner": {
+      "team": "observability-replay",
+      "dri": "replay-oncall"
+    },
+    "dependencies": [
+      "F-153",
+      "F-154",
+      "NF-028"
+    ],
+    "risk": {
+      "level": "high",
+      "summary": "Non-deterministic fidelity downgrade can break replayability and auditability.",
+      "mitigation": "Use a versioned downgrade policy with deterministic thresholds and replay-visible transition markers."
+    },
+    "acceptance_criteria": [
+      {
+        "id": "AC-176-1",
+        "statement": "Under identical pressure inputs, downgrade path and transition order are deterministic.",
+        "type": "determinism",
+        "metric": "recording_downgrade_path_variance",
+        "operator": "==",
+        "target": 0,
+        "scope": "replay-suite"
+      },
+      {
+        "id": "AC-176-2",
+        "statement": "OR-02 replay-critical control evidence remains complete after downgrade.",
+        "type": "reliability",
+        "metric": "or02_required_field_coverage",
+        "operator": "==",
+        "target": 1.0,
+        "scope": "ci-gate"
+      }
+    ],
+    "test_plan": {
+      "test_types": [
+        "contract",
+        "replay",
+        "load",
+        "soak"
+      ],
+      "steps": [
+        "Induce timeline pressure and verify transitions follow the configured deterministic policy.",
+        "Replay degraded sessions and verify control-path and terminal outcomes remain reproducible.",
+        "Validate OR-02 evidence coverage at each recording level transition."
+      ],
+      "negative_tests": [
+        "Force non-monotonic level transition (for example L2 -> L0) and verify rejection.",
+        "Induce pressure spikes around cancel fence and verify control evidence is preserved."
+      ]
+    },
+    "observability_hooks": {
+      "metrics": [
+        "recording_level_current",
+        "recording_downgrade_total",
+        "or02_required_field_missing_total"
+      ],
+      "traces": [
+        "recording.downgrade.transition"
+      ],
+      "logs": [
+        "recording_level_transition",
+        "recording_pressure_snapshot"
+      ],
+      "alerts": [
+        "or02_required_field_missing_total_gt_0"
+      ]
+    },
+    "release_phase": "mvp",
+    "source_refs": [
+      "PRD 4.1.6 Replay & Timeline Contract",
+      "PRD 4.1.6 OR-02 baseline replay evidence manifest (L0 mandatory)",
+      "PRD 4.1.6 Deterministic recording-level downgrade policy (simple/v1)"
+    ]
+  },
+  {
+    "id": "NF-038",
+    "category": "non-functional",
+    "group": "MVP Quality Gates",
+    "description": "System MUST enforce gate 7 end-to-end latency: P50 <= 1.5s and P95 <= 2.0s for (`assistant_audio_playback_started_ts - audio_input_ingress_ts`).",
+    "steps": [
+      "Set up representative end-to-end traffic and canonical anchor collection for gate 7.",
+      "Collect `audio_input_ingress_ts` and `assistant_audio_playback_started_ts` for measured turns.",
+      "Compute P50 and P95 latency for (`assistant_audio_playback_started_ts - audio_input_ingress_ts`).",
+      "Inject missing or invalid ingress/playback anchors and observe deterministic gate failure diagnostics.",
+      "Assert P50 <= 1.5s and P95 <= 2.0s for valid traffic and assert gate failure blocks release promotion on violation."
+    ],
+    "passes": false,
+    "release_phase": "mvp",
+    "source_refs": [
+      "PRD 4.4.2 Canonical metric anchors for quality gates",
+      "PRD 5.1 gate 7"
+    ]
+  }
+]
