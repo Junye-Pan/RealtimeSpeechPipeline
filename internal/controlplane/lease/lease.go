@@ -1,8 +1,16 @@
 package lease
 
-import "fmt"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"strings"
+	"time"
+)
 
 const defaultLeaseResolutionSnapshot = "lease-resolution/v1"
+
+const defaultLeaseTokenTTL = 5 * time.Minute
 
 const (
 	// ReasonLeaseAuthorized marks lease-authorized turn-start paths.
@@ -29,6 +37,8 @@ type Output struct {
 	AuthorityEpochValid     *bool
 	AuthorityAuthorized     *bool
 	Reason                  string
+	LeaseTokenID            string
+	LeaseExpiresAtUTC       string
 }
 
 // Backend resolves lease authority output from a snapshot-fed control-plane source.
@@ -39,12 +49,18 @@ type Backend interface {
 // Service resolves deterministic CP-07 lease authority state.
 type Service struct {
 	DefaultLeaseResolutionSnapshot string
+	DefaultLeaseTokenTTL           time.Duration
+	Now                            func() time.Time
 	Backend                        Backend
 }
 
 // NewService returns deterministic CP-07 baseline lease defaults.
 func NewService() Service {
-	return Service{DefaultLeaseResolutionSnapshot: defaultLeaseResolutionSnapshot}
+	return Service{
+		DefaultLeaseResolutionSnapshot: defaultLeaseResolutionSnapshot,
+		DefaultLeaseTokenTTL:           defaultLeaseTokenTTL,
+		Now:                            time.Now,
+	}
 }
 
 // Resolve evaluates lease authority state for pre-turn gating.
@@ -86,6 +102,30 @@ func (s Service) normalizeOutput(in Input, out Output) Output {
 
 	authorityEpochValid := boolValue(out.AuthorityEpochValid, true)
 	authorityAuthorized := boolValue(out.AuthorityAuthorized, true)
+	now := s.now().UTC()
+
+	leaseTokenID := strings.TrimSpace(out.LeaseTokenID)
+	if leaseTokenID == "" {
+		leaseTokenID = syntheticLeaseTokenID(in.SessionID, epoch)
+	}
+
+	leaseExpiresAtUTC := strings.TrimSpace(out.LeaseExpiresAtUTC)
+	tokenExpired := false
+	if leaseExpiresAtUTC != "" {
+		expiresAt, err := time.Parse(time.RFC3339, leaseExpiresAtUTC)
+		if err != nil {
+			leaseExpiresAtUTC = ""
+		} else if !expiresAt.After(now) {
+			tokenExpired = true
+		}
+	}
+	if leaseExpiresAtUTC == "" {
+		leaseExpiresAtUTC = now.Add(s.tokenTTL()).Format(time.RFC3339)
+		tokenExpired = false
+	}
+	if tokenExpired {
+		authorityAuthorized = false
+	}
 
 	reason := out.Reason
 	if reason == "" {
@@ -105,6 +145,8 @@ func (s Service) normalizeOutput(in Input, out Output) Output {
 		AuthorityEpochValid:     boolPtr(authorityEpochValid),
 		AuthorityAuthorized:     boolPtr(authorityAuthorized),
 		Reason:                  reason,
+		LeaseTokenID:            leaseTokenID,
+		LeaseExpiresAtUTC:       leaseExpiresAtUTC,
 	}
 }
 
@@ -118,4 +160,23 @@ func boolValue(v *bool, fallback bool) bool {
 func boolPtr(v bool) *bool {
 	b := v
 	return &b
+}
+
+func syntheticLeaseTokenID(sessionID string, authorityEpoch int64) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s|%d", strings.TrimSpace(sessionID), authorityEpoch)))
+	return "lease-" + hex.EncodeToString(sum[:8])
+}
+
+func (s Service) now() time.Time {
+	if s.Now != nil {
+		return s.Now()
+	}
+	return time.Now()
+}
+
+func (s Service) tokenTTL() time.Duration {
+	if s.DefaultLeaseTokenTTL > 0 {
+		return s.DefaultLeaseTokenTTL
+	}
+	return defaultLeaseTokenTTL
 }

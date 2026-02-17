@@ -1,0 +1,6 @@
+apiVersion: v2
+name: rspp-mvp
+description: Realtime Speech Pipeline MVP single-region deployment scaffold
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

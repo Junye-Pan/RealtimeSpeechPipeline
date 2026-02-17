@@ -177,6 +177,9 @@ func (a fileArtifact) validate(path string) error {
 	if schema != SchemaVersionV1 {
 		return BackendError{Service: "distribution", Code: ErrorCodeInvalidArtifact, Path: path, Cause: fmt.Errorf("unsupported schema_version %q", schema)}
 	}
+	if err := a.Rollout.validate(path); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -195,6 +198,9 @@ type filePipelineRecord struct {
 type fileRolloutSection struct {
 	Stale                     bool              `json:"stale,omitempty"`
 	DefaultPipelineVersion    string            `json:"default_pipeline_version,omitempty"`
+	CanaryPipelineVersion     string            `json:"canary_pipeline_version,omitempty"`
+	CanaryPercentage          int               `json:"canary_percentage,omitempty"`
+	TenantAllowlist           []string          `json:"tenant_allowlist,omitempty"`
 	VersionResolutionSnapshot string            `json:"version_resolution_snapshot,omitempty"`
 	ByRequestedVersion        map[string]string `json:"by_requested_version,omitempty"`
 }
@@ -209,17 +215,27 @@ type fileRoutingSnapshot struct {
 	RoutingViewSnapshot      string `json:"routing_view_snapshot,omitempty"`
 	AdmissionPolicySnapshot  string `json:"admission_policy_snapshot,omitempty"`
 	ABICompatibilitySnapshot string `json:"abi_compatibility_snapshot,omitempty"`
+	TransportKind            string `json:"transport_kind,omitempty"`
+	TransportEndpoint        string `json:"transport_endpoint,omitempty"`
+	RuntimeID                string `json:"runtime_id,omitempty"`
 }
 
 type filePolicySection struct {
 	Stale      bool                        `json:"stale,omitempty"`
 	Default    filePolicyOutput            `json:"default,omitempty"`
 	ByPipeline map[string]filePolicyOutput `json:"by_pipeline,omitempty"`
+	ByTenant   map[string]filePolicyOutput `json:"by_tenant,omitempty"`
 }
 
 type filePolicyOutput struct {
-	PolicyResolutionSnapshot string   `json:"policy_resolution_snapshot,omitempty"`
-	AllowedAdaptiveActions   []string `json:"allowed_adaptive_actions,omitempty"`
+	PolicyResolutionSnapshot string                                      `json:"policy_resolution_snapshot,omitempty"`
+	AllowedAdaptiveActions   []string                                    `json:"allowed_adaptive_actions,omitempty"`
+	Budgets                  controlplane.Budgets                        `json:"budgets,omitempty"`
+	ProviderBindings         map[string]string                           `json:"provider_bindings,omitempty"`
+	EdgeBufferPolicies       map[string]controlplane.EdgeBufferPolicy    `json:"edge_buffer_policies,omitempty"`
+	NodeExecutionPolicies    map[string]controlplane.NodeExecutionPolicy `json:"node_execution_policies,omitempty"`
+	FlowControl              controlplane.FlowControl                    `json:"flow_control,omitempty"`
+	RecordingPolicy          controlplane.RecordingPolicy                `json:"recording_policy,omitempty"`
 }
 
 type fileProviderHealthSection struct {
@@ -248,6 +264,7 @@ type fileAdmissionSection struct {
 	Stale      bool                           `json:"stale,omitempty"`
 	Default    fileAdmissionOutput            `json:"default,omitempty"`
 	ByPipeline map[string]fileAdmissionOutput `json:"by_pipeline,omitempty"`
+	ByTenant   map[string]fileAdmissionOutput `json:"by_tenant,omitempty"`
 }
 
 type fileAdmissionOutput struct {
@@ -255,6 +272,10 @@ type fileAdmissionOutput struct {
 	OutcomeKind             string `json:"outcome_kind,omitempty"`
 	Scope                   string `json:"scope,omitempty"`
 	Reason                  string `json:"reason,omitempty"`
+	SessionRateLimitPerMin  int    `json:"session_rate_limit_per_min,omitempty"`
+	SessionRateObservedPM   int    `json:"session_rate_observed_per_min,omitempty"`
+	TokenRateLimitPerMin    int    `json:"token_rate_limit_per_min,omitempty"`
+	TokenRateObservedPM     int    `json:"token_rate_observed_per_min,omitempty"`
 }
 
 type fileLeaseSection struct {
@@ -269,6 +290,8 @@ type fileLeaseOutput struct {
 	AuthorityEpochValid     *bool  `json:"authority_epoch_valid,omitempty"`
 	AuthorityAuthorized     *bool  `json:"authority_authorized,omitempty"`
 	Reason                  string `json:"reason,omitempty"`
+	LeaseTokenID            string `json:"lease_token_id,omitempty"`
+	LeaseExpiresAtUTC       string `json:"lease_expires_at_utc,omitempty"`
 }
 
 type fileRetentionSection struct {
@@ -323,21 +346,80 @@ func (b fileRolloutBackend) ResolvePipelineVersion(in rollout.ResolveVersionInpu
 		return rollout.ResolveVersionOutput{}, BackendError{Service: "rollout", Code: ErrorCodeSnapshotStale, Path: b.adapter.path}
 	}
 
+	rolloutSection := b.adapter.artifact.Rollout
 	version := ""
 	if req := strings.TrimSpace(in.RequestedPipelineVersion); req != "" {
-		version = strings.TrimSpace(b.adapter.artifact.Rollout.ByRequestedVersion[req])
+		version = strings.TrimSpace(rolloutSection.ByRequestedVersion[req])
 	}
 	if version == "" {
-		version = strings.TrimSpace(b.adapter.artifact.Rollout.DefaultPipelineVersion)
+		version = strings.TrimSpace(rolloutSection.DefaultPipelineVersion)
+	}
+	if version == "" {
+		version = strings.TrimSpace(in.RegistryPipelineVersion)
+	}
+	if version == "" {
+		version = strings.TrimSpace(in.RequestedPipelineVersion)
 	}
 	if version == "" {
 		return rollout.ResolveVersionOutput{}, BackendError{Service: "rollout", Code: ErrorCodeSnapshotMissing, Path: b.adapter.path, Cause: fmt.Errorf("missing rollout pipeline version")}
 	}
 
+	canaryVersion := strings.TrimSpace(rolloutSection.CanaryPipelineVersion)
+	if canaryVersion != "" {
+		if fileRolloutTenantAllowlisted(in.TenantID, rolloutSection.TenantAllowlist) ||
+			rollout.ShouldRouteToCanary(in.SessionID, in.TenantID, rolloutSection.CanaryPercentage) {
+			version = canaryVersion
+		}
+	}
+
 	return rollout.ResolveVersionOutput{
 		PipelineVersion:           version,
-		VersionResolutionSnapshot: strings.TrimSpace(b.adapter.artifact.Rollout.VersionResolutionSnapshot),
+		VersionResolutionSnapshot: strings.TrimSpace(rolloutSection.VersionResolutionSnapshot),
 	}, nil
+}
+
+func (s fileRolloutSection) validate(path string) error {
+	if s.CanaryPercentage < 0 || s.CanaryPercentage > 100 {
+		return BackendError{
+			Service: "distribution",
+			Code:    ErrorCodeInvalidArtifact,
+			Path:    path,
+			Cause:   fmt.Errorf("rollout.canary_percentage must be within [0,100]"),
+		}
+	}
+	hasCanaryRouting := s.CanaryPercentage > 0 || len(s.TenantAllowlist) > 0
+	if hasCanaryRouting && strings.TrimSpace(s.CanaryPipelineVersion) == "" {
+		return BackendError{
+			Service: "distribution",
+			Code:    ErrorCodeInvalidArtifact,
+			Path:    path,
+			Cause:   fmt.Errorf("rollout.canary_pipeline_version is required when canary routing is enabled"),
+		}
+	}
+	for _, tenantID := range s.TenantAllowlist {
+		if strings.TrimSpace(tenantID) == "" {
+			return BackendError{
+				Service: "distribution",
+				Code:    ErrorCodeInvalidArtifact,
+				Path:    path,
+				Cause:   fmt.Errorf("rollout.tenant_allowlist cannot contain empty tenant ids"),
+			}
+		}
+	}
+	return nil
+}
+
+func fileRolloutTenantAllowlisted(tenantID string, allowlist []string) bool {
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		return false
+	}
+	for _, candidate := range allowlist {
+		if tenantID == strings.TrimSpace(candidate) {
+			return true
+		}
+	}
+	return false
 }
 
 type fileRoutingBackend struct {
@@ -363,6 +445,9 @@ func (b fileRoutingBackend) GetSnapshot(in routingview.Input) (routingview.Snaps
 		RoutingViewSnapshot:      snapshot.RoutingViewSnapshot,
 		AdmissionPolicySnapshot:  snapshot.AdmissionPolicySnapshot,
 		ABICompatibilitySnapshot: snapshot.ABICompatibilitySnapshot,
+		TransportKind:            snapshot.TransportKind,
+		TransportEndpoint:        snapshot.TransportEndpoint,
+		RuntimeID:                snapshot.RuntimeID,
 	}, nil
 }
 
@@ -381,13 +466,26 @@ func (b filePolicyBackend) Evaluate(in policy.Input) (policy.Output, error) {
 			out = byPipeline
 		}
 	}
-	if out.PolicyResolutionSnapshot == "" && len(out.AllowedAdaptiveActions) == 0 {
+	if in.TenantID != "" {
+		if byTenant, ok := b.adapter.artifact.Policy.ByTenant[in.TenantID]; ok {
+			out = byTenant
+		}
+	}
+	if isZeroFilePolicyOutput(out) {
 		return policy.Output{}, BackendError{Service: "policy", Code: ErrorCodeSnapshotMissing, Path: b.adapter.path, Cause: fmt.Errorf("missing policy snapshot")}
 	}
 
 	return policy.Output{
 		PolicyResolutionSnapshot: out.PolicyResolutionSnapshot,
 		AllowedAdaptiveActions:   append([]string(nil), out.AllowedAdaptiveActions...),
+		ResolvedPolicy: policy.ResolvedTurnPolicy{
+			Budgets:               out.Budgets,
+			ProviderBindings:      cloneStringMap(out.ProviderBindings),
+			EdgeBufferPolicies:    cloneEdgeBufferPolicies(out.EdgeBufferPolicies),
+			NodeExecutionPolicies: cloneNodeExecutionPolicies(out.NodeExecutionPolicies),
+			FlowControl:           out.FlowControl,
+			RecordingPolicy:       cloneRecordingPolicy(out.RecordingPolicy),
+		},
 	}, nil
 }
 
@@ -454,6 +552,11 @@ func (b fileAdmissionBackend) Evaluate(in admission.Input) (admission.Output, er
 			out = byPipeline
 		}
 	}
+	if in.TenantID != "" {
+		if byTenant, ok := b.adapter.artifact.Admission.ByTenant[in.TenantID]; ok {
+			out = byTenant
+		}
+	}
 	if out == (fileAdmissionOutput{}) {
 		return admission.Output{}, BackendError{Service: "admission", Code: ErrorCodeSnapshotMissing, Path: b.adapter.path, Cause: fmt.Errorf("missing admission snapshot")}
 	}
@@ -463,6 +566,10 @@ func (b fileAdmissionBackend) Evaluate(in admission.Input) (admission.Output, er
 		OutcomeKind:             controlplane.OutcomeKind(strings.TrimSpace(out.OutcomeKind)),
 		Scope:                   controlplane.OutcomeScope(strings.TrimSpace(out.Scope)),
 		Reason:                  out.Reason,
+		SessionRateLimitPerMin:  out.SessionRateLimitPerMin,
+		SessionRateObservedPM:   out.SessionRateObservedPM,
+		TokenRateLimitPerMin:    out.TokenRateLimitPerMin,
+		TokenRateObservedPM:     out.TokenRateObservedPM,
 	}, nil
 }
 
@@ -481,7 +588,13 @@ func (b fileLeaseBackend) Resolve(in lease.Input) (lease.Output, error) {
 			out = byPipeline
 		}
 	}
-	if out.LeaseResolutionSnapshot == "" && out.AuthorityEpoch == nil && out.AuthorityEpochValid == nil && out.AuthorityAuthorized == nil && out.Reason == "" {
+	if out.LeaseResolutionSnapshot == "" &&
+		out.AuthorityEpoch == nil &&
+		out.AuthorityEpochValid == nil &&
+		out.AuthorityAuthorized == nil &&
+		out.Reason == "" &&
+		out.LeaseTokenID == "" &&
+		out.LeaseExpiresAtUTC == "" {
 		return lease.Output{}, BackendError{Service: "lease", Code: ErrorCodeSnapshotMissing, Path: b.adapter.path, Cause: fmt.Errorf("missing lease snapshot")}
 	}
 
@@ -496,6 +609,8 @@ func (b fileLeaseBackend) Resolve(in lease.Input) (lease.Output, error) {
 		AuthorityEpochValid:     cloneBoolPointer(out.AuthorityEpochValid),
 		AuthorityAuthorized:     cloneBoolPointer(out.AuthorityAuthorized),
 		Reason:                  out.Reason,
+		LeaseTokenID:            out.LeaseTokenID,
+		LeaseExpiresAtUTC:       out.LeaseExpiresAtUTC,
 	}, nil
 }
 
@@ -505,4 +620,65 @@ func cloneBoolPointer(v *bool) *bool {
 	}
 	out := *v
 	return &out
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	out := make(map[string]string, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
+}
+
+func cloneEdgeBufferPolicies(in map[string]controlplane.EdgeBufferPolicy) map[string]controlplane.EdgeBufferPolicy {
+	out := make(map[string]controlplane.EdgeBufferPolicy, len(in))
+	for key, value := range in {
+		cloned := value
+		if value.Watermarks.QueueItems != nil {
+			queueItems := *value.Watermarks.QueueItems
+			cloned.Watermarks.QueueItems = &queueItems
+		}
+		if value.Watermarks.QueueMS != nil {
+			queueMS := *value.Watermarks.QueueMS
+			cloned.Watermarks.QueueMS = &queueMS
+		}
+		if value.SyncDropPolicy != nil {
+			syncDropPolicy := *value.SyncDropPolicy
+			cloned.SyncDropPolicy = &syncDropPolicy
+		}
+		out[key] = cloned
+	}
+	return out
+}
+
+func cloneRecordingPolicy(in controlplane.RecordingPolicy) controlplane.RecordingPolicy {
+	out := in
+	out.AllowedReplayModes = append([]string(nil), in.AllowedReplayModes...)
+	return out
+}
+
+func cloneNodeExecutionPolicies(in map[string]controlplane.NodeExecutionPolicy) map[string]controlplane.NodeExecutionPolicy {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]controlplane.NodeExecutionPolicy, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
+}
+
+func isZeroFilePolicyOutput(out filePolicyOutput) bool {
+	return out.PolicyResolutionSnapshot == "" &&
+		len(out.AllowedAdaptiveActions) == 0 &&
+		out.Budgets == (controlplane.Budgets{}) &&
+		len(out.ProviderBindings) == 0 &&
+		len(out.EdgeBufferPolicies) == 0 &&
+		len(out.NodeExecutionPolicies) == 0 &&
+		out.FlowControl == (controlplane.FlowControl{}) &&
+		isZeroRecordingPolicy(out.RecordingPolicy)
+}
+
+func isZeroRecordingPolicy(in controlplane.RecordingPolicy) bool {
+	return in.RecordingLevel == "" && len(in.AllowedReplayModes) == 0
 }

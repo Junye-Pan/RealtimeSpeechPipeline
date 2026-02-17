@@ -1,0 +1,18 @@
+{
+  "schema_version": "rspp.extensions.v1",
+  "extensions_id": "voice_assistant_extensions_v1",
+  "node_catalog": [
+    {
+      "node_id": "stt",
+      "plugin_ref": "providers/stt/deepgram"
+    },
+    {
+      "node_id": "llm",
+      "plugin_ref": "providers/llm/anthropic"
+    },
+    {
+      "node_id": "tts",
+      "plugin_ref": "providers/tts/elevenlabs"
+    }
+  ]
+}

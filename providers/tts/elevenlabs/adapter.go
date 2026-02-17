@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	providerconfig "github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/config"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/contracts"
 	"github.com/tiger/realtime-speech-pipeline/providers/common/httpadapter"
 )
@@ -37,8 +38,8 @@ type Adapter struct {
 func ConfigFromEnv() Config {
 	voiceID := defaultString(os.Getenv("RSPP_TTS_ELEVENLABS_VOICE_ID"), "EXAVITQu4vr4xnSDxMaL")
 	return Config{
-		APIKey:   os.Getenv("RSPP_TTS_ELEVENLABS_API_KEY"),
-		Endpoint: defaultString(os.Getenv("RSPP_TTS_ELEVENLABS_ENDPOINT"), "https://api.elevenlabs.io/v1/text-to-speech/"+voiceID),
+		APIKey:   providerconfig.ResolveEnvValue("RSPP_TTS_ELEVENLABS_API_KEY", "RSPP_TTS_ELEVENLABS_API_KEY_REF", ""),
+		Endpoint: providerconfig.ResolveEnvValue("RSPP_TTS_ELEVENLABS_ENDPOINT", "RSPP_TTS_ELEVENLABS_ENDPOINT_REF", "https://api.elevenlabs.io/v1/text-to-speech/"+voiceID),
 		VoiceID:  voiceID,
 		ModelID:  defaultString(os.Getenv("RSPP_TTS_ELEVENLABS_MODEL"), "eleven_multilingual_v2"),
 		Text:     defaultString(os.Getenv("RSPP_TTS_ELEVENLABS_TEXT"), "Realtime speech pipeline live smoke test."),

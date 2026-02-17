@@ -1,0 +1,18 @@
+{
+  "schema_version": "v1.0",
+  "event_scope": "turn",
+  "session_id": "sess-fallback-1",
+  "turn_id": "turn-fallback-1",
+  "pipeline_version": "pipeline-v1",
+  "event_id": "evt-fallback-1",
+  "lane": "ControlLane",
+  "transport_sequence": 22,
+  "runtime_sequence": 22,
+  "authority_epoch": 9,
+  "runtime_timestamp_ms": 421,
+  "wall_clock_timestamp_ms": 421,
+  "payload_class": "metadata",
+  "signal": "fallback",
+  "emitted_by": "RK-13",
+  "reason": "provider_fallback_policy"
+}

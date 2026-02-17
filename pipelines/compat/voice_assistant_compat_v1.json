@@ -1,0 +1,21 @@
+{
+  "schema_version": "rspp.compatibility.v1",
+  "compatibility_id": "voice_assistant_compat_v1",
+  "pipeline_version": "pipeline-v1",
+  "min_runtime_version": "v1.0.0",
+  "max_runtime_version": "v1.999.0",
+  "transport_matrix": [
+    {
+      "transport_kind": "livekit",
+      "supported": true
+    },
+    {
+      "transport_kind": "websocket",
+      "supported": false
+    },
+    {
+      "transport_kind": "telephony",
+      "supported": false
+    }
+  ]
+}

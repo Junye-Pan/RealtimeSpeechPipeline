@@ -1,0 +1,9 @@
+namespace: rspp
+
+runtime:
+  image: ghcr.io/tiger/rspp-runtime:latest
+  replicas: 1
+
+controlPlane:
+  image: ghcr.io/tiger/rspp-control-plane:latest
+  replicas: 1

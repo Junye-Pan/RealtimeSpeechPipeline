@@ -1,0 +1,17 @@
+{
+  "schema_version": "v1.0",
+  "event_scope": "turn",
+  "session_id": "sess-barge-invalid-1",
+  "turn_id": "turn-barge-invalid-1",
+  "pipeline_version": "pipeline-v1",
+  "event_id": "evt-barge-invalid-1",
+  "lane": "ControlLane",
+  "transport_sequence": 23,
+  "runtime_sequence": 23,
+  "authority_epoch": 9,
+  "runtime_timestamp_ms": 422,
+  "wall_clock_timestamp_ms": 422,
+  "payload_class": "metadata",
+  "signal": "barge_in",
+  "emitted_by": "RK-03"
+}

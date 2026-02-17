@@ -1,0 +1,18 @@
+{
+  "schema_version": "v1.0",
+  "event_scope": "turn",
+  "session_id": "sess-budget-invalid-1",
+  "turn_id": "turn-budget-invalid-1",
+  "pipeline_version": "pipeline-v1",
+  "event_id": "evt-budget-invalid-1",
+  "lane": "ControlLane",
+  "transport_sequence": 25,
+  "runtime_sequence": 25,
+  "authority_epoch": 9,
+  "runtime_timestamp_ms": 424,
+  "wall_clock_timestamp_ms": 424,
+  "payload_class": "metadata",
+  "signal": "budget_warning",
+  "emitted_by": "RK-13",
+  "reason": "node_budget_threshold_exceeded"
+}

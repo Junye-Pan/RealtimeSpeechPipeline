@@ -2,8 +2,10 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tiger/realtime-speech-pipeline/api/controlplane"
 	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
@@ -11,6 +13,7 @@ import (
 	"github.com/tiger/realtime-speech-pipeline/internal/observability/timeline"
 	runtimeexecutionpool "github.com/tiger/realtime-speech-pipeline/internal/runtime/executionpool"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/localadmission"
+	"github.com/tiger/realtime-speech-pipeline/internal/runtime/planresolver"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/contracts"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/invocation"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/registry"
@@ -204,6 +207,123 @@ func TestSchedulerProviderInvocationSuccess(t *testing.T) {
 	}
 }
 
+func TestSchedulerResolvedTurnPlanHydratesProviderInvocationDefaults(t *testing.T) {
+	t.Parallel()
+
+	var capturedReq contracts.InvocationRequest
+	catalog, err := registry.NewCatalog([]contracts.Adapter{
+		contracts.StaticAdapter{
+			ID:   "stt-plan-bound",
+			Mode: contracts.ModalitySTT,
+			InvokeFn: func(req contracts.InvocationRequest) (contracts.Outcome, error) {
+				capturedReq = req
+				return contracts.Outcome{Class: contracts.OutcomeSuccess}, nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected catalog error: %v", err)
+	}
+	invoker := invocation.NewController(catalog)
+	scheduler := NewSchedulerWithProviderInvoker(localadmission.Evaluator{}, invoker)
+
+	plan := testResolvedTurnPlan(t, "turn-plan-hydrate", "pipeline-plan-v1", 17, []string{"retry", "fallback"})
+	plan.ProviderBindings["stt"] = "stt-plan-bound"
+
+	decision, err := scheduler.NodeDispatch(SchedulingInput{
+		SessionID:            "sess-plan-hydrate-1",
+		TurnID:               "turn-plan-hydrate",
+		EventID:              "evt-plan-hydrate-1",
+		RuntimeTimestampMS:   200,
+		WallClockTimestampMS: 200,
+		ProviderInvocation: &ProviderInvocationInput{
+			Modality: contracts.ModalitySTT,
+		},
+		ResolvedTurnPlan: &plan,
+	})
+	if err != nil {
+		t.Fatalf("unexpected node dispatch error: %v", err)
+	}
+	if !decision.Allowed || decision.Provider == nil {
+		t.Fatalf("expected allowed provider decision, got %+v", decision)
+	}
+	if decision.Provider.SelectedProvider != "stt-plan-bound" {
+		t.Fatalf("expected plan-bound provider selection, got %+v", decision.Provider)
+	}
+	if capturedReq.ProviderID != "stt-plan-bound" {
+		t.Fatalf("expected invocation request provider_id from plan binding, got %+v", capturedReq)
+	}
+	if capturedReq.PipelineVersion != "pipeline-plan-v1" || capturedReq.AuthorityEpoch != 17 {
+		t.Fatalf("expected pipeline/epoch from resolved plan, got %+v", capturedReq)
+	}
+	if len(capturedReq.AllowedAdaptiveActions) != 2 ||
+		!containsString(capturedReq.AllowedAdaptiveActions, "retry") ||
+		!containsString(capturedReq.AllowedAdaptiveActions, "fallback") {
+		t.Fatalf("expected plan adaptive actions in invocation request, got %+v", capturedReq.AllowedAdaptiveActions)
+	}
+}
+
+func TestSchedulerResolvedTurnPlanMismatchRejected(t *testing.T) {
+	t.Parallel()
+
+	scheduler := NewScheduler(localadmission.Evaluator{})
+	plan := testResolvedTurnPlan(t, "turn-plan-mismatch", "pipeline-plan-v1", 21, []string{"retry"})
+
+	tests := []struct {
+		name  string
+		input SchedulingInput
+	}{
+		{
+			name: "pipeline mismatch",
+			input: SchedulingInput{
+				SessionID:            "sess-plan-mismatch-1",
+				TurnID:               "turn-plan-mismatch",
+				EventID:              "evt-plan-mismatch-pipeline",
+				PipelineVersion:      "pipeline-other",
+				RuntimeTimestampMS:   10,
+				WallClockTimestampMS: 10,
+				ResolvedTurnPlan:     &plan,
+			},
+		},
+		{
+			name: "authority epoch mismatch",
+			input: SchedulingInput{
+				SessionID:            "sess-plan-mismatch-2",
+				TurnID:               "turn-plan-mismatch",
+				EventID:              "evt-plan-mismatch-epoch",
+				PipelineVersion:      "pipeline-plan-v1",
+				AuthorityEpoch:       22,
+				RuntimeTimestampMS:   11,
+				WallClockTimestampMS: 11,
+				ResolvedTurnPlan:     &plan,
+			},
+		},
+		{
+			name: "turn mismatch",
+			input: SchedulingInput{
+				SessionID:            "sess-plan-mismatch-3",
+				TurnID:               "turn-other",
+				EventID:              "evt-plan-mismatch-turn",
+				PipelineVersion:      "pipeline-plan-v1",
+				AuthorityEpoch:       21,
+				RuntimeTimestampMS:   12,
+				WallClockTimestampMS: 12,
+				ResolvedTurnPlan:     &plan,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := scheduler.EdgeEnqueue(tt.input); err == nil {
+				t.Fatalf("expected resolved plan mismatch to fail")
+			}
+		})
+	}
+}
+
 func TestSchedulerProviderInvocationDisableStreaming(t *testing.T) {
 	t.Parallel()
 
@@ -389,6 +509,169 @@ func TestExecutePlanDeterministicOrderAndRoutes(t *testing.T) {
 	}
 	if len(trace.ControlSignals) != 0 {
 		t.Fatalf("expected no control signals on allow-only path, got %d", len(trace.ControlSignals))
+	}
+}
+
+func TestExecutePlanPrioritizesDataBeforeTelemetryWhenBothReady(t *testing.T) {
+	t.Parallel()
+
+	scheduler := NewScheduler(localadmission.Evaluator{})
+	trace, err := scheduler.ExecutePlan(
+		SchedulingInput{
+			SessionID:            "sess-plan-lane-priority-1",
+			TurnID:               "turn-plan-lane-priority-1",
+			EventID:              "evt-plan-lane-priority-1",
+			PipelineVersion:      "pipeline-v1",
+			TransportSequence:    10,
+			RuntimeSequence:      11,
+			AuthorityEpoch:       3,
+			RuntimeTimestampMS:   100,
+			WallClockTimestampMS: 100,
+		},
+		ExecutionPlan{
+			Nodes: []NodeSpec{
+				{NodeID: "admission", NodeType: "admission", Lane: eventabi.LaneControl},
+				{NodeID: "telemetry", NodeType: "metrics", Lane: eventabi.LaneTelemetry},
+				{NodeID: "provider", NodeType: "provider", Lane: eventabi.LaneData},
+			},
+			Edges: []EdgeSpec{
+				{From: "admission", To: "telemetry"},
+				{From: "admission", To: "provider"},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("unexpected execute plan error: %v", err)
+	}
+	if len(trace.Nodes) != 3 {
+		t.Fatalf("expected 3 node results, got %d", len(trace.Nodes))
+	}
+	if trace.Nodes[0].NodeID != "admission" || trace.Nodes[1].NodeID != "provider" || trace.Nodes[2].NodeID != "telemetry" {
+		t.Fatalf("expected lane-priority order admission->provider->telemetry, got %+v", trace.NodeOrder)
+	}
+}
+
+func TestExecutePlanWithResolvedTurnPlanTelemetryOverflowRemainsNonBlocking(t *testing.T) {
+	t.Parallel()
+
+	scheduler := NewScheduler(localadmission.Evaluator{})
+	resolvedPlan := testResolvedTurnPlan(t, "turn-plan-telemetry-overflow", "pipeline-v1", 3, []string{"retry"})
+	resolvedPlan = withTightPlanQueueLimits(t, resolvedPlan, 1)
+
+	trace, err := scheduler.ExecutePlan(
+		SchedulingInput{
+			SessionID:            "sess-plan-telemetry-overflow",
+			TurnID:               "turn-plan-telemetry-overflow",
+			EventID:              "evt-plan-telemetry-overflow",
+			PipelineVersion:      "pipeline-v1",
+			TransportSequence:    10,
+			RuntimeSequence:      11,
+			AuthorityEpoch:       3,
+			RuntimeTimestampMS:   100,
+			WallClockTimestampMS: 100,
+			ResolvedTurnPlan:     &resolvedPlan,
+		},
+		ExecutionPlan{
+			Nodes: []NodeSpec{
+				{NodeID: "telemetry-a", NodeType: "metrics", Lane: eventabi.LaneTelemetry},
+				{NodeID: "telemetry-b", NodeType: "metrics", Lane: eventabi.LaneTelemetry},
+				{NodeID: "control", NodeType: "admission", Lane: eventabi.LaneControl},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("unexpected execute plan error: %v", err)
+	}
+	if !trace.Completed {
+		t.Fatalf("expected telemetry overflow to remain non-blocking, got %+v", trace)
+	}
+	if trace.TerminalReason != "" {
+		t.Fatalf("expected no terminal reason, got %q", trace.TerminalReason)
+	}
+
+	controlExecuted := false
+	telemetryDropped := false
+	for _, node := range trace.Nodes {
+		if node.NodeID == "control" && node.Decision.Allowed {
+			controlExecuted = true
+		}
+		if node.NodeID == "telemetry-b" && node.Decision.Allowed {
+			telemetryDropped = true
+		}
+	}
+	if !controlExecuted {
+		t.Fatalf("expected control node execution to proceed under telemetry overflow, got %+v", trace.Nodes)
+	}
+	if !telemetryDropped {
+		t.Fatalf("expected dropped telemetry node to be recorded as non-blocking, got %+v", trace.Nodes)
+	}
+
+	foundDropNotice := false
+	for _, signal := range trace.ControlSignals {
+		if signal.Signal == "drop_notice" {
+			foundDropNotice = true
+			break
+		}
+	}
+	if !foundDropNotice {
+		t.Fatalf("expected telemetry drop_notice signal, got %+v", trace.ControlSignals)
+	}
+}
+
+func TestExecutePlanWithResolvedTurnPlanDataOverflowStopsExecution(t *testing.T) {
+	t.Parallel()
+
+	scheduler := NewScheduler(localadmission.Evaluator{})
+	resolvedPlan := testResolvedTurnPlan(t, "turn-plan-data-overflow", "pipeline-v1", 3, []string{"retry"})
+	resolvedPlan = withTightPlanQueueLimits(t, resolvedPlan, 1)
+
+	trace, err := scheduler.ExecutePlan(
+		SchedulingInput{
+			SessionID:            "sess-plan-data-overflow",
+			TurnID:               "turn-plan-data-overflow",
+			EventID:              "evt-plan-data-overflow",
+			PipelineVersion:      "pipeline-v1",
+			TransportSequence:    20,
+			RuntimeSequence:      21,
+			AuthorityEpoch:       3,
+			RuntimeTimestampMS:   200,
+			WallClockTimestampMS: 200,
+			ResolvedTurnPlan:     &resolvedPlan,
+		},
+		ExecutionPlan{
+			Nodes: []NodeSpec{
+				{NodeID: "data-a", NodeType: "provider", Lane: eventabi.LaneData},
+				{NodeID: "data-b", NodeType: "provider", Lane: eventabi.LaneData},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("unexpected execute plan error: %v", err)
+	}
+	if trace.Completed {
+		t.Fatalf("expected data overflow to stop execution, got %+v", trace)
+	}
+	if trace.TerminalReason != "lane_queue_capacity_exceeded" {
+		t.Fatalf("expected queue-capacity terminal reason, got %q", trace.TerminalReason)
+	}
+
+	if len(trace.Nodes) != 1 || trace.Nodes[0].NodeID != "data-b" {
+		t.Fatalf("expected overflowed node to be recorded first, got %+v", trace.Nodes)
+	}
+	denied := trace.Nodes[0].Decision
+	if denied.Allowed || denied.Outcome == nil || denied.Outcome.OutcomeKind != controlplane.OutcomeShed {
+		t.Fatalf("expected shed denial on data overflow, got %+v", denied)
+	}
+
+	foundShed := false
+	for _, signal := range trace.ControlSignals {
+		if signal.Signal == "shed" {
+			foundShed = true
+			break
+		}
+	}
+	if !foundShed {
+		t.Fatalf("expected shed control signal, got %+v", trace.ControlSignals)
 	}
 }
 
@@ -884,6 +1167,408 @@ func TestExecutePlanWithExecutionPool(t *testing.T) {
 	}
 }
 
+func TestExecutePlanWithExecutionPoolSaturationStopsControlPath(t *testing.T) {
+	t.Parallel()
+
+	pool := runtimeexecutionpool.NewManager(1)
+	release := saturateExecutionPoolForTest(t, pool)
+	scheduler := NewSchedulerWithExecutionPool(localadmission.Evaluator{}, pool)
+
+	trace, err := scheduler.ExecutePlan(
+		SchedulingInput{
+			SessionID:            "sess-plan-pool-saturated-control-1",
+			TurnID:               "turn-plan-pool-saturated-control-1",
+			EventID:              "evt-plan-pool-saturated-control-1",
+			PipelineVersion:      "pipeline-v1",
+			TransportSequence:    20,
+			RuntimeSequence:      21,
+			AuthorityEpoch:       1,
+			RuntimeTimestampMS:   200,
+			WallClockTimestampMS: 200,
+		},
+		ExecutionPlan{
+			Nodes: []NodeSpec{
+				{NodeID: "control-node", NodeType: "admission", Lane: eventabi.LaneControl},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("unexpected saturated execute plan error: %v", err)
+	}
+	if trace.Completed {
+		t.Fatalf("expected saturated control dispatch to stop execution, got %+v", trace)
+	}
+	if trace.TerminalReason != "execution_pool_saturated" {
+		t.Fatalf("expected execution_pool_saturated terminal reason, got %q", trace.TerminalReason)
+	}
+	if len(trace.Nodes) != 1 {
+		t.Fatalf("expected one node result, got %+v", trace.Nodes)
+	}
+	denied := trace.Nodes[0].Decision
+	if denied.Allowed || denied.Outcome == nil || denied.Outcome.OutcomeKind != controlplane.OutcomeShed {
+		t.Fatalf("expected shed denial for saturated control dispatch, got %+v", denied)
+	}
+	if denied.Outcome.Reason != "execution_pool_saturated" {
+		t.Fatalf("expected execution_pool_saturated outcome reason, got %+v", denied.Outcome)
+	}
+	if denied.ControlSignal == nil || denied.ControlSignal.Signal != "shed" || denied.ControlSignal.Reason != "execution_pool_saturated" {
+		t.Fatalf("expected saturated shed control signal, got %+v", denied.ControlSignal)
+	}
+
+	close(release)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := pool.Drain(ctx); err != nil {
+		t.Fatalf("unexpected drain error: %v", err)
+	}
+	if stats := pool.Stats(); stats.Rejected < 1 {
+		t.Fatalf("expected at least one rejected submission under saturation, got %+v", stats)
+	}
+}
+
+func TestExecutePlanWithExecutionPoolSaturationKeepsTelemetryNonBlocking(t *testing.T) {
+	t.Parallel()
+
+	pool := runtimeexecutionpool.NewManager(1)
+	release := saturateExecutionPoolForTest(t, pool)
+	scheduler := NewSchedulerWithExecutionPool(localadmission.Evaluator{}, pool)
+
+	trace, err := scheduler.ExecutePlan(
+		SchedulingInput{
+			SessionID:            "sess-plan-pool-saturated-telemetry-1",
+			TurnID:               "turn-plan-pool-saturated-telemetry-1",
+			EventID:              "evt-plan-pool-saturated-telemetry-1",
+			PipelineVersion:      "pipeline-v1",
+			TransportSequence:    30,
+			RuntimeSequence:      31,
+			AuthorityEpoch:       1,
+			RuntimeTimestampMS:   300,
+			WallClockTimestampMS: 300,
+		},
+		ExecutionPlan{
+			Nodes: []NodeSpec{
+				{NodeID: "telemetry-node", NodeType: "metrics", Lane: eventabi.LaneTelemetry},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("unexpected saturated telemetry execute plan error: %v", err)
+	}
+	if !trace.Completed {
+		t.Fatalf("expected telemetry saturation to remain non-blocking, got %+v", trace)
+	}
+	if trace.TerminalReason != "" {
+		t.Fatalf("expected no terminal reason for telemetry saturation, got %q", trace.TerminalReason)
+	}
+	if len(trace.Nodes) != 1 {
+		t.Fatalf("expected one node result, got %+v", trace.Nodes)
+	}
+	telemetryDecision := trace.Nodes[0].Decision
+	if !telemetryDecision.Allowed {
+		t.Fatalf("expected telemetry decision to stay allowed under saturation, got %+v", telemetryDecision)
+	}
+	if telemetryDecision.Outcome != nil {
+		t.Fatalf("expected telemetry saturation to clear terminal outcome, got %+v", telemetryDecision.Outcome)
+	}
+	if telemetryDecision.ControlSignal == nil || telemetryDecision.ControlSignal.Signal != "shed" || telemetryDecision.ControlSignal.Reason != "execution_pool_saturated" {
+		t.Fatalf("expected telemetry saturation shed signal, got %+v", telemetryDecision.ControlSignal)
+	}
+
+	close(release)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := pool.Drain(ctx); err != nil {
+		t.Fatalf("unexpected drain error: %v", err)
+	}
+}
+
+func TestExecutePlanWithNodeConcurrencyLimitStopsControlPath(t *testing.T) {
+	t.Parallel()
+
+	pool := runtimeexecutionpool.NewManager(4)
+	release := holdExecutionPoolFairnessSlotForTest(t, pool, "provider-heavy", 1)
+	scheduler := NewSchedulerWithExecutionPool(localadmission.Evaluator{}, pool)
+
+	trace, err := scheduler.ExecutePlan(
+		SchedulingInput{
+			SessionID:            "sess-plan-node-concurrency-control-1",
+			TurnID:               "turn-plan-node-concurrency-control-1",
+			EventID:              "evt-plan-node-concurrency-control-1",
+			PipelineVersion:      "pipeline-v1",
+			TransportSequence:    40,
+			RuntimeSequence:      41,
+			AuthorityEpoch:       1,
+			RuntimeTimestampMS:   400,
+			WallClockTimestampMS: 400,
+		},
+		ExecutionPlan{
+			Nodes: []NodeSpec{
+				{
+					NodeID:           "control-heavy-node",
+					NodeType:         "admission",
+					Lane:             eventabi.LaneControl,
+					FairnessKey:      "provider-heavy",
+					ConcurrencyLimit: 1,
+				},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("unexpected node-concurrency execute plan error: %v", err)
+	}
+	if trace.Completed {
+		t.Fatalf("expected node concurrency limit to stop control-path execution, got %+v", trace)
+	}
+	if trace.TerminalReason != "node_concurrency_limited" {
+		t.Fatalf("expected terminal reason node_concurrency_limited, got %q", trace.TerminalReason)
+	}
+	if len(trace.Nodes) != 1 {
+		t.Fatalf("expected one node result under node concurrency limit, got %+v", trace.Nodes)
+	}
+	denied := trace.Nodes[0].Decision
+	if denied.Allowed || denied.Outcome == nil || denied.Outcome.OutcomeKind != controlplane.OutcomeShed {
+		t.Fatalf("expected shed denial for node concurrency limit, got %+v", denied)
+	}
+	if denied.Outcome.Reason != "node_concurrency_limited" {
+		t.Fatalf("expected node_concurrency_limited outcome reason, got %+v", denied.Outcome)
+	}
+	if denied.ControlSignal == nil || denied.ControlSignal.Signal != "shed" || denied.ControlSignal.Reason != "node_concurrency_limited" {
+		t.Fatalf("expected node concurrency shed control signal, got %+v", denied.ControlSignal)
+	}
+
+	close(release)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := pool.Drain(ctx); err != nil {
+		t.Fatalf("unexpected drain error: %v", err)
+	}
+	if stats := pool.Stats(); stats.RejectedByConcurrency < 1 {
+		t.Fatalf("expected at least one concurrency-limited rejection, got %+v", stats)
+	}
+}
+
+func TestExecutePlanWithNodeConcurrencyLimitKeepsTelemetryNonBlocking(t *testing.T) {
+	t.Parallel()
+
+	pool := runtimeexecutionpool.NewManager(4)
+	release := holdExecutionPoolFairnessSlotForTest(t, pool, "provider-heavy", 1)
+	scheduler := NewSchedulerWithExecutionPool(localadmission.Evaluator{}, pool)
+
+	trace, err := scheduler.ExecutePlan(
+		SchedulingInput{
+			SessionID:            "sess-plan-node-concurrency-telemetry-1",
+			TurnID:               "turn-plan-node-concurrency-telemetry-1",
+			EventID:              "evt-plan-node-concurrency-telemetry-1",
+			PipelineVersion:      "pipeline-v1",
+			TransportSequence:    50,
+			RuntimeSequence:      51,
+			AuthorityEpoch:       1,
+			RuntimeTimestampMS:   500,
+			WallClockTimestampMS: 500,
+		},
+		ExecutionPlan{
+			Nodes: []NodeSpec{
+				{
+					NodeID:           "telemetry-heavy-node",
+					NodeType:         "metrics",
+					Lane:             eventabi.LaneTelemetry,
+					FairnessKey:      "provider-heavy",
+					ConcurrencyLimit: 1,
+				},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("unexpected telemetry node-concurrency execute plan error: %v", err)
+	}
+	if !trace.Completed {
+		t.Fatalf("expected telemetry concurrency limiting to remain non-blocking, got %+v", trace)
+	}
+	if trace.TerminalReason != "" {
+		t.Fatalf("expected no terminal reason for telemetry node concurrency limiting, got %q", trace.TerminalReason)
+	}
+	if len(trace.Nodes) != 1 {
+		t.Fatalf("expected one telemetry node result, got %+v", trace.Nodes)
+	}
+	telemetryDecision := trace.Nodes[0].Decision
+	if !telemetryDecision.Allowed {
+		t.Fatalf("expected telemetry decision to remain allowed, got %+v", telemetryDecision)
+	}
+	if telemetryDecision.Outcome != nil {
+		t.Fatalf("expected telemetry decision outcome to be cleared, got %+v", telemetryDecision.Outcome)
+	}
+	if telemetryDecision.ControlSignal == nil || telemetryDecision.ControlSignal.Signal != "shed" || telemetryDecision.ControlSignal.Reason != "node_concurrency_limited" {
+		t.Fatalf("expected telemetry node-concurrency shed signal, got %+v", telemetryDecision.ControlSignal)
+	}
+
+	close(release)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := pool.Drain(ctx); err != nil {
+		t.Fatalf("unexpected drain error: %v", err)
+	}
+	if stats := pool.Stats(); stats.RejectedByConcurrency < 1 {
+		t.Fatalf("expected at least one concurrency-limited rejection, got %+v", stats)
+	}
+}
+
+func TestExecutePlanRejectsNegativeNodeConcurrencyLimit(t *testing.T) {
+	t.Parallel()
+
+	scheduler := NewScheduler(localadmission.Evaluator{})
+	_, err := scheduler.ExecutePlan(
+		SchedulingInput{
+			SessionID:            "sess-plan-negative-node-concurrency-1",
+			TurnID:               "turn-plan-negative-node-concurrency-1",
+			EventID:              "evt-plan-negative-node-concurrency-1",
+			RuntimeTimestampMS:   1,
+			WallClockTimestampMS: 1,
+		},
+		ExecutionPlan{
+			Nodes: []NodeSpec{
+				{
+					NodeID:           "invalid-node",
+					NodeType:         "admission",
+					Lane:             eventabi.LaneControl,
+					ConcurrencyLimit: -1,
+				},
+			},
+		},
+	)
+	if err == nil {
+		t.Fatalf("expected negative concurrency limit validation error")
+	}
+	if !strings.Contains(err.Error(), "concurrency_limit must be >=0") {
+		t.Fatalf("expected concurrency limit validation error, got %v", err)
+	}
+}
+
+func TestExecutePlanUsesResolvedTurnPlanNodeExecutionPoliciesForConcurrencyAndFairness(t *testing.T) {
+	t.Parallel()
+
+	pool := runtimeexecutionpool.NewManager(4)
+	release := holdExecutionPoolFairnessSlotForTest(t, pool, "provider-heavy", 1)
+	scheduler := NewSchedulerWithExecutionPool(localadmission.Evaluator{}, pool)
+
+	resolvedPlan := testResolvedTurnPlan(t, "turn-plan-node-policy-1", "pipeline-v1", 5, []string{"retry"})
+	resolvedPlan.NodeExecutionPolicies = map[string]controlplane.NodeExecutionPolicy{
+		"provider-heavy-node": {
+			ConcurrencyLimit: 1,
+			FairnessKey:      "provider-heavy",
+		},
+	}
+
+	trace, err := scheduler.ExecutePlan(
+		SchedulingInput{
+			SessionID:            "sess-plan-node-policy-1",
+			TurnID:               "turn-plan-node-policy-1",
+			EventID:              "evt-plan-node-policy-1",
+			PipelineVersion:      "pipeline-v1",
+			TransportSequence:    60,
+			RuntimeSequence:      61,
+			AuthorityEpoch:       5,
+			RuntimeTimestampMS:   600,
+			WallClockTimestampMS: 600,
+			ResolvedTurnPlan:     &resolvedPlan,
+		},
+		ExecutionPlan{
+			Nodes: []NodeSpec{
+				{
+					NodeID:   "provider-heavy-node",
+					NodeType: "provider",
+					Lane:     eventabi.LaneData,
+				},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("unexpected execute plan error: %v", err)
+	}
+	if trace.Completed {
+		t.Fatalf("expected resolved-turn-plan node execution policy to enforce node concurrency limit, got %+v", trace)
+	}
+	if trace.TerminalReason != "node_concurrency_limited" {
+		t.Fatalf("expected node_concurrency_limited terminal reason, got %q", trace.TerminalReason)
+	}
+	if len(trace.Nodes) != 1 {
+		t.Fatalf("expected one node decision, got %+v", trace.Nodes)
+	}
+	if denied := trace.Nodes[0].Decision; denied.Outcome == nil || denied.Outcome.Reason != "node_concurrency_limited" {
+		t.Fatalf("expected node_concurrency_limited outcome from resolved-turn-plan policy, got %+v", denied)
+	}
+
+	close(release)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := pool.Drain(ctx); err != nil {
+		t.Fatalf("unexpected drain error: %v", err)
+	}
+	if stats := pool.Stats(); stats.RejectedByConcurrency < 1 {
+		t.Fatalf("expected concurrency-limited rejection evidence, got %+v", stats)
+	}
+}
+
+func TestExecutePlanUsesResolvedTurnPlanEdgeFairnessKeyFallback(t *testing.T) {
+	t.Parallel()
+
+	pool := runtimeexecutionpool.NewManager(4)
+	release := holdExecutionPoolFairnessSlotForTest(t, pool, "edge-fairness-heavy", 1)
+	scheduler := NewSchedulerWithExecutionPool(localadmission.Evaluator{}, pool)
+
+	resolvedPlan := testResolvedTurnPlan(t, "turn-plan-edge-fairness-1", "pipeline-v1", 6, []string{"retry"})
+	defaultEdge := resolvedPlan.EdgeBufferPolicies["default"]
+	defaultEdge.FairnessKey = "edge-fairness-heavy"
+	resolvedPlan.EdgeBufferPolicies["default"] = defaultEdge
+	resolvedPlan.NodeExecutionPolicies = map[string]controlplane.NodeExecutionPolicy{
+		"provider-heavy-node": {
+			ConcurrencyLimit: 1,
+		},
+	}
+
+	trace, err := scheduler.ExecutePlan(
+		SchedulingInput{
+			SessionID:            "sess-plan-edge-fairness-1",
+			TurnID:               "turn-plan-edge-fairness-1",
+			EventID:              "evt-plan-edge-fairness-1",
+			PipelineVersion:      "pipeline-v1",
+			TransportSequence:    70,
+			RuntimeSequence:      71,
+			AuthorityEpoch:       6,
+			RuntimeTimestampMS:   700,
+			WallClockTimestampMS: 700,
+			ResolvedTurnPlan:     &resolvedPlan,
+		},
+		ExecutionPlan{
+			Nodes: []NodeSpec{
+				{
+					NodeID:   "provider-heavy-node",
+					NodeType: "provider",
+					Lane:     eventabi.LaneData,
+				},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("unexpected execute plan error: %v", err)
+	}
+	if trace.Completed {
+		t.Fatalf("expected edge fairness key fallback to enforce shared-key limit, got %+v", trace)
+	}
+	if trace.TerminalReason != "node_concurrency_limited" {
+		t.Fatalf("expected node_concurrency_limited terminal reason, got %q", trace.TerminalReason)
+	}
+
+	close(release)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := pool.Drain(ctx); err != nil {
+		t.Fatalf("unexpected drain error: %v", err)
+	}
+	if stats := pool.Stats(); stats.RejectedByConcurrency < 1 {
+		t.Fatalf("expected concurrency-limited rejection evidence, got %+v", stats)
+	}
+}
+
 func TestSchedulerGeneratesEventIDFromIdentity(t *testing.T) {
 	t.Parallel()
 
@@ -938,6 +1623,9 @@ func TestSchedulerEmitsTelemetryEvents(t *testing.T) {
 		TurnID:               "turn-rk07-telemetry-1",
 		EventID:              "evt-rk07-telemetry-1",
 		PipelineVersion:      "pipeline-v1",
+		NodeID:               "node-rk07-1",
+		NodeType:             "provider",
+		EdgeID:               "edge-rk07-1",
 		RuntimeTimestampMS:   10,
 		WallClockTimestampMS: 10,
 		Shed:                 true,
@@ -956,17 +1644,134 @@ func TestSchedulerEmitsTelemetryEvents(t *testing.T) {
 		if event.Correlation.SessionID != "sess-rk07-telemetry-1" {
 			continue
 		}
+		if event.Correlation.NodeID != "node-rk07-1" || event.Correlation.EdgeID != "edge-rk07-1" {
+			t.Fatalf("expected node/edge correlation IDs, got %+v", event.Correlation)
+		}
 		if event.Kind == telemetry.EventKindMetric && event.Metric != nil && event.Metric.Name == telemetry.MetricShedRate {
+			if event.Metric.Attributes["node_id"] != "node-rk07-1" || event.Metric.Attributes["edge_id"] != "edge-rk07-1" {
+				t.Fatalf("expected node/edge metric linkage labels, got %+v", event.Metric.Attributes)
+			}
 			shedRateMetric = true
 		}
 		if event.Kind == telemetry.EventKindSpan && event.Span != nil && event.Span.Name == "node_span" {
+			if event.Span.Attributes["node_id"] != "node-rk07-1" || event.Span.Attributes["edge_id"] != "edge-rk07-1" {
+				t.Fatalf("expected node/edge span linkage labels, got %+v", event.Span.Attributes)
+			}
 			nodeSpan = true
 		}
 		if event.Kind == telemetry.EventKindLog && event.Log != nil && event.Log.Name == "scheduling_shed" {
+			if event.Log.Attributes["node_id"] != "node-rk07-1" || event.Log.Attributes["edge_id"] != "edge-rk07-1" {
+				t.Fatalf("expected node/edge log linkage labels, got %+v", event.Log.Attributes)
+			}
 			shedLog = true
 		}
 	}
 	if !shedRateMetric || !nodeSpan || !shedLog {
 		t.Fatalf("expected scheduler telemetry events, got shed_rate=%v node_span=%v shed_log=%v", shedRateMetric, nodeSpan, shedLog)
 	}
+}
+
+func testResolvedTurnPlan(t *testing.T, turnID string, pipelineVersion string, authorityEpoch int64, actions []string) controlplane.ResolvedTurnPlan {
+	t.Helper()
+
+	resolver := planresolver.Resolver{}
+	plan, err := resolver.Resolve(planresolver.Input{
+		TurnID:             turnID,
+		PipelineVersion:    pipelineVersion,
+		GraphDefinitionRef: "graph/default",
+		ExecutionProfile:   "simple",
+		AuthorityEpoch:     authorityEpoch,
+		SnapshotProvenance: controlplane.SnapshotProvenance{
+			RoutingViewSnapshot:       fmt.Sprintf("routing-view/%s", turnID),
+			AdmissionPolicySnapshot:   fmt.Sprintf("admission-policy/%s", turnID),
+			ABICompatibilitySnapshot:  fmt.Sprintf("abi-compat/%s", turnID),
+			VersionResolutionSnapshot: fmt.Sprintf("version-resolution/%s", turnID),
+			PolicyResolutionSnapshot:  fmt.Sprintf("policy-resolution/%s", turnID),
+			ProviderHealthSnapshot:    fmt.Sprintf("provider-health/%s", turnID),
+		},
+		AllowedAdaptiveActions: append([]string(nil), actions...),
+	})
+	if err != nil {
+		t.Fatalf("resolve test plan: %v", err)
+	}
+	return plan
+}
+
+func withTightPlanQueueLimits(t *testing.T, plan controlplane.ResolvedTurnPlan, limit int) controlplane.ResolvedTurnPlan {
+	t.Helper()
+
+	policy := plan.EdgeBufferPolicies["default"]
+	policy.MaxQueueItems = limit
+	plan.EdgeBufferPolicies["default"] = policy
+	plan.FlowControl.Watermarks = controlplane.FlowWatermarks{
+		DataLane:      controlplane.WatermarkThreshold{High: limit, Low: 0},
+		ControlLane:   controlplane.WatermarkThreshold{High: limit, Low: 0},
+		TelemetryLane: controlplane.WatermarkThreshold{High: limit, Low: 0},
+	}
+	if err := plan.Validate(); err != nil {
+		t.Fatalf("tight plan queue limits should remain valid: %v", err)
+	}
+	return plan
+}
+
+func containsString(values []string, needle string) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
+	return false
+}
+
+func saturateExecutionPoolForTest(t *testing.T, pool *runtimeexecutionpool.Manager) chan struct{} {
+	t.Helper()
+
+	release := make(chan struct{})
+	started := make(chan struct{})
+	if err := pool.Submit(runtimeexecutionpool.Task{
+		ID: "blocking",
+		Run: func() error {
+			close(started)
+			<-release
+			return nil
+		},
+	}); err != nil {
+		t.Fatalf("submit blocking saturation task: %v", err)
+	}
+	<-started
+
+	if err := pool.Submit(runtimeexecutionpool.Task{
+		ID:  "queued",
+		Run: func() error { return nil },
+	}); err != nil {
+		t.Fatalf("submit queued saturation task: %v", err)
+	}
+
+	return release
+}
+
+func holdExecutionPoolFairnessSlotForTest(
+	t *testing.T,
+	pool *runtimeexecutionpool.Manager,
+	fairnessKey string,
+	maxOutstanding int,
+) chan struct{} {
+	t.Helper()
+
+	release := make(chan struct{})
+	started := make(chan struct{})
+	if err := pool.Submit(runtimeexecutionpool.Task{
+		ID:             fmt.Sprintf("blocking-%s", fairnessKey),
+		FairnessKey:    fairnessKey,
+		MaxOutstanding: maxOutstanding,
+		Run: func() error {
+			close(started)
+			<-release
+			return nil
+		},
+	}); err != nil {
+		t.Fatalf("submit fairness-slot blocking task: %v", err)
+	}
+	<-started
+	return release
 }

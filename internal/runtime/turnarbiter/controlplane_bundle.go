@@ -3,6 +3,7 @@ package turnarbiter
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/tiger/realtime-speech-pipeline/api/controlplane"
 	"github.com/tiger/realtime-speech-pipeline/internal/controlplane/admission"
@@ -18,6 +19,7 @@ import (
 
 // TurnStartBundleInput captures CP context needed to freeze turn-start runtime inputs.
 type TurnStartBundleInput struct {
+	TenantID                 string
 	SessionID                string
 	TurnID                   string
 	RequestedPipelineVersion string
@@ -30,6 +32,12 @@ type TurnStartBundle struct {
 	GraphDefinitionRef     string
 	ExecutionProfile       string
 	GraphFingerprint       string
+	Budgets                controlplane.Budgets
+	ProviderBindings       map[string]string
+	EdgeBufferPolicies     map[string]controlplane.EdgeBufferPolicy
+	NodeExecutionPolicies  map[string]controlplane.NodeExecutionPolicy
+	FlowControl            controlplane.FlowControl
+	RecordingPolicy        controlplane.RecordingPolicy
 	AllowedAdaptiveActions []string
 	SnapshotProvenance     controlplane.SnapshotProvenance
 	HasCPAdmissionDecision bool
@@ -40,6 +48,8 @@ type TurnStartBundle struct {
 	LeaseAuthorityEpoch    int64
 	LeaseAuthorityValid    bool
 	LeaseAuthorityGranted  bool
+	LeaseTokenID           string
+	LeaseTokenExpiresAtUTC string
 }
 
 // Validate enforces required turn-start bundle fields.
@@ -52,6 +62,42 @@ func (b TurnStartBundle) Validate() error {
 	}
 	if b.ExecutionProfile == "" {
 		return fmt.Errorf("execution_profile is required")
+	}
+	if err := b.Budgets.Validate(); err != nil {
+		return err
+	}
+	if len(b.ProviderBindings) == 0 {
+		return fmt.Errorf("provider_bindings is required")
+	}
+	for modality, providerID := range b.ProviderBindings {
+		if modality == "" || providerID == "" {
+			return fmt.Errorf("provider_bindings keys and values must be non-empty")
+		}
+	}
+	if len(b.EdgeBufferPolicies) == 0 {
+		return fmt.Errorf("edge_buffer_policies is required")
+	}
+	for edgeID, policy := range b.EdgeBufferPolicies {
+		if edgeID == "" {
+			return fmt.Errorf("edge_buffer_policies key cannot be empty")
+		}
+		if err := policy.Validate(); err != nil {
+			return err
+		}
+	}
+	for nodeID, policy := range b.NodeExecutionPolicies {
+		if nodeID == "" {
+			return fmt.Errorf("node_execution_policies key cannot be empty")
+		}
+		if err := policy.Validate(); err != nil {
+			return err
+		}
+	}
+	if err := b.FlowControl.Validate(); err != nil {
+		return err
+	}
+	if err := b.RecordingPolicy.Validate(); err != nil {
+		return err
 	}
 	if b.AllowedAdaptiveActions == nil {
 		return fmt.Errorf("allowed_adaptive_actions is required")
@@ -77,6 +123,15 @@ func (b TurnStartBundle) Validate() error {
 	if b.HasLeaseDecision {
 		if b.LeaseAuthorityEpoch < 0 {
 			return fmt.Errorf("lease_authority_epoch must be >=0")
+		}
+		if b.LeaseTokenID == "" {
+			return fmt.Errorf("lease_token_id is required")
+		}
+		if b.LeaseTokenExpiresAtUTC == "" {
+			return fmt.Errorf("lease_token_expires_at_utc is required")
+		}
+		if _, err := time.Parse(time.RFC3339, b.LeaseTokenExpiresAtUTC); err != nil {
+			return fmt.Errorf("invalid lease_token_expires_at_utc: %w", err)
 		}
 	}
 	return nil
@@ -147,6 +202,7 @@ func (r controlPlaneBundleResolver) ResolveTurnStartBundle(in TurnStartBundleInp
 	}
 
 	rolloutResult, err := r.rollout.ResolvePipelineVersion(rollout.ResolveVersionInput{
+		TenantID:                 in.TenantID,
 		SessionID:                in.SessionID,
 		RequestedPipelineVersion: in.RequestedPipelineVersion,
 		RegistryPipelineVersion:  normalized.PipelineVersion,
@@ -182,6 +238,7 @@ func (r controlPlaneBundleResolver) ResolveTurnStartBundle(in TurnStartBundleInp
 	}
 
 	policyResult, err := r.policy.Evaluate(policy.Input{
+		TenantID:               in.TenantID,
 		SessionID:              in.SessionID,
 		TurnID:                 in.TurnID,
 		PipelineVersion:        rolloutResult.PipelineVersion,
@@ -201,6 +258,7 @@ func (r controlPlaneBundleResolver) ResolveTurnStartBundle(in TurnStartBundleInp
 	}
 
 	admissionResult, err := r.admission.Evaluate(admission.Input{
+		TenantID:                 in.TenantID,
 		SessionID:                in.SessionID,
 		TurnID:                   in.TurnID,
 		PipelineVersion:          rolloutResult.PipelineVersion,
@@ -229,6 +287,12 @@ func (r controlPlaneBundleResolver) ResolveTurnStartBundle(in TurnStartBundleInp
 		GraphDefinitionRef:     compiledGraph.GraphDefinitionRef,
 		ExecutionProfile:       normalized.ExecutionProfile,
 		GraphFingerprint:       compiledGraph.GraphFingerprint,
+		Budgets:                policyResult.ResolvedPolicy.Budgets,
+		ProviderBindings:       cloneStringMap(policyResult.ResolvedPolicy.ProviderBindings),
+		EdgeBufferPolicies:     cloneEdgeBufferPolicies(policyResult.ResolvedPolicy.EdgeBufferPolicies),
+		NodeExecutionPolicies:  cloneNodeExecutionPolicies(policyResult.ResolvedPolicy.NodeExecutionPolicies),
+		FlowControl:            policyResult.ResolvedPolicy.FlowControl,
+		RecordingPolicy:        cloneRecordingPolicy(policyResult.ResolvedPolicy.RecordingPolicy),
 		AllowedAdaptiveActions: append([]string(nil), policyResult.AllowedAdaptiveActions...),
 		SnapshotProvenance: controlplane.SnapshotProvenance{
 			RoutingViewSnapshot:       routingSnapshot.RoutingViewSnapshot,
@@ -246,6 +310,8 @@ func (r controlPlaneBundleResolver) ResolveTurnStartBundle(in TurnStartBundleInp
 		LeaseAuthorityEpoch:    leaseResult.AuthorityEpoch,
 		LeaseAuthorityValid:    leaseAuthorityValid,
 		LeaseAuthorityGranted:  leaseAuthorityGranted,
+		LeaseTokenID:           leaseResult.LeaseTokenID,
+		LeaseTokenExpiresAtUTC: leaseResult.LeaseExpiresAtUTC,
 	}
 	if err := bundle.Validate(); err != nil {
 		return TurnStartBundle{}, err
@@ -274,4 +340,50 @@ func isStaleSnapshotResolutionError(err error) bool {
 	}
 	var staleErr staleSnapshotError
 	return errors.As(err, &staleErr) && staleErr.StaleSnapshot()
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	out := make(map[string]string, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
+}
+
+func cloneEdgeBufferPolicies(in map[string]controlplane.EdgeBufferPolicy) map[string]controlplane.EdgeBufferPolicy {
+	out := make(map[string]controlplane.EdgeBufferPolicy, len(in))
+	for key, value := range in {
+		cloned := value
+		if value.Watermarks.QueueItems != nil {
+			queueItems := *value.Watermarks.QueueItems
+			cloned.Watermarks.QueueItems = &queueItems
+		}
+		if value.Watermarks.QueueMS != nil {
+			queueMS := *value.Watermarks.QueueMS
+			cloned.Watermarks.QueueMS = &queueMS
+		}
+		if value.SyncDropPolicy != nil {
+			syncDropPolicy := *value.SyncDropPolicy
+			cloned.SyncDropPolicy = &syncDropPolicy
+		}
+		out[key] = cloned
+	}
+	return out
+}
+
+func cloneRecordingPolicy(in controlplane.RecordingPolicy) controlplane.RecordingPolicy {
+	out := in
+	out.AllowedReplayModes = append([]string(nil), in.AllowedReplayModes...)
+	return out
+}
+
+func cloneNodeExecutionPolicies(in map[string]controlplane.NodeExecutionPolicy) map[string]controlplane.NodeExecutionPolicy {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]controlplane.NodeExecutionPolicy, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
 }

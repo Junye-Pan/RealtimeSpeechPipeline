@@ -108,6 +108,8 @@ func TestReplayComparatorReportsAllDivergenceClasses(t *testing.T) {
 		{
 			PlanHash:           "plan-a",
 			Decision:           baselineDecision,
+			ProviderID:         "provider-a",
+			ProviderModel:      "model-a",
 			OrderingMarker:     "runtime_sequence:10",
 			AuthorityEpoch:     9,
 			RuntimeTimestampMS: 100,
@@ -117,6 +119,8 @@ func TestReplayComparatorReportsAllDivergenceClasses(t *testing.T) {
 		{
 			PlanHash:           "plan-b",
 			Decision:           replayDecision,
+			ProviderID:         "provider-b",
+			ProviderModel:      "model-b",
 			OrderingMarker:     "runtime_sequence:11",
 			AuthorityEpoch:     10,
 			RuntimeTimestampMS: 130,
@@ -133,6 +137,7 @@ func TestReplayComparatorReportsAllDivergenceClasses(t *testing.T) {
 		obs.OutcomeDivergence,
 		obs.OrderingDivergence,
 		obs.AuthorityDivergence,
+		obs.ProviderChoiceDivergence,
 		obs.TimingDivergence,
 	} {
 		if !classes[required] {

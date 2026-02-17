@@ -1,0 +1,33 @@
+{
+  "schema_version": "rspp.pipeline.spec.v1",
+  "spec_id": "voice_assistant_spec_v1",
+  "pipeline_version": "pipeline-v1",
+  "graph_definition_ref": "graph/default",
+  "nodes": [
+    {
+      "node_id": "stt",
+      "kind": "provider",
+      "modality": "stt"
+    },
+    {
+      "node_id": "llm",
+      "kind": "provider",
+      "modality": "llm"
+    },
+    {
+      "node_id": "tts",
+      "kind": "provider",
+      "modality": "tts"
+    }
+  ],
+  "edges": [
+    {
+      "from": "stt",
+      "to": "llm"
+    },
+    {
+      "from": "llm",
+      "to": "tts"
+    }
+  ]
+}

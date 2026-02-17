@@ -1,0 +1,108 @@
+{
+  "turn_id": "turn-stream-1",
+  "pipeline_version": "pipeline-v1",
+  "plan_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "graph_definition_ref": "graph/default",
+  "execution_profile": "simple",
+  "authority_epoch": 7,
+  "budgets": {
+    "turn_budget_ms": 5000,
+    "node_budget_ms_default": 1500,
+    "path_budget_ms_default": 3000,
+    "edge_budget_ms_default": 500
+  },
+  "provider_bindings": {
+    "stt": "provider-a",
+    "llm": "provider-b",
+    "tts": "provider-c"
+  },
+  "edge_buffer_policies": {
+    "default": {
+      "strategy": "drop",
+      "max_queue_items": 64,
+      "max_queue_ms": 300,
+      "max_queue_bytes": 262144,
+      "max_latency_contribution_ms": 120,
+      "watermarks": {
+        "queue_items": {
+          "high": 48,
+          "low": 24
+        }
+      },
+      "lane_handling": {
+        "DataLane": "drop",
+        "ControlLane": "non_blocking_priority",
+        "TelemetryLane": "best_effort_drop"
+      },
+      "defaulting_source": "execution_profile_default",
+      "sync_drop_policy": {
+        "group_by": "sync_id",
+        "policy": "atomic_drop",
+        "scope": "edge_local"
+      }
+    }
+  },
+  "flow_control": {
+    "mode_by_lane": {
+      "DataLane": "signal",
+      "ControlLane": "signal",
+      "TelemetryLane": "signal"
+    },
+    "watermarks": {
+      "DataLane": {
+        "high": 100,
+        "low": 50
+      },
+      "ControlLane": {
+        "high": 20,
+        "low": 10
+      },
+      "TelemetryLane": {
+        "high": 200,
+        "low": 100
+      }
+    },
+    "shedding_strategy_by_lane": {
+      "DataLane": "drop",
+      "ControlLane": "none",
+      "TelemetryLane": "sample"
+    }
+  },
+  "allowed_adaptive_actions": ["retry"],
+  "snapshot_provenance": {
+    "routing_view_snapshot": "routing-view/v1",
+    "admission_policy_snapshot": "admission-policy/v1",
+    "abi_compatibility_snapshot": "abi-compat/v1",
+    "version_resolution_snapshot": "version-resolution/v1",
+    "policy_resolution_snapshot": "policy-resolution/v1",
+    "provider_health_snapshot": "provider-health/v1"
+  },
+  "recording_policy": {
+    "recording_level": "L0",
+    "allowed_replay_modes": ["replay_decisions"]
+  },
+  "determinism": {
+    "seed": 42,
+    "ordering_markers": ["runtime_sequence", "event_id"],
+    "merge_rule_id": "default-merge-rule",
+    "merge_rule_version": "v1.0.0",
+    "nondeterministic_inputs": []
+  },
+  "streaming_handoff": {
+    "enabled": true,
+    "stt_to_llm": {
+      "enabled": true,
+      "min_partial_chars": 5,
+      "trigger_on_punctuation": true,
+      "max_partial_age_ms": 250,
+      "max_pending_revisions": 3,
+      "max_pending_segments": 2,
+      "coalesce_latest_only": true,
+      "emit_flow_control_signals": true,
+      "degrade_on_threshold_breach": true
+    },
+    "llm_to_tts": {
+      "enabled": false
+    }
+  }
+}

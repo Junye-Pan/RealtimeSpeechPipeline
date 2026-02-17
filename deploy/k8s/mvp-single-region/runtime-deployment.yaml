@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rspp-runtime
+  namespace: rspp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rspp-runtime
+  template:
+    metadata:
+      labels:
+        app: rspp-runtime
+    spec:
+      containers:
+      - name: rspp-runtime
+        image: ghcr.io/tiger/rspp-runtime:latest
+        args:
+        - "--mode=runtime"
+        env:
+        - name: RSPP_PROFILE_ID
+          value: "mvp-single-region"

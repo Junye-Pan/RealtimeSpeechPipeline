@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	providerconfig "github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/config"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/contracts"
 	"github.com/tiger/realtime-speech-pipeline/providers/common/httpadapter"
 )
@@ -36,8 +37,8 @@ type Adapter struct {
 
 func ConfigFromEnv() Config {
 	return Config{
-		APIKey:      os.Getenv("RSPP_STT_GOOGLE_API_KEY"),
-		Endpoint:    defaultString(os.Getenv("RSPP_STT_GOOGLE_ENDPOINT"), "https://speech.googleapis.com/v1/speech:recognize"),
+		APIKey:      providerconfig.ResolveEnvValue("RSPP_STT_GOOGLE_API_KEY", "RSPP_STT_GOOGLE_API_KEY_REF", ""),
+		Endpoint:    providerconfig.ResolveEnvValue("RSPP_STT_GOOGLE_ENDPOINT", "RSPP_STT_GOOGLE_ENDPOINT_REF", "https://speech.googleapis.com/v1/speech:recognize"),
 		Language:    defaultString(os.Getenv("RSPP_STT_GOOGLE_LANGUAGE"), "en-US"),
 		Model:       defaultString(os.Getenv("RSPP_STT_GOOGLE_MODEL"), "latest_long"),
 		AudioURI:    defaultString(os.Getenv("RSPP_STT_GOOGLE_AUDIO_URI"), "gs://cloud-samples-data/speech/brooklyn_bridge.raw"),

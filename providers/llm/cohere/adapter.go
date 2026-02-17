@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	providerconfig "github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/config"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/contracts"
 	"github.com/tiger/realtime-speech-pipeline/providers/common/httpadapter"
 	"github.com/tiger/realtime-speech-pipeline/providers/common/streamsse"
@@ -40,8 +41,8 @@ type Adapter struct {
 
 func ConfigFromEnv() Config {
 	return Config{
-		APIKey:            os.Getenv("RSPP_LLM_COHERE_API_KEY"),
-		Endpoint:          defaultString(os.Getenv("RSPP_LLM_COHERE_ENDPOINT"), "https://openrouter.ai/api/v1/chat/completions"),
+		APIKey:            providerconfig.ResolveEnvValue("RSPP_LLM_COHERE_API_KEY", "RSPP_LLM_COHERE_API_KEY_REF", ""),
+		Endpoint:          providerconfig.ResolveEnvValue("RSPP_LLM_COHERE_ENDPOINT", "RSPP_LLM_COHERE_ENDPOINT_REF", "https://openrouter.ai/api/v1/chat/completions"),
 		Model:             defaultString(os.Getenv("RSPP_LLM_COHERE_MODEL"), "cohere/command-r-08-2024"),
 		Prompt:            defaultString(os.Getenv("RSPP_LLM_COHERE_PROMPT"), "Reply with the word: ok"),
 		OpenRouter:        defaultBool(os.Getenv("RSPP_LLM_COHERE_OPENROUTER"), false),

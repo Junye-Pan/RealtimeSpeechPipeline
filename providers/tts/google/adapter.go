@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	providerconfig "github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/config"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/contracts"
 	"github.com/tiger/realtime-speech-pipeline/providers/common/httpadapter"
 )
@@ -36,8 +37,8 @@ type Adapter struct {
 
 func ConfigFromEnv() Config {
 	return Config{
-		APIKey:      os.Getenv("RSPP_TTS_GOOGLE_API_KEY"),
-		Endpoint:    defaultString(os.Getenv("RSPP_TTS_GOOGLE_ENDPOINT"), "https://texttospeech.googleapis.com/v1/text:synthesize"),
+		APIKey:      providerconfig.ResolveEnvValue("RSPP_TTS_GOOGLE_API_KEY", "RSPP_TTS_GOOGLE_API_KEY_REF", ""),
+		Endpoint:    providerconfig.ResolveEnvValue("RSPP_TTS_GOOGLE_ENDPOINT", "RSPP_TTS_GOOGLE_ENDPOINT_REF", "https://texttospeech.googleapis.com/v1/text:synthesize"),
 		VoiceName:   defaultString(os.Getenv("RSPP_TTS_GOOGLE_VOICE"), "en-US-Chirp3-HD-Achernar"),
 		Language:    defaultString(os.Getenv("RSPP_TTS_GOOGLE_LANGUAGE"), "en-US"),
 		SampleText:  defaultString(os.Getenv("RSPP_TTS_GOOGLE_TEXT"), "Realtime speech pipeline live smoke test."),

@@ -7,6 +7,7 @@ import (
 	"github.com/tiger/realtime-speech-pipeline/api/controlplane"
 	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
 	"github.com/tiger/realtime-speech-pipeline/internal/observability/telemetry"
+	telemetrycontext "github.com/tiger/realtime-speech-pipeline/internal/observability/telemetry/context"
 	"github.com/tiger/realtime-speech-pipeline/internal/observability/timeline"
 	runtimeeventabi "github.com/tiger/realtime-speech-pipeline/internal/runtime/eventabi"
 	runtimeexecutionpool "github.com/tiger/realtime-speech-pipeline/internal/runtime/executionpool"
@@ -15,6 +16,7 @@ import (
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/localadmission"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/contracts"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/invocation"
+	providerpolicy "github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/policy"
 )
 
 // SchedulingInput captures runtime scheduling-point context.
@@ -23,6 +25,9 @@ type SchedulingInput struct {
 	TurnID               string
 	EventID              string
 	PipelineVersion      string
+	NodeID               string
+	NodeType             string
+	EdgeID               string
 	TransportSequence    int64
 	RuntimeSequence      int64
 	AuthorityEpoch       int64
@@ -31,6 +36,7 @@ type SchedulingInput struct {
 	Shed                 bool
 	Reason               string
 	ProviderInvocation   *ProviderInvocationInput
+	ResolvedTurnPlan     *controlplane.ResolvedTurnPlan
 }
 
 // ProviderInvocationInput supplies optional RK-11 invocation context.
@@ -43,6 +49,7 @@ type ProviderInvocationInput struct {
 	EnableStreaming          bool
 	DisableProviderStreaming bool
 	StreamHooks              invocation.StreamEventHooks
+	ResolvedProviderPlan     *providerpolicy.ResolvedProviderPlan
 }
 
 // SchedulingDecision reports deterministic allow/shed outcomes at scheduling points.
@@ -225,6 +232,12 @@ func (s Scheduler) NodeDispatch(in SchedulingInput) (SchedulingDecision, error) 
 }
 
 func (s Scheduler) evaluate(scope controlplane.OutcomeScope, in SchedulingInput) (SchedulingDecision, error) {
+	effectiveInput, err := applyResolvedTurnPlan(in)
+	if err != nil {
+		return SchedulingDecision{}, err
+	}
+	in = effectiveInput
+
 	if in.EventID == "" {
 		if s.identity == nil {
 			return SchedulingDecision{}, fmt.Errorf("identity service is not configured")
@@ -246,22 +259,30 @@ func (s Scheduler) evaluate(scope controlplane.OutcomeScope, in SchedulingInput)
 		Shed:                 in.Shed,
 		Reason:               in.Reason,
 	})
-	correlation := telemetry.Correlation{
-		SessionID:          in.SessionID,
-		TurnID:             in.TurnID,
-		EventID:            in.EventID,
-		PipelineVersion:    defaultPipelineVersion(in.PipelineVersion),
-		AuthorityEpoch:     nonNegative(in.AuthorityEpoch),
-		Lane:               string(eventabi.LaneTelemetry),
-		EmittedBy:          "OR-01",
-		RuntimeTimestampMS: nonNegative(in.RuntimeTimestampMS),
+	correlation, err := telemetrycontext.Resolve(telemetrycontext.ResolveInput{
+		SessionID:            in.SessionID,
+		TurnID:               in.TurnID,
+		EventID:              in.EventID,
+		PipelineVersion:      defaultPipelineVersion(in.PipelineVersion),
+		NodeID:               in.NodeID,
+		EdgeID:               in.EdgeID,
+		AuthorityEpoch:       nonNegative(in.AuthorityEpoch),
+		Lane:                 eventabi.LaneTelemetry,
+		EmittedBy:            "OR-01",
+		RuntimeTimestampMS:   nonNegative(in.RuntimeTimestampMS),
+		WallClockTimestampMS: nonNegative(in.WallClockTimestampMS),
+	})
+	if err != nil {
+		return SchedulingDecision{}, err
 	}
 	telemetry.DefaultEmitter().EmitMetric(
 		telemetry.MetricShedRate,
 		boolToFloat(in.Shed),
 		"ratio",
 		map[string]string{
-			"scope": string(scope),
+			"scope":   string(scope),
+			"node_id": in.NodeID,
+			"edge_id": in.EdgeID,
 		},
 		correlation,
 	)
@@ -286,10 +307,13 @@ func (s Scheduler) evaluate(scope controlplane.OutcomeScope, in SchedulingInput)
 				AuthorityEpoch:           nonNegative(in.AuthorityEpoch),
 				RuntimeTimestampMS:       nonNegative(in.RuntimeTimestampMS),
 				WallClockTimestampMS:     nonNegative(in.WallClockTimestampMS),
+				NodeID:                   in.NodeID,
+				EdgeID:                   in.EdgeID,
 				CancelRequested:          in.ProviderInvocation.CancelRequested,
 				EnableStreaming:          in.ProviderInvocation.EnableStreaming,
 				DisableProviderStreaming: in.ProviderInvocation.DisableProviderStreaming,
 				StreamHooks:              in.ProviderInvocation.StreamHooks,
+				ResolvedProviderPlan:     in.ProviderInvocation.ResolvedProviderPlan,
 			})
 			if err != nil {
 				return SchedulingDecision{}, err
@@ -312,6 +336,8 @@ func (s Scheduler) evaluate(scope controlplane.OutcomeScope, in SchedulingInput)
 					"modality":    string(in.ProviderInvocation.Modality),
 					"attempts":    strconv.Itoa(len(invocationResult.Attempts)),
 					"retry_logic": invocationResult.RetryDecision,
+					"node_id":     in.NodeID,
+					"edge_id":     in.EdgeID,
 				},
 				correlation,
 			)
@@ -352,14 +378,34 @@ func (s Scheduler) evaluate(scope controlplane.OutcomeScope, in SchedulingInput)
 			}
 			decision.Allowed = invocationResult.Outcome.Class == contracts.OutcomeSuccess
 		}
+		nodeLatencyMS := int64(1)
+		if decision.Provider != nil {
+			nodeLatencyMS = schedulerMaxInt64(nodeLatencyMS, decision.Provider.TotalLatencyMS)
+		}
+		telemetry.DefaultEmitter().EmitMetric(
+			telemetry.MetricNodeLatencyMS,
+			float64(nodeLatencyMS),
+			"ms",
+			map[string]string{
+				"scope":        string(scope),
+				"node_id":      in.NodeID,
+				"node_type":    in.NodeType,
+				"edge_id":      in.EdgeID,
+				"pipeline_ref": defaultPipelineVersion(in.PipelineVersion),
+			},
+			correlation,
+		)
 		telemetry.DefaultEmitter().EmitSpan(
 			"node_span",
 			"node_span",
 			nonNegative(in.RuntimeTimestampMS),
 			nonNegative(in.RuntimeTimestampMS)+1,
 			map[string]string{
-				"scope":   string(scope),
-				"allowed": strconv.FormatBool(decision.Allowed),
+				"scope":     string(scope),
+				"allowed":   strconv.FormatBool(decision.Allowed),
+				"node_id":   in.NodeID,
+				"node_type": in.NodeType,
+				"edge_id":   in.EdgeID,
 			},
 			correlation,
 		)
@@ -385,9 +431,12 @@ func (s Scheduler) evaluate(scope controlplane.OutcomeScope, in SchedulingInput)
 		"warn",
 		"scheduling point shed triggered",
 		map[string]string{
-			"scope":   string(scope),
-			"outcome": string(result.Outcome.OutcomeKind),
-			"reason":  result.Outcome.Reason,
+			"scope":     string(scope),
+			"outcome":   string(result.Outcome.OutcomeKind),
+			"reason":    result.Outcome.Reason,
+			"node_id":   in.NodeID,
+			"node_type": in.NodeType,
+			"edge_id":   in.EdgeID,
 		},
 		correlation,
 	)
@@ -397,14 +446,24 @@ func (s Scheduler) evaluate(scope controlplane.OutcomeScope, in SchedulingInput)
 		nonNegative(in.RuntimeTimestampMS),
 		nonNegative(in.RuntimeTimestampMS)+1,
 		map[string]string{
-			"scope":   string(scope),
-			"allowed": "false",
-			"outcome": string(result.Outcome.OutcomeKind),
+			"scope":     string(scope),
+			"allowed":   "false",
+			"outcome":   string(result.Outcome.OutcomeKind),
+			"node_id":   in.NodeID,
+			"node_type": in.NodeType,
+			"edge_id":   in.EdgeID,
 		},
 		correlation,
 	)
 
 	return SchedulingDecision{Allowed: false, Outcome: result.Outcome, ControlSignal: controlSignal}, nil
+}
+
+func schedulerMaxInt64(a int64, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func buildShedControlSignal(in SchedulingInput, reason string) (*eventabi.ControlSignal, error) {
@@ -438,6 +497,60 @@ func buildShedControlSignal(in SchedulingInput, reason string) (*eventabi.Contro
 		return nil, err
 	}
 	return control, nil
+}
+
+func applyResolvedTurnPlan(in SchedulingInput) (SchedulingInput, error) {
+	if in.ResolvedTurnPlan == nil {
+		return in, nil
+	}
+	plan := in.ResolvedTurnPlan
+	if err := plan.Validate(); err != nil {
+		return SchedulingInput{}, fmt.Errorf("resolved_turn_plan invalid: %w", err)
+	}
+	if in.TurnID != "" && in.TurnID != plan.TurnID {
+		return SchedulingInput{}, fmt.Errorf("resolved_turn_plan turn_id mismatch: %s != %s", in.TurnID, plan.TurnID)
+	}
+	if in.PipelineVersion != "" && in.PipelineVersion != plan.PipelineVersion {
+		return SchedulingInput{}, fmt.Errorf("resolved_turn_plan pipeline_version mismatch: %s != %s", in.PipelineVersion, plan.PipelineVersion)
+	}
+	if in.AuthorityEpoch > 0 && in.AuthorityEpoch != plan.AuthorityEpoch {
+		return SchedulingInput{}, fmt.Errorf("resolved_turn_plan authority_epoch mismatch: %d != %d", in.AuthorityEpoch, plan.AuthorityEpoch)
+	}
+
+	if in.PipelineVersion == "" {
+		in.PipelineVersion = plan.PipelineVersion
+	}
+	if in.AuthorityEpoch == 0 {
+		in.AuthorityEpoch = plan.AuthorityEpoch
+	}
+
+	if in.ProviderInvocation != nil {
+		copyProvider := *in.ProviderInvocation
+		if copyProvider.PreferredProvider == "" {
+			if providerID, ok := plan.ProviderBindings[string(copyProvider.Modality)]; ok {
+				copyProvider.PreferredProvider = providerID
+			}
+		}
+		if len(copyProvider.AllowedAdaptiveActions) == 0 {
+			copyProvider.AllowedAdaptiveActions = append([]string(nil), plan.AllowedAdaptiveActions...)
+		} else {
+			copyProvider.AllowedAdaptiveActions = append([]string(nil), copyProvider.AllowedAdaptiveActions...)
+		}
+		if copyProvider.ResolvedProviderPlan == nil {
+			resolvedPlan := providerpolicy.ResolvedProviderPlan{
+				AllowedActions:        append([]string(nil), copyProvider.AllowedAdaptiveActions...),
+				Budget:                providerpolicy.Budget{MaxTotalLatencyMS: int64(plan.Budgets.TurnBudgetMS)},
+				PolicySnapshotRef:     plan.SnapshotProvenance.PolicyResolutionSnapshot,
+				CapabilitySnapshotRef: plan.SnapshotProvenance.ProviderHealthSnapshot,
+				RoutingReason:         "resolved_turn_plan",
+				SignalSource:          "policy_snapshot",
+			}
+			copyProvider.ResolvedProviderPlan = &resolvedPlan
+		}
+		in.ProviderInvocation = &copyProvider
+	}
+
+	return in, nil
 }
 
 func defaultPipelineVersion(version string) string {

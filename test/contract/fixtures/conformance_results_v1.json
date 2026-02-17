@@ -1,0 +1,9 @@
+{
+  "schema_version": "rspp.conformance-results.v1",
+  "profile_id": "voice_assistant_mvp_conformance_v1",
+  "categories": {
+    "transport_adapter": true,
+    "provider_adapter": true,
+    "external_node_boundary": true
+  }
+}

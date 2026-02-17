@@ -1,0 +1,111 @@
+MODULE SNAPSHOT
+- Area: Tooling/Test/Cmd
+- Canonical guide: `internal/tooling/tooling_and_gates_guide.md` + `test/test_suite_guide.md` + `cmd/command_entrypoints_guide.md`
+- Code path prefixes: `internal/tooling` + `test` + `cmd`
+- Public contract surfaces (api/*, pkg/*): `api/controlplane`, `api/eventabi`, `api/observability`; `pkg/*` usage under this area: none found; internal interfaces consumed/produced include `validation.ValidateContractFixtures*`, `regression.EvaluateDivergences`, `ops.EvaluateMVPSLOGates`, `release.LoadRolloutConfig`, `release.EvaluateReadiness`, `release.BuildReleaseManifest`
+- MVP responsibilities (bullets):
+- Keep command entrypoints thin, deterministic orchestrators for runtime/control-plane/tooling workflows (`cmd/rspp-runtime/main.go`, `cmd/rspp-cli/main.go`, `cmd/rspp-local-runner/main.go`)
+- MUST NOT place core runtime/control semantics in `cmd/*`; those remain in domain modules (`internal/runtime/*`, `internal/controlplane/*`)
+- Enforce contract validation, replay regression policy, and MVP SLO gates as fail-closed release evidence (`internal/tooling/validation/contracts.go`, `internal/tooling/regression/divergence.go`, `internal/tooling/ops/slo.go`, `internal/tooling/release/release.go`)
+- MUST NOT fail open on missing/stale/invalid readiness artifacts in publish flow (`internal/tooling/release/release.go`)
+- Maintain deterministic test coverage across contract/replay/integration/failover suites (`test/contract`, `test/replay`, `test/integration`, `test/failover`)
+- Produce stable JSON/Markdown artifacts for CI gating and release promotion (`cmd/rspp-cli/main.go`, `cmd/rspp-runtime/main.go`)
+- MVP invariants to enforce (bullets):
+- Missing/stale/failing readiness artifacts must fail release promotion (`internal/tooling/release/release.go`)
+- Replay divergence policy must be deterministic; invocation latency threshold divergences always fail (`internal/tooling/regression/divergence.go`, `cmd/rspp-cli/main.go`)
+- Gate formulas for NF-024..NF-029 and NF-038 must remain canonical (`internal/tooling/ops/slo.go`, `cmd/rspp-cli/main.go`)
+- OR-02 completeness must remain 100% for accepted turns (`internal/tooling/ops/slo.go`, `test/replay/rd002_rd003_rd004_test.go`)
+- Accepted stale-epoch outputs must remain zero (`internal/tooling/ops/slo.go`, `test/integration/quick_conformance_test.go`, `test/failover/failure_smoke_test.go`)
+- Accepted-turn terminal lifecycle must be exactly one terminal then close (`internal/tooling/ops/slo.go`, `test/integration/cf_full_conformance_test.go`)
+- MVP fixed decisions must stay simple-mode-only with explicit provider policy checks (`cmd/rspp-cli/main.go`, `cmd/rspp-cli/main_test.go`)
+- Current implementation status:
+  - Implemented:
+  - Tooling cores are present and unit-tested: validation, regression, SLO gates, release readiness (`internal/tooling/validation/contracts.go`, `internal/tooling/regression/divergence.go`, `internal/tooling/ops/slo.go`, `internal/tooling/release/release.go`, corresponding `*_test.go`)
+  - CLI/runtime/local-runner command surfaces are implemented and tested (`cmd/rspp-cli/main.go`, `cmd/rspp-runtime/main.go`, `cmd/rspp-local-runner/main.go`, corresponding `*_test.go`)
+  - Baseline contract/replay/failover/integration suites exist and pass in default profile (`test/contract/fixtures_test.go`, `test/replay/rd001_replay_smoke_test.go`, `test/failover/failure_full_test.go`, `test/integration/runtime_chain_test.go`)
+  - Verification evidence paths: gate definitions in `Makefile` and `scripts/verify.sh`; generated artifacts under `.codex/ops` and `.codex/replay`; command matrix executed (`go test ./...`, `make verify-quick`, `make verify-full`, `make live-provider-smoke`, `make livekit-smoke`)
+  - Partial:
+  - Gate orchestration and artifact writing remain centralized in `cmd/rspp-cli`/Makefile instead of reusable tooling modules (`cmd/rspp-cli/main.go`, `Makefile`)
+  - F-126 scope is partial: contracts are validated, but PipelineSpec/policy lint/validate command surface is not present (`cmd/rspp-cli/main.go`, `internal/tooling/validation/contracts.go`)
+  - Local runner is LiveKit pass-through with dry-run default; no loopback simulation/runner abstraction yet (`cmd/rspp-local-runner/main.go`)
+  - Test architecture is broad but still scattered vs target module layout (M3-M8/M11 partial) (`test/integration/*.go`, `test/test_suite_guide.md`)
+  - Live/A2 gates are environment-dependent; strict A2 run currently fails when providers are unavailable (`test/integration/a2_runtime_live_test.go`, `make a2-runtime-live` result)
+  - Scaffold/Missing:
+  - Control-plane entrypoint is scaffold only (`cmd/rspp-control-plane/main.go`)
+  - Authoring kit is scaffold only (`internal/tooling/authoring/node_authoring_kit_guide.md`)
+  - Load suite is scaffold only (`test/load/load_test_suite_guide.md`)
+  - Planned modules absent: `internal/tooling/gates`, `internal/tooling/evidence`, `internal/tooling/conformance`, `internal/tooling/extensions`, `internal/tooling/runner`, `internal/tooling/commandcore`
+  - Planned test framework dirs absent: `test/framework/spectrace`, `test/conformance_profiles/transport`, `test/framework/extensions`
+- MVP backlog candidates (items):
+  For each item:
+  - Title: Complete CLI spec/policy lint + validate surface
+  - Feature IDs / WP IDs: F-126, F-001, NF-010; P0-B
+  - Target paths: `internal/tooling/validation`, `cmd/rspp-cli/main.go`, `cmd/rspp-cli/main_test.go`, `test/contract` (new spec/policy fixtures)
+  - Dependencies (contracts/other PRs): schema sources in `docs/*`; no `api/*` changes required
+  - Implementation notes (minimal MVP approach): add `validate-spec`/`validate-policy` subcommands with strict field-path diagnostics and fail-closed exit behavior
+  - Tests to add (file/dir + scenario): `internal/tooling/validation/spec_policy_test.go` (valid/invalid); `cmd/rspp-cli/main_test.go` (usage + exit code + diagnostics)
+  - Done criteria (verifiable): invalid spec/policy fails with actionable paths; valid artifacts pass; wired into `verify-quick`
+
+  - Title: Replay regression upgrade to explicit replay modes + cursor resume
+  - Feature IDs / WP IDs: F-127, F-151, F-152, NF-009; P1-A
+  - Target paths: `internal/tooling/regression`, `cmd/rspp-cli/main.go`, `test/replay`
+  - Dependencies (contracts/other PRs): baseline artifact schema compatibility
+  - Implementation notes (minimal MVP approach): keep fixture mode, add artifact-ingest mode and persisted cursor checkpoints for deterministic resume
+  - Tests to add (file/dir + scenario): `test/replay/rd005_replay_modes_test.go`; `test/replay/rd006_cursor_resume_test.go`; `cmd/rspp-cli/main_test.go` mode/cursor flags
+  - Done criteria (verifiable): replay report supports mode selection; resume-from-cursor is deterministic and CI-failing on divergence
+
+  - Title: Add dedicated gate reporter conformance tests
+  - Feature IDs / WP IDs: NF-024, NF-025, NF-026, NF-027, NF-028, NF-029, NF-038; M11
+  - Target paths: `test/integration` (new gate suite), `cmd/rspp-cli/main_test.go`, `internal/tooling/ops`
+  - Dependencies (contracts/other PRs): none
+  - Implementation notes (minimal MVP approach): assert each gate with positive and negative anchor data, including missing-anchor deterministic failures
+  - Tests to add (file/dir + scenario): `test/integration/gq_mvp_gates_test.go` (7-gate matrix)
+  - Done criteria (verifiable): every MVP gate has pass/fail tests tied to canonical formulas and blocks CI on regressions
+
+  - Title: Implement loopback local-runner mode with ABI parity checks
+  - Feature IDs / WP IDs: F-125, F-130; P1-C
+  - Target paths: `internal/tooling/runner` (new), `cmd/rspp-local-runner/main.go`, `cmd/rspp-local-runner/main_test.go`, `test/integration`
+  - Dependencies (contracts/other PRs): transport adapter expectations
+  - Implementation notes (minimal MVP approach): add `loopback` mode for offline WAV/synthetic input while preserving current LiveKit path
+  - Tests to add (file/dir + scenario): `cmd/rspp-local-runner/main_test.go` loopback defaults; `test/integration/local_runner_loopback_test.go` Event ABI parity
+  - Done criteria (verifiable): offline run works without external transport and emits expected control/lifecycle evidence
+
+  - Title: Build Node Authoring test harness
+  - Feature IDs / WP IDs: F-128; DX-06
+  - Target paths: `internal/tooling/authoring` (new code), `test/framework/extensions` (new)
+  - Dependencies (contracts/other PRs): optional follow-on extension host
+  - Implementation notes (minimal MVP approach): provide in-process synthetic stream harness with deterministic cancel/timeout controls
+  - Tests to add (file/dir + scenario): `internal/tooling/authoring/harness_test.go`; `test/framework/extensions/node_harness_test.go`
+  - Done criteria (verifiable): custom node authors can write deterministic unit tests for event sequence, cancel fence, and timeout behavior
+
+  - Title: Introduce shared command kernel and centralized artifact writer
+  - Feature IDs / WP IDs: F-126, F-149, NF-028; WP-2, WP-3
+  - Target paths: `internal/tooling/commandcore/kernel` (new), `internal/tooling/commandcore/artifacts` (new), `cmd/rspp-cli/main.go`, `cmd/rspp-runtime/main.go`, `cmd/rspp-local-runner/main.go`
+  - Dependencies (contracts/other PRs): none
+  - Implementation notes (minimal MVP approach): migrate one binary at a time starting with `rspp-cli`; standardize help, exit codes, and JSON/MD artifact envelope
+  - Tests to add (file/dir + scenario): cross-binary command contract tests in `cmd/*/main_test.go`
+  - Done criteria (verifiable): command UX/exit semantics are consistent and artifact write logic is no longer duplicated
+
+  - Title: Deliver control-plane command MVP surface
+  - Feature IDs / WP IDs: F-092, F-095, F-099, F-101, F-119; WP-1
+  - Target paths: `cmd/rspp-control-plane/main.go`, `cmd/rspp-control-plane/main_test.go` (new), `internal/tooling/entrypoints/controlplaneops` (new)
+  - Dependencies (contracts/other PRs): control-plane backend implementations
+  - Implementation notes (minimal MVP approach): add `issue-session-token` and `resolve-session-route` with stable JSON outputs and deterministic errors
+  - Tests to add (file/dir + scenario): `cmd/rspp-control-plane/main_test.go` success/validation/stale-authority paths
+  - Done criteria (verifiable): scaffold banner removed; command contracts tested and consumable by automation
+
+  - Title: Add conformance profile + skew governance checks
+  - Feature IDs / WP IDs: F-164, NF-032, NF-010, F-162, F-163
+  - Target paths: `internal/tooling/conformance` (new), `test/conformance_profiles/transport` (new), `test/framework/spectrace` (new)
+  - Dependencies (contracts/other PRs): profile schema decisions
+  - Implementation notes (minimal MVP approach): start with N/N-1 matrix and mandatory-category enforcement for transport/provider/node profiles
+  - Tests to add (file/dir + scenario): `test/integration/version_skew_matrix_test.go`; `test/conformance_profiles/transport/livekit_profile_test.go`; `test/framework/spectrace/spectrace_test.go`
+  - Done criteria (verifiable): allowed skew cells pass, disallowed fail with explicit diagnostics; missing mandatory profile categories fail certification
+- Risks & pitfalls (tail latency, determinism, race, compatibility):
+- Live latency signals are noisy; waiver policy in MVP gate path can mask regressions if overused
+- Replay tooling remains fixture-centric; missing artifact-ingest/cursor paths limits production-fidelity determinism checks
+- Command duplication across binaries increases drift risk for exit codes and artifact envelopes
+- Strict live suites (`a2-runtime-live`) can fail in credential-sparse CI unless environment policy is explicit
+- No explicit skew/conformance framework yet; compatibility regressions can slip until post-MVP gates are added
+- Suggested “owner stream” (which workstream should implement it):
+- Primary: `tooling-gates` stream (`internal/tooling` + `cmd/rspp-cli`); Secondary: `cmd-platform` stream (`cmd/rspp-control-plane`, shared kernel); Partner: `conformance-qa` stream (`test/framework`, `test/integration`, `test/replay`)

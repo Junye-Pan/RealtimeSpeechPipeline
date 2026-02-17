@@ -1,0 +1,18 @@
+{
+  "schema_version": "v1.0",
+  "event_scope": "turn",
+  "session_id": "sess-cancel-valid-1",
+  "turn_id": "turn-cancel-valid-1",
+  "pipeline_version": "pipeline-v1",
+  "event_id": "evt-cancel-valid-1",
+  "lane": "ControlLane",
+  "transport_sequence": 26,
+  "runtime_sequence": 26,
+  "authority_epoch": 9,
+  "runtime_timestamp_ms": 425,
+  "wall_clock_timestamp_ms": 425,
+  "payload_class": "metadata",
+  "signal": "cancel",
+  "emitted_by": "RK-16",
+  "scope": "provider_invocation"
+}

@@ -87,6 +87,65 @@ func TestEvaluateWrapsBackendError(t *testing.T) {
 	}
 }
 
+func TestEvaluateRejectsQuotaViolation(t *testing.T) {
+	t.Parallel()
+
+	service := NewService()
+	service.Backend = stubBackend{
+		evalFn: func(Input) (Output, error) {
+			return Output{
+				AdmissionPolicySnapshot: "admission-policy/quota",
+				SessionRateLimitPerMin:  2,
+				SessionRateObservedPM:   3,
+				TokenRateLimitPerMin:    1000,
+				TokenRateObservedPM:     999,
+			}, nil
+		},
+	}
+
+	out, err := service.Evaluate(Input{TenantID: "tenant-1", SessionID: "sess-1"})
+	if err != nil {
+		t.Fatalf("evaluate failed: %v", err)
+	}
+	if out.OutcomeKind != controlplane.OutcomeReject {
+		t.Fatalf("expected quota violation to force reject, got %+v", out)
+	}
+	if out.Reason != ReasonRejectQuota {
+		t.Fatalf("expected quota reject reason, got %+v", out)
+	}
+	if out.Scope != controlplane.ScopeTenant {
+		t.Fatalf("expected tenant scope for tenant quota output, got %+v", out)
+	}
+}
+
+func TestEvaluateNormalizesNegativeQuotaValues(t *testing.T) {
+	t.Parallel()
+
+	service := NewService()
+	service.Backend = stubBackend{
+		evalFn: func(Input) (Output, error) {
+			return Output{
+				OutcomeKind:            controlplane.OutcomeAdmit,
+				SessionRateLimitPerMin: -1,
+				SessionRateObservedPM:  -2,
+				TokenRateLimitPerMin:   -3,
+				TokenRateObservedPM:    -4,
+			}, nil
+		},
+	}
+
+	out, err := service.Evaluate(Input{SessionID: "sess-1"})
+	if err != nil {
+		t.Fatalf("evaluate failed: %v", err)
+	}
+	if out.SessionRateLimitPerMin != 0 || out.SessionRateObservedPM != 0 || out.TokenRateLimitPerMin != 0 || out.TokenRateObservedPM != 0 {
+		t.Fatalf("expected negative quota fields to normalize to zero, got %+v", out)
+	}
+	if out.OutcomeKind != controlplane.OutcomeAdmit {
+		t.Fatalf("expected normalized non-violating quota output to remain admit, got %+v", out)
+	}
+}
+
 func TestEvaluateRequiresSessionID(t *testing.T) {
 	t.Parallel()
 

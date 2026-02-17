@@ -2,8 +2,11 @@ package replay
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/tiger/realtime-speech-pipeline/api/controlplane"
+	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
 	"github.com/tiger/realtime-speech-pipeline/api/observability"
 )
 
@@ -12,6 +15,10 @@ type TraceArtifact struct {
 	PlanHash              string
 	SnapshotProvenanceRef string
 	Decision              controlplane.DecisionOutcome
+	Lane                  eventabi.Lane
+	RuntimeSequence       int64
+	ProviderID            string
+	ProviderModel         string
 	OrderingMarker        string
 	AuthorityEpoch        int64
 	RuntimeTimestampMS    int64
@@ -112,6 +119,13 @@ func CompareTraceArtifacts(baseline, replay []TraceArtifact, cfg CompareConfig) 
 				Class:   observability.OrderingDivergence,
 				Scope:   scope,
 				Message: fmt.Sprintf("ordering marker mismatch at index=%d baseline=%s replay=%s", i, baseline[i].OrderingMarker, replay[i].OrderingMarker),
+			})
+		}
+		if baseline[i].ProviderID != replay[i].ProviderID || baseline[i].ProviderModel != replay[i].ProviderModel {
+			divergences = append(divergences, observability.ReplayDivergence{
+				Class:   observability.ProviderChoiceDivergence,
+				Scope:   scope,
+				Message: fmt.Sprintf("provider choice mismatch at index=%d baseline=%s/%s replay=%s/%s", i, baseline[i].ProviderID, baseline[i].ProviderModel, replay[i].ProviderID, replay[i].ProviderModel),
 			})
 		}
 
@@ -215,4 +229,39 @@ func absDiff(a, b int64) int64 {
 		return a - b
 	}
 	return b - a
+}
+
+func normalizeReplayLane(lane eventabi.Lane) eventabi.Lane {
+	switch lane {
+	case eventabi.LaneData, eventabi.LaneControl, eventabi.LaneTelemetry:
+		return lane
+	default:
+		return eventabi.LaneData
+	}
+}
+
+func traceRuntimeSequence(artifact TraceArtifact, defaultValue int64) int64 {
+	if artifact.RuntimeSequence >= 0 {
+		return artifact.RuntimeSequence
+	}
+	if sequence, ok := parseRuntimeSequence(artifact.OrderingMarker); ok {
+		return sequence
+	}
+	if defaultValue < 0 {
+		return 0
+	}
+	return defaultValue
+}
+
+func parseRuntimeSequence(marker string) (int64, bool) {
+	trimmed := strings.TrimSpace(marker)
+	if !strings.HasPrefix(trimmed, "runtime_sequence:") {
+		return 0, false
+	}
+	raw := strings.TrimPrefix(trimmed, "runtime_sequence:")
+	sequence, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || sequence < 0 {
+		return 0, false
+	}
+	return sequence, true
 }

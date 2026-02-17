@@ -111,6 +111,7 @@ type EventRecord struct {
 	AuthorityEpoch     *int64       `json:"authority_epoch,omitempty"`
 	RuntimeTimestampMS int64        `json:"runtime_timestamp_ms"`
 	WallClockMS        int64        `json:"wall_clock_timestamp_ms"`
+	TimestampMS        *int64       `json:"timestamp_ms,omitempty"`
 	PayloadClass       PayloadClass `json:"payload_class"`
 	MediaTime          *MediaTime   `json:"media_time,omitempty"`
 }
@@ -133,6 +134,7 @@ type ControlSignal struct {
 	AuthorityEpoch     int64        `json:"authority_epoch"`
 	RuntimeTimestampMS int64        `json:"runtime_timestamp_ms"`
 	WallClockMS        int64        `json:"wall_clock_timestamp_ms"`
+	TimestampMS        *int64       `json:"timestamp_ms,omitempty"`
 	PayloadClass       PayloadClass `json:"payload_class"`
 	Signal             string       `json:"signal"`
 	EmittedBy          string       `json:"emitted_by"`
@@ -177,6 +179,9 @@ func (e EventRecord) Validate() error {
 	if e.RuntimeTimestampMS < 0 || e.WallClockMS < 0 {
 		return fmt.Errorf("timestamps must be >= 0")
 	}
+	if e.TimestampMS != nil && *e.TimestampMS < 0 {
+		return fmt.Errorf("timestamp_ms must be >=0")
+	}
 	if !isPayloadClass(e.PayloadClass) {
 		return fmt.Errorf("invalid payload_class: %q", e.PayloadClass)
 	}
@@ -219,6 +224,9 @@ func (c ControlSignal) Validate() error {
 	if c.RuntimeSequence < 0 || c.RuntimeTimestampMS < 0 || c.WallClockMS < 0 {
 		return fmt.Errorf("runtime sequence and timestamps must be >=0")
 	}
+	if c.TimestampMS != nil && *c.TimestampMS < 0 {
+		return fmt.Errorf("timestamp_ms must be >=0")
+	}
 	if c.Amount != nil && *c.Amount < 1 {
 		return fmt.Errorf("amount must be >=1 when present")
 	}
@@ -238,10 +246,34 @@ func (c ControlSignal) Validate() error {
 	if c.Signal == "cancel" && c.Scope == "" {
 		return fmt.Errorf("cancel requires scope")
 	}
+	if c.Signal == "cancel" && !isCancelScope(c.Scope) {
+		return fmt.Errorf("cancel scope must be one of session|turn|node|provider_invocation")
+	}
+
+	if c.Signal == "turn_open_proposed" {
+		if c.EventScope != ScopeSession || c.EmittedBy != "RK-02" {
+			return fmt.Errorf("turn_open_proposed requires event_scope=session and emitted_by=RK-02")
+		}
+	}
 
 	if inStringSet(c.Signal, []string{"turn_open", "commit", "abort", "close"}) {
 		if c.EventScope != ScopeTurn || c.EmittedBy != "RK-03" || c.TurnID == "" {
 			return fmt.Errorf("%s requires turn scope, emitted_by=RK-03, and turn_id", c.Signal)
+		}
+	}
+	if inStringSet(c.Signal, []string{"barge_in", "stop", "cancel"}) {
+		if !inStringSet(c.EmittedBy, []string{"RK-06", "RK-16"}) {
+			return fmt.Errorf("%s requires emitted_by RK-06|RK-16", c.Signal)
+		}
+	}
+	if inStringSet(c.Signal, []string{"budget_warning", "budget_exhausted"}) {
+		if c.EmittedBy != "RK-17" || c.Reason == "" {
+			return fmt.Errorf("%s requires emitted_by=RK-17 and reason", c.Signal)
+		}
+	}
+	if inStringSet(c.Signal, []string{"degrade", "fallback"}) {
+		if !inStringSet(c.EmittedBy, []string{"RK-13", "RK-17"}) || c.Reason == "" {
+			return fmt.Errorf("%s requires emitted_by RK-13|RK-17 and reason", c.Signal)
 		}
 	}
 
@@ -393,4 +425,8 @@ func inStringSet(v string, set []string) bool {
 		}
 	}
 	return false
+}
+
+func isCancelScope(v string) bool {
+	return inStringSet(v, []string{"session", "turn", "node", "provider_invocation"})
 }

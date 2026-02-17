@@ -22,16 +22,16 @@ Code-verification timestamp: **February 16, 2026**.
 | `CP-01` Pipeline Registry | `internal/controlplane/registry` | Implemented baseline resolver with defaults and backend override (`ResolvePipelineRecord`). | No publish/mutate API yet; immutability lifecycle is assumed, not enforced by control-plane write path. | `F-015`, `F-092` |
 | `CP-02` Spec Normalizer | `internal/controlplane/normalizer` | Implemented baseline normalization and strict MVP profile gate (`simple` only). | No execution-profile version surface (`simple/v1`) or layered override resolution yet. | `F-078`, `F-079`, `F-080`, `F-081` |
 | `CP-03` Graph Compiler | `internal/controlplane/graphcompiler` | Implemented deterministic compile output (`graph_ref`, snapshot, fingerprint). | Compiler is reference/fingerprint normalization only; no full graph semantic compilation/validation pipeline yet. | `F-002`, `F-005`, `F-008` |
-| `CP-04` Rollout Resolver | `internal/controlplane/rollout` | Implemented effective version resolution from requested/registry/backend snapshot. | No first-class canary/percentage/allowlist rollout rule engine in code path yet. | `F-093`, `F-100`, `F-102` |
+| `CP-04` Rollout Resolver | `internal/controlplane/rollout` | Implemented deterministic version resolution with requested/registry/default precedence plus canary controls (`tenant_allowlist`, `canary_percentage`) and backend snapshot integration. | Rollout strategy model is intentionally compact for MVP (no multi-stage time-window scheduler yet). | `F-093`, `F-100`, `F-102` |
 | `CP-05` Routing View Publisher | `internal/controlplane/routingview` | Implemented snapshot reference resolver with required routing/admission/ABI refs. | Snapshot does not currently carry concrete runtime endpoint selection metadata or client route payload fields. | `F-094`, `F-099`, `F-159` |
 | `CP-06` Provider Health Snapshot | `internal/controlplane/providerhealth` | Implemented snapshot reference resolver (`ProviderHealthSnapshot`). | No in-module health aggregation, SLO windows, or incident model; currently a snapshot pointer seam. | `F-060`, `F-112` |
-| `CP-07` Policy Evaluation | `internal/controlplane/policy` | Implemented deterministic allowed-action normalization and snapshot reference output. | No built-in provider selection/cost/circuit policy engine; behavior primarily delegated to backends. | `F-056`, `F-057`, `F-058`, `F-066`, `F-102` |
+| `CP-07` Policy Evaluation | `internal/controlplane/policy` | Implemented deterministic allowed-action normalization and resolved turn-policy surface materialization (`budgets`, `provider_bindings`, `edge_buffer_policies`, `node_execution_policies`, `flow_control`, `recording_policy`) with backend/default normalization and tenant-aware policy input threading. | No built-in provider selection/cost/circuit policy engine; behavior remains backend/default table driven. | `F-056`, `F-057`, `F-058`, `F-066`, `F-102` |
 | `CP-08` Lease Authority | `internal/controlplane/lease` | Implemented epoch validity + authorization decision surface with normalized reasons. | No signed lease token/expiry/renewal model yet; authority is represented by epoch + booleans. | `F-095`, `F-156` |
-| `CP-09` Admission Decision | `internal/controlplane/admission` | Implemented pre-turn `admit/reject/defer` decision with deterministic defaults and scope normalization. | Fairness/scheduling-point policies are not modeled here yet (currently pre-turn baseline only). | `F-098`, `F-049`, `F-050`, `F-172`, `F-174` |
+| `CP-09` Admission Decision | `internal/controlplane/admission` | Implemented pre-turn `admit/reject/defer` decision with deterministic defaults and scope normalization; tenant-aware input is threaded through turn-start resolution, and distribution adapters support tenant-scoped admission overrides via additive `admission.by_tenant`. | Fairness/scheduling-point policies are not modeled here yet (currently pre-turn baseline only). | `F-098`, `F-049`, `F-050`, `F-172`, `F-174` |
 | `CP-10` Snapshot Distribution | `internal/controlplane/distribution` | Implemented file + HTTP adapters, deterministic error taxonomy, stale classification, HTTP failover/retry/cache/stale-serving bounds, retention snapshot loading. | No broker/API service abstraction above distribution adapters yet. | `F-149`, `F-159`, `NF-028` |
-| `CP-11` TurnStart Resolver Facade | Current location: `internal/runtime/turnarbiter/controlplane_bundle.go` | Implemented composition order and immutable turn-start bundle assembly with provenance + CP admission/lease decisions. | Architecturally lives in runtime package; target ownership should move to `internal/controlplane/resolution`. | `F-149`, `F-141`, `F-156` |
+| `CP-11` TurnStart Resolver Facade | Current location: `internal/runtime/turnarbiter/controlplane_bundle.go` | Implemented composition order and immutable turn-start bundle assembly with provenance, CP admission/lease decisions, and full policy surfaces consumed by runtime plan freeze. | Architecturally lives in runtime package; target ownership should move to `internal/controlplane/resolution`. | `F-149`, `F-141`, `F-156` |
 | `CP-12` Backend Fallback Wiring | `internal/runtime/turnarbiter/controlplane_backends.go` | Implemented per-service fallback wrappers: non-stale backend errors fall back to defaults; stale snapshot errors propagate. | This resilience choice is implicit in runtime wiring, not declared as explicit control-plane policy contract yet. | `F-159`, `NF-028` |
-| `CP-13` Control-plane process surface | `cmd/rspp-control-plane/main.go` | Scaffold only (`fmt.Println`). | No control-plane API server, mutation/audit endpoints, route/token endpoints, or operational status APIs yet. | `F-097`, `F-099`, `F-101`, `F-165` |
+| `CP-13` Control-plane process surface | `cmd/rspp-control-plane/main.go` | Implemented baseline command process surface (`publish`, `list`, `get`, `rollback`, `status`, `audit`) with persisted immutable audit trail state. | No network API server yet; process surface is CLI/state-file based for MVP baseline. | `F-097`, `F-099`, `F-101`, `F-165` |
 
 ## Current turn-start composition order (implemented)
 
@@ -59,6 +59,7 @@ type TurnStartBundleResolver interface {
 }
 
 type TurnStartBundleInput struct {
+    TenantID                 string
     SessionID                string
     TurnID                   string
     RequestedPipelineVersion string
@@ -70,6 +71,12 @@ type TurnStartBundle struct {
     GraphDefinitionRef     string
     ExecutionProfile       string
     GraphFingerprint       string
+    Budgets                Budgets
+    ProviderBindings       map[string]string
+    EdgeBufferPolicies     map[string]EdgeBufferPolicy
+    NodeExecutionPolicies  map[string]NodeExecutionPolicy
+    FlowControl            FlowControl
+    RecordingPolicy        RecordingPolicy
     AllowedAdaptiveActions []string
     SnapshotProvenance     SnapshotProvenance
     HasCPAdmissionDecision bool
@@ -129,6 +136,7 @@ type SessionRouteBroker interface {
 - `ResolveVersionOutput` (`rollout`)
 - `routingview.Snapshot`
 - `policy.Output`
+- `policy.ResolvedTurnPolicy`
 - `providerhealth.Output`
 - `admission.Output`
 - `lease.Output`
@@ -184,21 +192,22 @@ type SessionRouteBroker interface {
 ## 5) Design invariants (must preserve)
 
 1. Turn-start bundle must contain complete snapshot provenance and be immutable per turn (`F-149`, `NF-028`).
-2. Pre-turn CP decisions (`admit/reject/defer`) must not emit accepted-turn terminal events (`F-141`).
-3. Authority validation must reject stale/deauthorized epochs deterministically (`F-156`, `NF-027`).
-4. Routing snapshot resolution must fail deterministically on stale snapshots (`F-159`).
-5. Backend stale-snapshot errors are propagated; non-stale backend errors may only fall back via explicit policy (`F-159`).
-6. Execution profile unsupported in MVP must be rejected deterministically (`F-078`, current `simple`-only gate).
-7. Rollout fallback order must be deterministic (backend -> registry -> requested only where allowed).
-8. Allowed adaptive actions must be normalized into canonical order and valid action set (`F-057`, `F-066`).
-9. Admission scope normalization must preserve tenant/session boundaries (`F-114`, `F-098`).
-10. Lease decisions must emit normalized reason taxonomy for stale/deauthorized/authorized outcomes (`F-156`).
-11. Distribution HTTP behavior must preserve ordered endpoint failover and bounded stale-serving semantics (`F-159`).
-12. Snapshot artifact schema version must be validated before service resolution.
-13. Retention snapshot resolution must classify stale vs missing deterministically (`F-116`, `NF-014`).
-14. Control-plane mutation surfaces must eventually emit auditable records before becoming authoritative (`F-097`, `F-165`).
-15. Compatibility/skew policy must be explicit before multi-version runtime-control-plane rollouts (`NF-032`, `F-162`).
-16. Control-plane token material must never leak secrets in logs/events (`F-117`, `NF-011`).
+2. Turn-start bundle policy surfaces (`budgets`, `provider_bindings`, `edge_buffer_policies`, `node_execution_policies`, `flow_control`, `recording_policy`) must be complete and valid before resolver handoff (`F-149`, `F-102`).
+3. Pre-turn CP decisions (`admit/reject/defer`) must not emit accepted-turn terminal events (`F-141`).
+4. Authority validation must reject stale/deauthorized epochs deterministically (`F-156`, `NF-027`).
+5. Routing snapshot resolution must fail deterministically on stale snapshots (`F-159`).
+6. Backend stale-snapshot errors are propagated; non-stale backend errors may only fall back via explicit policy (`F-159`).
+7. Execution profile unsupported in MVP must be rejected deterministically (`F-078`, current `simple`-only gate).
+8. Rollout fallback order must be deterministic (backend -> registry -> requested only where allowed).
+9. Allowed adaptive actions must be normalized into canonical order and valid action set (`F-057`, `F-066`).
+10. Admission scope normalization must preserve tenant/session boundaries (`F-114`, `F-098`).
+11. Lease decisions must emit normalized reason taxonomy for stale/deauthorized/authorized outcomes (`F-156`).
+12. Distribution HTTP behavior must preserve ordered endpoint failover and bounded stale-serving semantics (`F-159`).
+13. Snapshot artifact schema version must be validated before service resolution.
+14. Retention snapshot resolution must classify stale vs missing deterministically (`F-116`, `NF-014`).
+15. Control-plane mutation surfaces must eventually emit auditable records before becoming authoritative (`F-097`, `F-165`).
+16. Compatibility/skew policy must be explicit before multi-version runtime-control-plane rollouts (`NF-032`, `F-162`).
+17. Control-plane token material must never leak secrets in logs/events (`F-117`, `NF-011`).
 
 ## 6) Major tradeoffs and alternatives
 
@@ -229,7 +238,7 @@ type SessionRouteBroker interface {
 3. Introduce tenant-aware turn-start input.
    - Update: turn-start input structs and all call sites.
    - Files: `internal/runtime/turnarbiter/controlplane_bundle.go`, `internal/runtime/turnarbiter/arbiter.go`, related tests.
-   - Done when: tenant scope reaches policy/admission consistently and tests assert scope behavior.
+   - Status: partial for MVP baseline. `tenant_id` now reaches CP admission + policy evaluation through runtime turn-start resolver; distribution snapshots support tenant-scoped policy/admission overrides (`policy.by_tenant`, `admission.by_tenant`) and are asserted in resolver/arbiter/distribution tests; provider-health tenant scoping remains future work.
 
 ### P1: Meet MVP control-plane feature contracts more completely
 

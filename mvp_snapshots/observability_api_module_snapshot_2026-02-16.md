@@ -1,0 +1,111 @@
+MODULE SNAPSHOT
+- Area: `Observability + API`
+- Canonical guide: `internal/observability/observability_module_guide.md` + `api/observability/observability_api_guide.md`
+- Code path prefixes: `internal/observability`, `api/observability`
+- Public contract surfaces (api/*, pkg/*):
+- `api/observability` contracts implemented today in `api/observability/types.go:10`:
+- `DivergenceClass`, `ReplayDivergence`
+- `ReplayFidelity`
+- `ReplayAccessRequest` + `Validate`
+- `ReplayAccessDecision`, `ReplayRedactionMarker`
+- `ReplayAuditEvent` + `Validate`
+- `api/eventabi` contracts consumed for payload class and redaction validation in `api/observability/types.go:6`, `internal/observability/timeline/recorder.go:9`, `internal/observability/replay/retention.go:8`.
+- `api/controlplane` contracts consumed for replay/timeline provenance and decision artifacts in `internal/observability/timeline/recorder.go:8`, `internal/observability/replay/comparator.go:6`.
+- `pkg/*` exported packages touched by this area: none.
+- Internal interfaces produced/consumed:
+- Produced: `telemetry.Sink`/`telemetry.Emitter` (`internal/observability/telemetry/pipeline.go:89`), `ImmutableReplayAuditSink` + resolver (`internal/observability/replay/service.go:17`), `RetentionPolicyResolver` (`internal/observability/replay/retention.go:188`).
+- Consumed: security redaction policy hooks (`internal/observability/timeline/redaction.go:12`, `internal/observability/replay/access.go:50`).
+- MVP responsibilities (bullets):
+- MUST provide non-blocking telemetry intake with bounded memory and explicit drop accounting (`internal/observability/telemetry/pipeline.go:314`, `internal/observability/telemetry/pipeline_test.go:24`).
+- MUST maintain OR-02 baseline evidence completeness for accepted turns (`internal/observability/timeline/recorder.go:280`, `test/replay/rd002_rd003_rd004_test.go:59`).
+- MUST enforce deny-by-default replay access with immutable audit trails (`internal/observability/replay/access.go:30`, `internal/observability/replay/service.go:59`).
+- MUST enforce tenant-scoped retention/deletion behavior (`internal/observability/replay/retention.go:47`, `internal/observability/replay/retention.go:394`).
+- MUST provide divergence taxonomy for replay comparison (`api/observability/types.go:10`, `internal/observability/replay/comparator.go:33`).
+- MUST NOT block control/cancel progression on telemetry/timeline pressure (drop/shed posture in `internal/observability/telemetry/pipeline.go:319` and downgrade behavior in `internal/observability/timeline/recorder.go:564`).
+- MUST NOT allow cross-tenant replay access or unaudited replay decisions (`internal/observability/replay/access.go:37`, `internal/observability/replay/service.go:71`).
+- MVP invariants to enforce (bullets):
+- Non-blocking emit under queue pressure: enforced by non-blocking `select` enqueue path (`internal/observability/telemetry/pipeline.go:319`) and tested (`internal/observability/telemetry/pipeline_test.go:24`).
+- Deterministic sampling/accounting: enforced by hashed sampling (`internal/observability/telemetry/pipeline.go:277`) and tested (`internal/observability/telemetry/pipeline_test.go:59`).
+- OR-02 accepted-turn completeness: enforced by `BaselineEvidence.ValidateCompleteness` (`internal/observability/timeline/recorder.go:280`) and replay completeness tests (`test/replay/rd002_rd003_rd004_test.go:59`).
+- Deterministic recording downgrade visibility: enforced in `AppendDetail` + control signal emission (`internal/observability/timeline/recorder.go:548`, `internal/observability/timeline/recorder.go:583`), tested in `internal/observability/timeline/recorder_test.go:23`.
+- Replay access fail-closed + immutable audit append: enforced in `AccessService.AuthorizeReplayAccess` (`internal/observability/replay/service.go:59`), tested in `internal/observability/replay/service_test.go:47`.
+- Tenant-scoped retention/deletion: enforced in `RetentionPolicy.Validate` and scoped deletion (`internal/observability/replay/retention.go:137`, `internal/observability/replay/retention.go:394`), tested in `internal/observability/replay/retention_test.go:36`.
+- Correlation consistency across telemetry/logs/metrics/traces is only partially enforced (normalization exists in `internal/observability/telemetry/pipeline.go:364`; no centralized resolver package exists).
+- Current implementation status:
+- Implemented:
+- Telemetry lane core (OBS-02): `internal/observability/telemetry/pipeline.go`, `internal/observability/telemetry/env.go`, `internal/observability/telemetry/otlp_http.go`.
+- Timeline Stage-A append/completeness (OBS-04): `internal/observability/timeline/recorder.go`, `internal/observability/timeline/artifact.go`, `internal/observability/timeline/redaction.go`.
+- Replay access/audit/retention baseline (OBS-09/OBS-10): `internal/observability/replay/access.go`, `internal/observability/replay/service.go`, `internal/observability/replay/audit_backend.go`, `internal/observability/replay/audit_backend_http.go`, `internal/observability/replay/retention.go`, `internal/observability/replay/retention_backend.go`.
+- API baseline contracts: `api/observability/types.go`.
+- Validation evidence (2026-02-16): `go test ./api/observability ./internal/observability/telemetry ./internal/observability/timeline ./internal/observability/replay`, `make verify-quick`, `make security-baseline-check`, `go test ./...`, `go test ./test/contract ./test/integration ./test/replay ./test/failover` all passed.
+- Recheck evidence (2026-02-16): canonical missing paths remain absent (`internal/observability/telemetry/context`, `internal/observability/timeline/exporter`, `internal/observability/replay/engine`, `internal/observability/extensions`) and feature mapping still resolves to `F-067..F-077`, `NF-008`.
+- Partial:
+- Telemetry processors/exporters depth (OBS-03): single sink abstraction exists, but no dedicated processor modules by channel (`internal/observability/telemetry/pipeline.go`, `internal/observability/telemetry/otlp_http.go`).
+- OR-02 evidence builder boundary (OBS-05): evidence schema/checks are in recorder; no dedicated builder module (`internal/observability/timeline/recorder.go`).
+- Divergence/report pipeline (OBS-08): comparator exists (`internal/observability/replay/comparator.go`), but no module-local report artifact builder.
+- API hardening breadth: no standalone `ReplayAccessDecision.Validate`, no replay mode/cursor/request/result/report types, and narrow package-local tests (`api/observability/types.go`, `api/observability/types_test.go`).
+- Scaffold/Missing:
+- Central correlation contract (OBS-01): missing `internal/observability/telemetry/context`.
+- Durable timeline exporter (OBS-06): missing `internal/observability/timeline/exporter`.
+- Replay engine/cursor execution (OBS-07): missing `internal/observability/replay/engine`.
+- Extension host/conformance surface (OBS-11): missing `internal/observability/extensions`.
+- API replay mode/cursor/report contracts: absent in `api/observability/types.go`.
+- Deterministic in-memory retention store is explicitly scaffold-oriented (`internal/observability/replay/retention.go:293`).
+- MVP backlog candidates (items):
+- For each item:
+- Title: Canonical correlation contract + structured observability IDs
+- Feature IDs / WP IDs: `F-067`, `NF-008`, `OBS-01`, `BL-023`
+- Target paths: `internal/observability/telemetry/context/*` (new), `internal/observability/telemetry/pipeline.go`, `internal/observability/timeline/recorder.go`
+- Dependencies (contracts/other PRs): May need WS-1 contract alignment if correlation type is surfaced in `api/observability`
+- Implementation notes (minimal MVP approach): Add a strict resolver/validator for required IDs (`session_id`, `turn_id`, `pipeline_version`, node/edge ID), wire into telemetry/timeline entrypoints, fail deterministically with explicit diagnostics
+- Tests to add (file/dir + scenario): `internal/observability/telemetry/context_test.go` for required/malformed IDs; `test/integration/*observability*_test.go` cross-backend correlation consistency check
+- Done criteria (verifiable): sampled logs/metrics/traces/timeline events all carry consistent required IDs; invalid correlation rejected before persistence/export
+- Title: Telemetry metrics/traces completeness for latency and queue/drop/merge
+- Feature IDs / WP IDs: `F-068`, `F-069`, `F-070`, `OBS-02`, `OBS-03`, `BL-024`
+- Target paths: `internal/observability/telemetry/pipeline.go`, `internal/observability/telemetry/otlp_http.go`
+- Dependencies (contracts/other PRs): runtime producers must emit node/edge/provider labels
+- Implementation notes (minimal MVP approach): Add explicit metric names/label schema for node/edge latency histograms and queue/drop/merge counters; enforce trace linkage fields in exported span payloads
+- Tests to add (file/dir + scenario): extend `internal/observability/telemetry/pipeline_test.go` for per-edge counters and label schema; extend `internal/observability/telemetry/otlp_http_test.go` for span correlation fields
+- Done criteria (verifiable): histogram/counter metrics present with required labels; OTLP trace export includes session/turn correlation
+- Title: OR-02 durable export separation + sampling/retention closure
+- Feature IDs / WP IDs: `F-071`, `F-154`, `F-176`, `NF-028`, `OBS-05`, `OBS-06`, `BL-022`
+- Target paths: `internal/observability/timeline/exporter/*` (new), `internal/observability/timeline/recorder.go`, `internal/observability/timeline/artifact.go`
+- Dependencies (contracts/other PRs): depends on runtime lifecycle markers and gate tooling consumption
+- Implementation notes (minimal MVP approach): Keep local append synchronous; add async durable exporter queue/retry with lag/drop metrics; preserve deterministic downgrade behavior when under pressure
+- Tests to add (file/dir + scenario): `internal/observability/timeline/exporter_test.go` outage/retry/non-blocking; `test/replay/*` completeness + downgrade visibility scenario
+- Done criteria (verifiable): accepted-turn OR-02 completeness remains 100%; control progression unaffected during exporter outage
+- Title: Replay engine + mode/cursor API contract completion
+- Feature IDs / WP IDs: `F-072`, `F-151`, `F-152`, `NF-009`, `OBS-07`, `BL-024`, `BL-039`, `CPR-3`
+- Target paths: `api/observability/types.go`, `internal/observability/replay/engine/*` (new)
+- Dependencies (contracts/other PRs): WS-1 contract PR first for `api/observability`; WS-5 consumes it
+- Implementation notes (minimal MVP approach): Introduce typed `ReplayMode`, `ReplayCursor`, replay run request/result/report schema; add deterministic cursor stepping/resume
+- Tests to add (file/dir + scenario): `api/observability/types_test.go` mode/cursor validation; `internal/observability/replay/engine_test.go` deterministic replay resume; `test/replay` fixture for replay-mode behavior
+- Done criteria (verifiable): replay outputs include explicit mode/cursor; same cursor+inputs reproduce identical divergence output
+- Title: Replay access/redaction contract hardening
+- Feature IDs / WP IDs: `F-073`, `F-116`, `NF-011`, `NF-014`, `OBS-09`, `OBS-10`, `BL-039`
+- Target paths: `api/observability/types.go`, `internal/observability/replay/access.go`, `internal/observability/replay/service.go`, `internal/observability/timeline/redaction.go`
+- Dependencies (contracts/other PRs): WS-1 contract owner for `api/observability`; security policy package already present
+- Implementation notes (minimal MVP approach): add standalone `ReplayAccessDecision.Validate` + marker validation helpers; ensure all deny/redaction paths are auditable and tenant-scoped
+- Tests to add (file/dir + scenario): extend `api/observability/types_test.go` negative paths; extend `internal/observability/replay/service_test.go` invalid decision fail-closed behavior
+- Done criteria (verifiable): invalid decisions fail prior to audit wrap; denied and allowed outcomes both emit valid immutable audit events
+- Title: Divergence report artifact pipeline (module-local)
+- Feature IDs / WP IDs: `F-077`, `F-127`, `NF-009`, `OBS-08`, `BL-024`
+- Target paths: `internal/observability/replay/report.go` (new), optional schema in `api/observability`
+- Dependencies (contracts/other PRs): aligns with tooling consumers (`internal/tooling/regression`, `cmd/rspp-cli`)
+- Implementation notes (minimal MVP approach): keep comparator class taxonomy stable, add machine-readable report builder and serializer
+- Tests to add (file/dir + scenario): `internal/observability/replay/report_test.go` schema + class coverage; add `internal/observability/replay/comparator_test.go` for direct comparator unit coverage; `test/replay/*` report artifact export assertions
+- Done criteria (verifiable): replay diff outputs include output/timing/provider-choice divergences and serialize consistently
+- Title: Missing UX-facing observability features
+- Feature IDs / WP IDs: `F-074`, `F-075`, `F-076`, `BL-024`
+- Target paths: primarily `cmd/rspp-cli`, `internal/tooling/*` (outside this module’s core paths but dependent)
+- Dependencies (contracts/other PRs): requires replay/timeline API contracts and WS-5 tooling stream
+- Implementation notes (minimal MVP approach): add timeline view command, session summary export, and single-session debug capture with strict scope/TTL
+- Tests to add (file/dir + scenario): `cmd/rspp-cli/main_test.go` timeline/summaries/debug toggles; integration overhead guard tests in `test/integration`
+- Done criteria (verifiable): CLI/UI timeline filtering works, summaries are tenant-scoped/exportable, debug capture does not raise unrelated-session overhead beyond threshold
+- Risks & pitfalls (tail latency, determinism, race, compatibility):
+- Tail latency risk if durable export or audit writes become synchronous on hot path; preserve non-blocking channel/drop posture.
+- Determinism risk if replay cursor/mode remains stringly or tolerance logic drifts across consumers; contract types should be centralized in `api/observability`.
+- Race/concurrency risk around global default emitter and sink implementations; keep atomic/sync usage and add race-focused tests when adding new emit paths.
+- Compatibility risk for cross-module contracts (`api/controlplane` replay mode strings vs new `api/observability` enums); requires staged WS-1 compatibility rollout.
+- Security/compliance risk if decision/marker validation remains indirect-only via `ReplayAuditEvent.Validate`; enforce symmetric validation at decision construction points.
+- Suggested “owner stream” (which workstream should implement it): `WS-1 Contracts` for `api/observability` schema additions (`ReplayMode`, `ReplayCursor`, replay run/report types, decision validators), then `WS-5 Observability + Tooling + Tests` for `internal/observability` implementation and replay/timeline test expansion.

@@ -8,6 +8,7 @@ import (
 	obs "github.com/tiger/realtime-speech-pipeline/api/observability"
 	replaycmp "github.com/tiger/realtime-speech-pipeline/internal/observability/replay"
 	"github.com/tiger/realtime-speech-pipeline/internal/observability/timeline"
+	runtimeTimebase "github.com/tiger/realtime-speech-pipeline/internal/runtime/timebase"
 )
 
 func TestRD002RecomputeDecisionsTimingTolerance(t *testing.T) {
@@ -112,6 +113,59 @@ func TestRD004SnapshotProvenancePlanDivergence(t *testing.T) {
 	divergences := replaycmp.CompareTraceArtifacts(baseline, replayed, replaycmp.CompareConfig{TimingToleranceMS: 10})
 	if len(divergences) != 1 || divergences[0].Class != obs.PlanDivergence {
 		t.Fatalf("expected PLAN_DIVERGENCE for snapshot provenance mismatch, got %+v", divergences)
+	}
+}
+
+func TestRD002TimebaseProjectionDeterminism(t *testing.T) {
+	t.Parallel()
+
+	makeTrace := func() ([]replaycmp.TraceArtifact, error) {
+		svc := runtimeTimebase.NewService()
+		if err := svc.Calibrate("sess-rd2-timebase", runtimeTimebase.Calibration{
+			MonotonicMS: 1000,
+			WallClockMS: 2000,
+			MediaTimeMS: 1500,
+		}); err != nil {
+			return nil, err
+		}
+		p, err := svc.Project("sess-rd2-timebase", 1020)
+		if err != nil {
+			return nil, err
+		}
+		decision := controlplane.DecisionOutcome{
+			OutcomeKind:        controlplane.OutcomeAdmit,
+			Phase:              controlplane.PhasePreTurn,
+			Scope:              controlplane.ScopeSession,
+			SessionID:          "sess-rd2-timebase",
+			EventID:            "evt-rd2-timebase-1",
+			RuntimeTimestampMS: p.WallClockMS,
+			WallClockMS:        p.WallClockMS,
+			EmittedBy:          controlplane.EmitterRK25,
+			Reason:             "admission_capacity_allow",
+		}
+		return []replaycmp.TraceArtifact{
+			{
+				PlanHash:              "plan-rd2-timebase",
+				SnapshotProvenanceRef: "snapshot-rd2-timebase",
+				OrderingMarker:        "runtime_sequence:20",
+				AuthorityEpoch:        4,
+				RuntimeTimestampMS:    p.WallClockMS,
+				Decision:              decision,
+			},
+		}, nil
+	}
+
+	baseline, err := makeTrace()
+	if err != nil {
+		t.Fatalf("build baseline trace: %v", err)
+	}
+	replayed, err := makeTrace()
+	if err != nil {
+		t.Fatalf("build replay trace: %v", err)
+	}
+	divergences := replaycmp.CompareTraceArtifacts(baseline, replayed, replaycmp.CompareConfig{TimingToleranceMS: 0})
+	if len(divergences) != 0 {
+		t.Fatalf("expected deterministic replay with identical timebase mapping, got %+v", divergences)
 	}
 }
 

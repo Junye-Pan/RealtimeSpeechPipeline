@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	providerconfig "github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/config"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/contracts"
 	"github.com/tiger/realtime-speech-pipeline/providers/common/httpadapter"
 	"github.com/tiger/realtime-speech-pipeline/providers/common/streamsse"
@@ -32,8 +33,8 @@ type Adapter struct {
 
 func ConfigFromEnv() Config {
 	return Config{
-		APIKey:   os.Getenv("RSPP_LLM_GEMINI_API_KEY"),
-		Endpoint: defaultString(os.Getenv("RSPP_LLM_GEMINI_ENDPOINT"), "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"),
+		APIKey:   providerconfig.ResolveEnvValue("RSPP_LLM_GEMINI_API_KEY", "RSPP_LLM_GEMINI_API_KEY_REF", ""),
+		Endpoint: providerconfig.ResolveEnvValue("RSPP_LLM_GEMINI_ENDPOINT", "RSPP_LLM_GEMINI_ENDPOINT_REF", "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"),
 		Prompt:   defaultString(os.Getenv("RSPP_LLM_GEMINI_PROMPT"), "Reply with the word: ok"),
 		Timeout:  10 * time.Second,
 	}

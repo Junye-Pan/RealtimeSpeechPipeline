@@ -1487,6 +1487,23 @@
             ]
           }
         },
+        "node_execution_policies": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "concurrency_limit": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "fairness_key": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
         "flow_control": {
           "type": "object",
           "additionalProperties": false,
@@ -1736,6 +1753,185 @@
               }
             }
           }
+        },
+        "streaming_handoff": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "stt_to_llm": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "min_partial_chars": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "trigger_on_punctuation": {
+                  "type": "boolean"
+                },
+                "max_partial_age_ms": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "max_pending_revisions": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "max_pending_segments": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "coalesce_latest_only": {
+                  "type": "boolean"
+                },
+                "emit_flow_control_signals": {
+                  "type": "boolean"
+                },
+                "degrade_on_threshold_breach": {
+                  "type": "boolean"
+                }
+              },
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "enabled": {
+                        "const": true
+                      }
+                    },
+                    "required": [
+                      "enabled"
+                    ]
+                  },
+                  "then": {
+                    "required": [
+                      "min_partial_chars",
+                      "max_partial_age_ms",
+                      "max_pending_revisions",
+                      "max_pending_segments"
+                    ]
+                  }
+                }
+              ]
+            },
+            "llm_to_tts": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "min_partial_chars": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "trigger_on_punctuation": {
+                  "type": "boolean"
+                },
+                "max_partial_age_ms": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "max_pending_revisions": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "max_pending_segments": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "coalesce_latest_only": {
+                  "type": "boolean"
+                },
+                "emit_flow_control_signals": {
+                  "type": "boolean"
+                },
+                "degrade_on_threshold_breach": {
+                  "type": "boolean"
+                }
+              },
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "enabled": {
+                        "const": true
+                      }
+                    },
+                    "required": [
+                      "enabled"
+                    ]
+                  },
+                  "then": {
+                    "required": [
+                      "min_partial_chars",
+                      "max_partial_age_ms",
+                      "max_pending_revisions",
+                      "max_pending_segments"
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "enabled": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "enabled"
+                ]
+              },
+              "then": {
+                "required": [
+                  "stt_to_llm",
+                  "llm_to_tts"
+                ],
+                "anyOf": [
+                  {
+                    "properties": {
+                      "stt_to_llm": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "const": true
+                          }
+                        },
+                        "required": [
+                          "enabled"
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "llm_to_tts": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "const": true
+                          }
+                        },
+                        "required": [
+                          "enabled"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
         }
       }
     },

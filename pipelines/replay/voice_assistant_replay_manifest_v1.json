@@ -1,0 +1,14 @@
+{
+  "schema_version": "rspp.replay.manifest.v1",
+  "manifest_id": "voice_assistant_replay_manifest_v1",
+  "pipeline_version": "pipeline-v1",
+  "recording_level": "L0",
+  "default_mode": "regression",
+  "cursor_policy": {
+    "stable_sort_keys": [
+      "runtime_timestamp_ms",
+      "runtime_sequence",
+      "event_id"
+    ]
+  }
+}

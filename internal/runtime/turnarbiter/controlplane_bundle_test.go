@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tiger/realtime-speech-pipeline/api/controlplane"
 	"github.com/tiger/realtime-speech-pipeline/internal/controlplane/normalizer"
 	"github.com/tiger/realtime-speech-pipeline/internal/controlplane/policy"
 	"github.com/tiger/realtime-speech-pipeline/internal/controlplane/providerhealth"
@@ -39,6 +40,9 @@ func TestResolveTurnStartBundleDefaults(t *testing.T) {
 	if err := bundle.Validate(); err != nil {
 		t.Fatalf("expected valid bundle, got %v", err)
 	}
+	if bundle.LeaseTokenID == "" || bundle.LeaseTokenExpiresAtUTC == "" {
+		t.Fatalf("expected lease token metadata in default bundle, got %+v", bundle)
+	}
 }
 
 func TestResolveTurnStartBundleRequiresSessionID(t *testing.T) {
@@ -67,6 +71,8 @@ func TestDefaultSnapshotProvenanceHasAllRefs(t *testing.T) {
 func TestResolveTurnStartBundleUsesInjectedServices(t *testing.T) {
 	t.Parallel()
 
+	var capturedRolloutInput rollout.ResolveVersionInput
+
 	registryService := registry.NewService()
 	registryService.Backend = stubRegistryBackend{
 		resolveFn: func(version string) (registry.PipelineRecord, error) {
@@ -80,7 +86,8 @@ func TestResolveTurnStartBundleUsesInjectedServices(t *testing.T) {
 
 	rolloutService := rollout.NewService()
 	rolloutService.Backend = stubRolloutBackend{
-		resolveFn: func(rollout.ResolveVersionInput) (rollout.ResolveVersionOutput, error) {
+		resolveFn: func(in rollout.ResolveVersionInput) (rollout.ResolveVersionOutput, error) {
+			capturedRolloutInput = in
 			return rollout.ResolveVersionOutput{
 				PipelineVersion:           "pipeline-rollout-backend",
 				VersionResolutionSnapshot: "version-resolution/backend",
@@ -105,6 +112,64 @@ func TestResolveTurnStartBundleUsesInjectedServices(t *testing.T) {
 			return policy.Output{
 				PolicyResolutionSnapshot: "policy-resolution/backend",
 				AllowedAdaptiveActions:   []string{"fallback", "retry"},
+				ResolvedPolicy: policy.ResolvedTurnPolicy{
+					Budgets: controlplane.Budgets{
+						TurnBudgetMS:        8000,
+						NodeBudgetMSDefault: 1500,
+						PathBudgetMSDefault: 5000,
+						EdgeBudgetMSDefault: 800,
+					},
+					ProviderBindings: map[string]string{
+						"stt": "stt-backend",
+						"llm": "llm-backend",
+						"tts": "tts-backend",
+					},
+					EdgeBufferPolicies: map[string]controlplane.EdgeBufferPolicy{
+						"default": {
+							Strategy:                 controlplane.BufferStrategyDrop,
+							MaxQueueItems:            48,
+							MaxQueueMS:               200,
+							MaxQueueBytes:            196608,
+							MaxLatencyContributionMS: 90,
+							Watermarks: controlplane.EdgeWatermarks{
+								QueueItems: &controlplane.WatermarkThreshold{High: 30, Low: 10},
+							},
+							LaneHandling: controlplane.LaneHandling{
+								DataLane:      "drop",
+								ControlLane:   "non_blocking_priority",
+								TelemetryLane: "best_effort_drop",
+							},
+							DefaultingSource: "explicit_edge_config",
+						},
+					},
+					NodeExecutionPolicies: map[string]controlplane.NodeExecutionPolicy{
+						"provider-stt": {
+							ConcurrencyLimit: 1,
+							FairnessKey:      "provider-heavy",
+						},
+					},
+					FlowControl: controlplane.FlowControl{
+						ModeByLane: controlplane.ModeByLane{
+							DataLane:      "signal",
+							ControlLane:   "signal",
+							TelemetryLane: "signal",
+						},
+						Watermarks: controlplane.FlowWatermarks{
+							DataLane:      controlplane.WatermarkThreshold{High: 60, Low: 20},
+							ControlLane:   controlplane.WatermarkThreshold{High: 18, Low: 9},
+							TelemetryLane: controlplane.WatermarkThreshold{High: 100, Low: 40},
+						},
+						SheddingStrategyByLane: controlplane.SheddingStrategyByLane{
+							DataLane:      "drop",
+							ControlLane:   "none",
+							TelemetryLane: "sample",
+						},
+					},
+					RecordingPolicy: controlplane.RecordingPolicy{
+						RecordingLevel:     "L0",
+						AllowedReplayModes: []string{"replay_decisions"},
+					},
+				},
 			}, nil
 		},
 	}
@@ -126,6 +191,7 @@ func TestResolveTurnStartBundleUsesInjectedServices(t *testing.T) {
 	})
 
 	bundle, err := resolver.ResolveTurnStartBundle(TurnStartBundleInput{
+		TenantID:                 "tenant-backend-1",
 		SessionID:                "sess-backend-1",
 		TurnID:                   "turn-backend-1",
 		RequestedPipelineVersion: "pipeline-requested",
@@ -150,6 +216,27 @@ func TestResolveTurnStartBundleUsesInjectedServices(t *testing.T) {
 		bundle.SnapshotProvenance.PolicyResolutionSnapshot != "policy-resolution/backend" ||
 		bundle.SnapshotProvenance.ProviderHealthSnapshot != "provider-health/backend" {
 		t.Fatalf("unexpected backend snapshot provenance: %+v", bundle.SnapshotProvenance)
+	}
+	if bundle.Budgets.TurnBudgetMS != 8000 || bundle.ProviderBindings["llm"] != "llm-backend" {
+		t.Fatalf("expected backend policy surfaces in bundle, got %+v", bundle)
+	}
+	if capturedRolloutInput.TenantID != "tenant-backend-1" {
+		t.Fatalf("expected tenant threading to rollout input, got %+v", capturedRolloutInput)
+	}
+	if policy, ok := bundle.EdgeBufferPolicies["default"]; !ok || policy.MaxQueueItems != 48 {
+		t.Fatalf("expected backend edge_buffer_policies in bundle, got %+v", bundle.EdgeBufferPolicies)
+	}
+	if bundle.FlowControl.Watermarks.ControlLane.High != 18 {
+		t.Fatalf("expected backend flow_control in bundle, got %+v", bundle.FlowControl)
+	}
+	if nodePolicy, ok := bundle.NodeExecutionPolicies["provider-stt"]; !ok || nodePolicy.ConcurrencyLimit != 1 || nodePolicy.FairnessKey != "provider-heavy" {
+		t.Fatalf("expected backend node_execution_policies in bundle, got %+v", bundle.NodeExecutionPolicies)
+	}
+	if !reflect.DeepEqual(bundle.RecordingPolicy.AllowedReplayModes, []string{"replay_decisions"}) {
+		t.Fatalf("expected backend recording_policy in bundle, got %+v", bundle.RecordingPolicy)
+	}
+	if bundle.LeaseTokenID == "" || bundle.LeaseTokenExpiresAtUTC == "" {
+		t.Fatalf("expected lease token metadata in resolved bundle, got %+v", bundle)
 	}
 }
 

@@ -1,11 +1,13 @@
 package transport
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 
 	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
 	"github.com/tiger/realtime-speech-pipeline/internal/observability/telemetry"
+	telemetrycontext "github.com/tiger/realtime-speech-pipeline/internal/observability/telemetry/context"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/cancellation"
 	runtimeeventabi "github.com/tiger/realtime-speech-pipeline/internal/runtime/eventabi"
 )
@@ -33,6 +35,7 @@ type OutputDecision struct {
 // OutputFence applies deterministic post-cancel egress fencing.
 type OutputFence struct {
 	turnFence turnFence
+	authority authorityValidator
 }
 
 type turnFence interface {
@@ -40,17 +43,30 @@ type turnFence interface {
 	IsFenced(sessionID, turnID string) bool
 }
 
+type authorityValidator interface {
+	ValidateAuthority(sessionID string, authorityEpoch int64) error
+}
+
+type staleAuthorityError interface {
+	StaleAuthority() bool
+}
+
 // NewOutputFence creates a new deterministic output fence.
 func NewOutputFence() *OutputFence {
-	return NewOutputFenceWithTurnFence(cancellation.NewFence())
+	return NewOutputFenceWithDependencies(cancellation.NewFence(), nil)
 }
 
 // NewOutputFenceWithTurnFence creates an output fence with an explicit cancel fence dependency.
 func NewOutputFenceWithTurnFence(fence turnFence) *OutputFence {
+	return NewOutputFenceWithDependencies(fence, nil)
+}
+
+// NewOutputFenceWithDependencies creates an output fence with explicit cancel and authority dependencies.
+func NewOutputFenceWithDependencies(fence turnFence, authority authorityValidator) *OutputFence {
 	if fence == nil {
 		fence = cancellation.NewFence()
 	}
-	return &OutputFence{turnFence: fence}
+	return &OutputFence{turnFence: fence, authority: authority}
 }
 
 // EvaluateOutput applies cancel fencing and emits deterministic control markers.
@@ -58,16 +74,48 @@ func (f *OutputFence) EvaluateOutput(in OutputAttempt) (OutputDecision, error) {
 	if in.SessionID == "" || in.TurnID == "" || in.PipelineVersion == "" || in.EventID == "" {
 		return OutputDecision{}, fmt.Errorf("session_id, turn_id, pipeline_version, and event_id are required")
 	}
-	correlation := telemetry.Correlation{
+	correlation, err := telemetrycontext.Resolve(telemetrycontext.ResolveInput{
 		SessionID:            in.SessionID,
 		TurnID:               in.TurnID,
 		EventID:              in.EventID,
 		PipelineVersion:      in.PipelineVersion,
+		NodeID:               "transport_fence",
+		EdgeID:               "transport/egress",
 		AuthorityEpoch:       safeNonNegativeTransport(in.AuthorityEpoch),
-		Lane:                 string(eventabi.LaneTelemetry),
+		Lane:                 eventabi.LaneTelemetry,
 		EmittedBy:            "OR-01",
 		RuntimeTimestampMS:   safeNonNegativeTransport(in.RuntimeTimestampMS),
 		WallClockTimestampMS: safeNonNegativeTransport(in.WallClockTimestampMS),
+	})
+	if err != nil {
+		return OutputDecision{}, err
+	}
+
+	if f.authority != nil {
+		if err := f.authority.ValidateAuthority(in.SessionID, in.AuthorityEpoch); err != nil {
+			reason := "authority_validation_failed"
+			if isStaleAuthorityError(err) {
+				reason = "authority_epoch_mismatch"
+			}
+			signal, signalErr := buildOutputSignal(in, "stale_epoch_reject", "RK-24", reason)
+			if signalErr != nil {
+				return OutputDecision{}, signalErr
+			}
+			telemetry.DefaultEmitter().EmitLog(
+				"output_fence_decision",
+				"warn",
+				"output rejected due to authority validation failure",
+				map[string]string{
+					"accepted": "false",
+					"signal":   "stale_epoch_reject",
+					"reason":   reason,
+					"node_id":  "transport_fence",
+					"edge_id":  "transport/egress",
+				},
+				correlation,
+			)
+			return OutputDecision{Accepted: false, Signal: signal}, nil
+		}
 	}
 
 	if in.CancelAccepted {
@@ -97,6 +145,8 @@ func (f *OutputFence) EvaluateOutput(in OutputAttempt) (OutputDecision, error) {
 			map[string]string{
 				"accepted": strconv.FormatBool(accepted),
 				"scope":    "turn",
+				"node_id":  "transport_fence",
+				"edge_id":  "transport/egress",
 			},
 			correlation,
 		)
@@ -109,6 +159,8 @@ func (f *OutputFence) EvaluateOutput(in OutputAttempt) (OutputDecision, error) {
 			"accepted": strconv.FormatBool(accepted),
 			"signal":   signalName,
 			"reason":   reason,
+			"node_id":  "transport_fence",
+			"edge_id":  "transport/egress",
 		},
 		correlation,
 	)
@@ -124,6 +176,15 @@ func (f *OutputFence) EvaluateOutput(in OutputAttempt) (OutputDecision, error) {
 		correlation,
 	)
 
+	signal, err := buildOutputSignal(in, signalName, "RK-22", reason)
+	if err != nil {
+		return OutputDecision{}, err
+	}
+
+	return OutputDecision{Accepted: accepted, Signal: signal}, nil
+}
+
+func buildOutputSignal(in OutputAttempt, signalName, emittedBy, reason string) (eventabi.ControlSignal, error) {
 	signal := eventabi.ControlSignal{
 		SchemaVersion:      "v1.0",
 		EventScope:         eventabi.ScopeTurn,
@@ -139,20 +200,23 @@ func (f *OutputFence) EvaluateOutput(in OutputAttempt) (OutputDecision, error) {
 		WallClockMS:        safeNonNegativeTransport(in.WallClockTimestampMS),
 		PayloadClass:       eventabi.PayloadMetadata,
 		Signal:             signalName,
-		EmittedBy:          "RK-22",
+		EmittedBy:          emittedBy,
 		Reason:             reason,
 		Scope:              "turn",
 	}
 	if err := signal.Validate(); err != nil {
-		return OutputDecision{}, err
+		return eventabi.ControlSignal{}, err
 	}
 	normalized, err := runtimeeventabi.ValidateAndNormalizeControlSignals([]eventabi.ControlSignal{signal})
 	if err != nil {
-		return OutputDecision{}, err
+		return eventabi.ControlSignal{}, err
 	}
-	signal = normalized[0]
+	return normalized[0], nil
+}
 
-	return OutputDecision{Accepted: accepted, Signal: signal}, nil
+func isStaleAuthorityError(err error) bool {
+	var staleErr staleAuthorityError
+	return errors.As(err, &staleErr) && staleErr.StaleAuthority()
 }
 
 func pointer(v int64) *int64 {

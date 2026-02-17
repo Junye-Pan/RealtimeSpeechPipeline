@@ -35,14 +35,14 @@ Design intent:
 
 Snapshot basis:
 - verified against `cmd/rspp-runtime/main.go`, `cmd/rspp-cli/main.go`, `cmd/rspp-local-runner/main.go`, `cmd/rspp-control-plane/main.go`
-- validated by existing tests in `cmd/rspp-runtime/main_test.go`, `cmd/rspp-cli/main_test.go`, `cmd/rspp-local-runner/main_test.go`
+- validated by existing tests in `cmd/rspp-runtime/main_test.go`, `cmd/rspp-cli/main_test.go`, `cmd/rspp-local-runner/main_test.go`, `cmd/rspp-control-plane/main_test.go`
 
 | Entrypoint | Current status | Implemented command contract (as of code) | Feature evidence |
 | --- | --- | --- | --- |
 | `rspp-runtime` | Implemented | Default action with no args is `bootstrap-providers`; explicit subcommands are `livekit`, `retention-sweep`, `help`; runtime telemetry setup executes before dispatch and can fail command startup | `[F-055]`, `[F-083]`, `[F-086]`, `[F-116]`, `[NF-015]` |
-| `rspp-cli` | Implemented | Subcommands: `validate-contracts`, `validate-contracts-report`, `replay-smoke-report`, `replay-regression-report`, `generate-runtime-baseline`, `slo-gates-report`, `slo-gates-mvp-report`, `live-latency-compare-report`, `publish-release`; unknown command exits non-zero with usage output | `[F-126]`, `[F-127]`, `[F-072]`, `[F-077]`, `[NF-024]`, `[NF-028]`, `[NF-038]` |
+| `rspp-cli` | Implemented | Subcommands: `validate-spec`, `validate-policy`, `validate-contracts`, `validate-contracts-report`, `replay-smoke-report`, `replay-regression-report`, `generate-runtime-baseline`, `slo-gates-report`, `slo-gates-mvp-report`, `live-latency-compare-report`, `publish-release`; unknown command exits non-zero with usage output | `[F-126]`, `[F-127]`, `[F-072]`, `[F-077]`, `[NF-024]`, `[NF-028]`, `[NF-038]` |
 | `rspp-local-runner` | Implemented | Thin pass-through to LiveKit CLI; default args enforce deterministic dry-run report path when no args are provided; supports `help` and optional `livekit` prefix | `[F-125]`, `[F-130]`, `[F-083]` |
-| `rspp-control-plane` | Scaffold only | Prints scaffold banner only; no subcommands, no structured JSON outputs, no token/route flows yet | `[F-092]`, `[F-095]`, `[F-099]`, `[F-119]` |
+| `rspp-control-plane` | Implemented baseline | Subcommands: `publish`, `list`, `get`, `rollback`, `status`, `audit`; state persisted via `RSPP_CP_STATE_PATH` with immutable audit sequence and JSON outputs | `[F-092]`, `[F-095]`, `[F-097]`, `[F-099]`, `[F-101]`, `[F-119]` |
 
 ### Current output/default contracts
 
@@ -51,6 +51,8 @@ Snapshot basis:
 | `rspp-runtime retention-sweep` | report default: `.codex/replay/retention-sweep-report.json`; mutates and rewrites `-store` artifact | rejects missing `-store`/`-tenants`, invalid `runs/interval`, deterministic policy errors with explicit codes |
 | `rspp-runtime livekit` | report path is provided through LiveKit adapter flags; usage documents supported flags | invalid runtime/probe config propagates adapter error |
 | `rspp-cli validate-contracts-report` | `.codex/ops/contracts-report.json` + Markdown sibling | fails when contract fixtures/schema validation fails |
+| `rspp-cli validate-spec` | validates `PipelineSpec` JSON with strict/relaxed mode and field-level diagnostics | fails on malformed schema or structural graph errors |
+| `rspp-cli validate-policy` | validates policy bundle JSON with strict/relaxed mode and field-level diagnostics | fails on malformed policy schema, invalid adaptive actions, or recording policy violations |
 | `rspp-cli replay-regression-report` | `.codex/replay/regression-report.json`; per-fixture artifacts under sibling `fixtures/` dir | fails when forbidden divergences are present or gate arg is invalid |
 | `rspp-cli generate-runtime-baseline` | `.codex/replay/runtime-baseline.json` | fails if baseline generation path cannot complete |
 | `rspp-cli slo-gates-report` | `.codex/ops/slo-gates-report.json` + Markdown sibling | fails when any MVP gate in baseline report fails |
@@ -64,7 +66,7 @@ Snapshot basis:
 | Gap | Current code reality | Implementation impact | Required action |
 | --- | --- | --- | --- |
 | Shared command kernel is not yet present | Dispatch/parsing/output handling are duplicated across `cmd/rspp-runtime/main.go`, `cmd/rspp-cli/main.go`, and `cmd/rspp-local-runner/main.go` | inconsistent UX, error semantics, and extension integration surface | introduce `internal/tooling/commandcore/kernel` and migrate entrypoints incrementally `[F-126]`, `[NF-015]` |
-| Control-plane command surface is unimplemented | `cmd/rspp-control-plane/main.go` is a scaffold banner only | cannot satisfy token/route bootstrap command contracts in CLI workflows | implement `issue-session-token` and `resolve-session-route` first with JSON contract tests `[F-099]`, `[F-119]`, `[F-095]` |
+| Control-plane command surface is partial relative to target API | `cmd/rspp-control-plane/main.go` now supports process lifecycle commands (`publish/list/get/rollback/status/audit`) with persistent audit, but no network API/token issuance endpoint yet | process-level bootstrap is covered for MVP, but transport token/route broker APIs are deferred | extend with explicit token/route command contracts when control-plane API server lands `[F-099]`, `[F-119]`, `[F-095]` |
 | Artifact writing is not centralized | each command path manually performs `MkdirAll + Marshal + WriteFile` | schema/version drift risk and repeated error handling logic | create shared artifact writer and normalize report metadata stamping `[F-028]`, `[F-149]`, `[NF-028]` |
 | Extension hooks are architectural only | no command plugin registration path exists in `cmd/*` | extension model in this guide is not currently executable | add explicit extension host package and compatibility checks before loading plugins `[F-121]`, `[F-124]`, `[F-164]` |
 | Exit-code contract is not unified | `rspp-cli` uses mixed `1/2`; other binaries mostly return `1`; usage behavior differs by binary | automation wrappers must encode binary-specific behavior | define shared exit-code policy in kernel and align binaries to it `[NF-015]`, `[F-126]` |
@@ -236,7 +238,7 @@ Core flow relation:
   - `rspp-runtime`: `bootstrap-providers`, `livekit`, `retention-sweep` `[F-055]`, `[F-083]`, `[F-116]`
   - `rspp-cli`: validation, replay, SLO/gate reports, release publish, latency compare `[F-126]`, `[F-127]`, `[F-072]`, `[F-077]`, `[NF-024]`, `[NF-028]`
   - `rspp-local-runner`: thin wrapper over LiveKit command path with deterministic default dry-run `[F-125]`, `[F-130]`, `[F-083]`
-- `rspp-control-plane` is currently scaffold-only and should converge on `IssueSessionToken` and `ResolveSessionRoute` contracts first, because those are the minimum command surfaces needed for transport bootstrap and authority-safe routing. `[F-099]`, `[F-119]`, `[F-095]`
+- `rspp-control-plane` now provides an MVP process surface (`publish/list/get/rollback/status/audit`) with persistent audit state; token/route contracts remain the next planned extension for full transport bootstrap parity. `[F-097]`, `[F-099]`, `[F-119]`, `[F-095]`
 
 ## Change checklist
 

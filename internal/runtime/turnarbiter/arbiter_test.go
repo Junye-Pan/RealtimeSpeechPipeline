@@ -94,6 +94,122 @@ func TestHandleTurnOpenProposedUsesResolvedTurnStartBundle(t *testing.T) {
 	}
 }
 
+func TestHandleTurnOpenProposedThreadsBundlePolicySurfacesIntoResolvedPlan(t *testing.T) {
+	t.Parallel()
+
+	customBudgets := controlplane.Budgets{
+		TurnBudgetMS:        8100,
+		NodeBudgetMSDefault: 1900,
+		PathBudgetMSDefault: 5200,
+		EdgeBudgetMSDefault: 900,
+	}
+	customProviders := map[string]string{
+		"stt": "stt-custom",
+		"llm": "llm-custom",
+		"tts": "tts-custom",
+	}
+	customEdgePolicies := map[string]controlplane.EdgeBufferPolicy{
+		"default": {
+			Strategy:                 controlplane.BufferStrategyDrop,
+			MaxQueueItems:            55,
+			MaxQueueMS:               260,
+			MaxQueueBytes:            250000,
+			MaxLatencyContributionMS: 110,
+			Watermarks: controlplane.EdgeWatermarks{
+				QueueItems: &controlplane.WatermarkThreshold{High: 40, Low: 20},
+			},
+			LaneHandling: controlplane.LaneHandling{
+				DataLane:      "drop",
+				ControlLane:   "non_blocking_priority",
+				TelemetryLane: "best_effort_drop",
+			},
+			DefaultingSource: "explicit_edge_config",
+		},
+	}
+	customFlow := controlplane.FlowControl{
+		ModeByLane: controlplane.ModeByLane{
+			DataLane:      "signal",
+			ControlLane:   "signal",
+			TelemetryLane: "signal",
+		},
+		Watermarks: controlplane.FlowWatermarks{
+			DataLane:      controlplane.WatermarkThreshold{High: 66, Low: 30},
+			ControlLane:   controlplane.WatermarkThreshold{High: 18, Low: 8},
+			TelemetryLane: controlplane.WatermarkThreshold{High: 120, Low: 50},
+		},
+		SheddingStrategyByLane: controlplane.SheddingStrategyByLane{
+			DataLane:      "drop",
+			ControlLane:   "none",
+			TelemetryLane: "sample",
+		},
+	}
+	customRecording := controlplane.RecordingPolicy{
+		RecordingLevel:     "L0",
+		AllowedReplayModes: []string{"replay_decisions"},
+	}
+	customNodeExecutionPolicies := map[string]controlplane.NodeExecutionPolicy{
+		"provider-heavy": {
+			ConcurrencyLimit: 1,
+			FairnessKey:      "provider-heavy",
+		},
+	}
+
+	arbiter := NewWithDependencies(nil, stubTurnStartBundleResolver{
+		bundle: TurnStartBundle{
+			PipelineVersion:        "pipeline-custom",
+			GraphDefinitionRef:     "graph/custom",
+			ExecutionProfile:       "simple",
+			Budgets:                customBudgets,
+			ProviderBindings:       customProviders,
+			EdgeBufferPolicies:     customEdgePolicies,
+			NodeExecutionPolicies:  customNodeExecutionPolicies,
+			FlowControl:            customFlow,
+			RecordingPolicy:        customRecording,
+			AllowedAdaptiveActions: []string{"retry", "fallback"},
+			SnapshotProvenance:     defaultSnapshotProvenance(),
+		},
+	})
+
+	result, err := arbiter.HandleTurnOpenProposed(OpenRequest{
+		SessionID:             "sess-custom-policy-1",
+		TurnID:                "turn-custom-policy-1",
+		EventID:               "evt-custom-policy-1",
+		RuntimeTimestampMS:    31,
+		WallClockTimestampMS:  31,
+		PipelineVersion:       "pipeline-ignored",
+		AuthorityEpoch:        9,
+		SnapshotValid:         true,
+		AuthorityEpochValid:   true,
+		AuthorityAuthorized:   true,
+		SnapshotFailurePolicy: controlplane.OutcomeDefer,
+		PlanFailurePolicy:     controlplane.OutcomeReject,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Plan == nil {
+		t.Fatalf("expected resolved plan")
+	}
+	if result.Plan.Budgets != customBudgets {
+		t.Fatalf("expected custom budgets in resolved plan, got %+v", result.Plan.Budgets)
+	}
+	if !reflect.DeepEqual(result.Plan.ProviderBindings, customProviders) {
+		t.Fatalf("expected custom provider bindings in resolved plan, got %+v", result.Plan.ProviderBindings)
+	}
+	if !reflect.DeepEqual(result.Plan.EdgeBufferPolicies, customEdgePolicies) {
+		t.Fatalf("expected custom edge_buffer_policies in resolved plan, got %+v", result.Plan.EdgeBufferPolicies)
+	}
+	if !reflect.DeepEqual(result.Plan.NodeExecutionPolicies, customNodeExecutionPolicies) {
+		t.Fatalf("expected custom node_execution_policies in resolved plan, got %+v", result.Plan.NodeExecutionPolicies)
+	}
+	if result.Plan.FlowControl != customFlow {
+		t.Fatalf("expected custom flow_control in resolved plan, got %+v", result.Plan.FlowControl)
+	}
+	if !reflect.DeepEqual(result.Plan.RecordingPolicy, customRecording) {
+		t.Fatalf("expected custom recording_policy in resolved plan, got %+v", result.Plan.RecordingPolicy)
+	}
+}
+
 func TestHandleTurnOpenProposedAppliesCPAdmissionDecision(t *testing.T) {
 	t.Parallel()
 
@@ -136,6 +252,44 @@ func TestHandleTurnOpenProposedAppliesCPAdmissionDecision(t *testing.T) {
 	}
 	if result.Decision.Reason != "cp_admission_defer_capacity" {
 		t.Fatalf("unexpected CP admission reason: %+v", result.Decision)
+	}
+}
+
+func TestHandleTurnOpenProposedThreadsTenantIDIntoTurnStartBundleResolution(t *testing.T) {
+	t.Parallel()
+
+	resolver := &capturingTurnStartBundleResolver{
+		bundle: TurnStartBundle{
+			PipelineVersion:        "pipeline-custom",
+			GraphDefinitionRef:     "graph/custom",
+			ExecutionProfile:       "simple",
+			AllowedAdaptiveActions: []string{"retry", "fallback"},
+			SnapshotProvenance:     defaultSnapshotProvenance(),
+		},
+	}
+	arbiter := NewWithDependencies(nil, resolver)
+
+	result, err := arbiter.HandleTurnOpenProposed(OpenRequest{
+		TenantID:             "tenant-open-1",
+		SessionID:            "sess-open-1",
+		TurnID:               "turn-open-1",
+		EventID:              "evt-open-1",
+		RuntimeTimestampMS:   33,
+		WallClockTimestampMS: 33,
+		PipelineVersion:      "pipeline-v1",
+		AuthorityEpoch:       2,
+		SnapshotValid:        true,
+		AuthorityEpochValid:  true,
+		AuthorityAuthorized:  true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.State != controlplane.TurnActive {
+		t.Fatalf("expected active turn, got %+v", result)
+	}
+	if resolver.lastInput.TenantID != "tenant-open-1" {
+		t.Fatalf("expected tenant_id to reach turn-start resolver, got %+v", resolver.lastInput)
 	}
 }
 
@@ -674,6 +828,48 @@ func TestHandleActiveUsesResolvedSnapshotDefaultsForBaselineEvidence(t *testing.
 	}
 }
 
+func TestHandleActiveThreadsTenantIDIntoBaselineTurnStartResolution(t *testing.T) {
+	t.Parallel()
+
+	customSnapshot := controlplane.SnapshotProvenance{
+		RoutingViewSnapshot:       "routing-view/custom-tenant",
+		AdmissionPolicySnapshot:   "admission-policy/custom-tenant",
+		ABICompatibilitySnapshot:  "abi-compat/custom-tenant",
+		VersionResolutionSnapshot: "version-resolution/custom-tenant",
+		PolicyResolutionSnapshot:  "policy-resolution/custom-tenant",
+		ProviderHealthSnapshot:    "provider-health/custom-tenant",
+	}
+	resolver := &capturingTurnStartBundleResolver{
+		bundle: TurnStartBundle{
+			PipelineVersion:        "pipeline-custom",
+			GraphDefinitionRef:     "graph/custom",
+			ExecutionProfile:       "simple",
+			AllowedAdaptiveActions: []string{"retry"},
+			SnapshotProvenance:     customSnapshot,
+		},
+	}
+	recorder := timeline.NewRecorder(timeline.StageAConfig{BaselineCapacity: 2, DetailCapacity: 2})
+	arbiter := NewWithDependencies(&recorder, resolver)
+
+	_, err := arbiter.HandleActive(ActiveInput{
+		TenantID:             "tenant-active-1",
+		SessionID:            "sess-active-1",
+		TurnID:               "turn-active-1",
+		EventID:              "evt-active-1",
+		RuntimeSequence:      50,
+		RuntimeTimestampMS:   500,
+		WallClockTimestampMS: 500,
+		AuthorityEpoch:       4,
+		TerminalSuccessReady: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resolver.lastInput.TenantID != "tenant-active-1" {
+		t.Fatalf("expected tenant_id to reach baseline turn-start resolver, got %+v", resolver.lastInput)
+	}
+}
+
 func TestHandleActivePromotesProviderAttemptsToBaselineWhenOutcomesMissing(t *testing.T) {
 	t.Parallel()
 
@@ -833,6 +1029,20 @@ type stubTurnStartBundleResolver struct {
 }
 
 func (s stubTurnStartBundleResolver) ResolveTurnStartBundle(_ TurnStartBundleInput) (TurnStartBundle, error) {
+	if s.err != nil {
+		return TurnStartBundle{}, s.err
+	}
+	return s.bundle, nil
+}
+
+type capturingTurnStartBundleResolver struct {
+	bundle    TurnStartBundle
+	err       error
+	lastInput TurnStartBundleInput
+}
+
+func (s *capturingTurnStartBundleResolver) ResolveTurnStartBundle(in TurnStartBundleInput) (TurnStartBundle, error) {
+	s.lastInput = in
 	if s.err != nil {
 		return TurnStartBundle{}, s.err
 	}

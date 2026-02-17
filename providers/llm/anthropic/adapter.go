@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	providerconfig "github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/config"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/contracts"
 	"github.com/tiger/realtime-speech-pipeline/providers/common/httpadapter"
 	"github.com/tiger/realtime-speech-pipeline/providers/common/streamsse"
@@ -35,8 +36,8 @@ type Adapter struct {
 
 func ConfigFromEnv() Config {
 	return Config{
-		APIKey:          os.Getenv("RSPP_LLM_ANTHROPIC_API_KEY"),
-		Endpoint:        defaultString(os.Getenv("RSPP_LLM_ANTHROPIC_ENDPOINT"), "https://api.anthropic.com/v1/messages"),
+		APIKey:          providerconfig.ResolveEnvValue("RSPP_LLM_ANTHROPIC_API_KEY", "RSPP_LLM_ANTHROPIC_API_KEY_REF", ""),
+		Endpoint:        providerconfig.ResolveEnvValue("RSPP_LLM_ANTHROPIC_ENDPOINT", "RSPP_LLM_ANTHROPIC_ENDPOINT_REF", "https://api.anthropic.com/v1/messages"),
 		Model:           defaultString(os.Getenv("RSPP_LLM_ANTHROPIC_MODEL"), "claude-3-5-haiku-latest"),
 		Prompt:          defaultString(os.Getenv("RSPP_LLM_ANTHROPIC_PROMPT"), "Reply with the word: ok"),
 		AnthropicVerion: defaultString(os.Getenv("RSPP_LLM_ANTHROPIC_VERSION"), "2023-06-01"),

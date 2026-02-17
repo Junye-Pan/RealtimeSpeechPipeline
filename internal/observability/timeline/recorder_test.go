@@ -1,11 +1,14 @@
 package timeline
 
 import (
+	"encoding/json"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/tiger/realtime-speech-pipeline/api/controlplane"
 	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
+	timelineexporter "github.com/tiger/realtime-speech-pipeline/internal/observability/timeline/exporter"
 )
 
 func TestAppendBaselineStageACapacity(t *testing.T) {
@@ -17,6 +20,51 @@ func TestAppendBaselineStageACapacity(t *testing.T) {
 	}
 	if err := recorder.AppendBaseline(minimalBaseline("turn-b")); !errors.Is(err, ErrBaselineCapacityExhausted) {
 		t.Fatalf("expected baseline capacity exhaustion, got %v", err)
+	}
+}
+
+func TestAppendBaselineEnqueuesDurableRecord(t *testing.T) {
+	t.Parallel()
+
+	durable := &capturingDurableExporter{enqueueResult: true}
+	recorder := NewRecorderWithDurableExporter(StageAConfig{BaselineCapacity: 2, DetailCapacity: 4}, durable)
+
+	if err := recorder.AppendBaseline(minimalBaseline("turn-durable-1")); err != nil {
+		t.Fatalf("append baseline: %v", err)
+	}
+
+	records := durable.Records()
+	if len(records) != 1 {
+		t.Fatalf("expected one durable record, got %+v", records)
+	}
+	if records[0].Kind != "baseline" || records[0].SessionID != "sess-1" || records[0].TurnID != "turn-durable-1" {
+		t.Fatalf("unexpected durable record identity: %+v", records[0])
+	}
+	if len(records[0].Payload) == 0 {
+		t.Fatalf("expected serialized baseline payload")
+	}
+
+	var decoded BaselineEvidence
+	if err := json.Unmarshal(records[0].Payload, &decoded); err != nil {
+		t.Fatalf("decode durable baseline payload: %v", err)
+	}
+	if decoded.TurnID != "turn-durable-1" || decoded.EventID != "evt-1" {
+		t.Fatalf("unexpected decoded durable baseline payload: %+v", decoded)
+	}
+}
+
+func TestAppendBaselineIgnoresDurableExporterBackpressure(t *testing.T) {
+	t.Parallel()
+
+	durable := &capturingDurableExporter{enqueueResult: false}
+	recorder := NewRecorderWithDurableExporter(StageAConfig{BaselineCapacity: 2, DetailCapacity: 4}, durable)
+
+	if err := recorder.AppendBaseline(minimalBaseline("turn-durable-drop-1")); err != nil {
+		t.Fatalf("append baseline with durable backpressure: %v", err)
+	}
+
+	if entries := recorder.BaselineEntries(); len(entries) != 1 {
+		t.Fatalf("expected local baseline append to succeed even when durable enqueue drops, got %+v", entries)
 	}
 }
 
@@ -659,4 +707,25 @@ func minimalInvocationSnapshot(eventID string) InvocationSnapshotEvidence {
 		RuntimeTimestampMS:       100,
 		WallClockTimestampMS:     100,
 	}
+}
+
+type capturingDurableExporter struct {
+	mu            sync.Mutex
+	records       []timelineexporter.Record
+	enqueueResult bool
+}
+
+func (c *capturingDurableExporter) Enqueue(record timelineexporter.Record) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.records = append(c.records, record)
+	return c.enqueueResult
+}
+
+func (c *capturingDurableExporter) Records() []timelineexporter.Record {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]timelineexporter.Record, len(c.records))
+	copy(out, c.records)
+	return out
 }

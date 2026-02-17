@@ -1,0 +1,12 @@
+{
+  "schema_version": "rspp.rollout.v1",
+  "rollout_id": "voice_assistant_rollout_v1",
+  "default_pipeline_version": "pipeline-v1",
+  "strategy": {
+    "kind": "allowlist",
+    "allowlist": [
+      "default"
+    ]
+  },
+  "version_resolution_snapshot": "version-resolution/v1"
+}

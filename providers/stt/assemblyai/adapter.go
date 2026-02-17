@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	providerconfig "github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/config"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/contracts"
 	"github.com/tiger/realtime-speech-pipeline/providers/common/httpadapter"
 )
@@ -41,8 +42,8 @@ type Adapter struct {
 
 func ConfigFromEnv() Config {
 	return Config{
-		APIKey:       os.Getenv("RSPP_STT_ASSEMBLYAI_API_KEY"),
-		Endpoint:     defaultString(os.Getenv("RSPP_STT_ASSEMBLYAI_ENDPOINT"), "https://api.assemblyai.com/v2/transcript"),
+		APIKey:       providerconfig.ResolveEnvValue("RSPP_STT_ASSEMBLYAI_API_KEY", "RSPP_STT_ASSEMBLYAI_API_KEY_REF", ""),
+		Endpoint:     providerconfig.ResolveEnvValue("RSPP_STT_ASSEMBLYAI_ENDPOINT", "RSPP_STT_ASSEMBLYAI_ENDPOINT_REF", "https://api.assemblyai.com/v2/transcript"),
 		AudioURL:     defaultString(os.Getenv("RSPP_STT_ASSEMBLYAI_AUDIO_URL"), "https://static.deepgram.com/examples/Bueller-Life-moves-pretty-fast.wav"),
 		SpeechModels: parseSpeechModels(os.Getenv("RSPP_STT_ASSEMBLYAI_SPEECH_MODELS")),
 		Timeout:      45 * time.Second,

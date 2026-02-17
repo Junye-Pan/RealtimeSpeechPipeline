@@ -218,7 +218,7 @@ Evidence:
 | In-process adapters as default execution path | Out-of-process adapters only | Lower overhead and simpler MVP operations for latency-sensitive path. | Fault isolation is weaker; external-node/plugin host still needed for untrusted code. (`NF-002`, `F-122`, `F-123`, `F-124`) |
 | Separate policy resolver module | Embed policy logic directly in invocation controller | Improves testability and keeps controller deterministic/mechanical; isolates policy churn. | Adds one extra module boundary and data model translation step. (`F-056`, `F-057`, `F-058`, `F-102`) |
 
-## 7) Code-Verified Progress and Divergence (2026-02-16)
+## 7) Code-Verified Progress and Divergence (2026-02-17)
 
 ### Current progress (implemented)
 
@@ -227,8 +227,11 @@ Evidence:
 | Stable provider contract + normalized outcomes | `contracts.Adapter`, `contracts.StreamingAdapter`, strict `InvocationRequest`/`StreamChunk` validation, normalized `OutcomeClass` taxonomy are implemented and used. | `internal/runtime/provider/contracts/contracts.go` | `F-055`, `F-131`, `F-160`, `NF-013` |
 | Deterministic provider catalog and MVP coverage bounds | Catalog ordering is deterministic; preferred provider is first; modality coverage validation enforces 3-5 providers per modality. | `internal/runtime/provider/registry/registry.go`, `internal/runtime/provider/bootstrap/bootstrap.go` | `F-055`, `F-056`, `F-066` |
 | Deterministic retry/switch execution | Invocation controller implements per-provider attempts, retry budget handling, provider switch, fallback decision, and control-signal emission (`provider_error`, `circuit_event`, `provider_switch`). | `internal/runtime/provider/invocation/controller.go` | `F-046`, `F-047`, `F-059`, `F-133`, `F-136` |
+| Policy/capability freeze seam | Dedicated policy resolver and capability snapshot modules now materialize deterministic provider plans (ordered candidates, adaptive actions, budget, snapshot refs), and invocation controller consumes frozen plan inputs. | `internal/runtime/provider/policy/resolver.go`, `internal/runtime/provider/capability/snapshot.go`, `internal/runtime/provider/invocation/controller.go` | `F-056`, `F-057`, `F-060`, `F-066`, `F-149`, `F-161` |
 | Streaming control and attempt evidence | Streaming is default-on when adapter supports `InvokeStream`; disable flags and modality-specific flags are implemented; per-attempt `streaming_used`, chunk count, bytes, and latency are recorded. | `internal/runtime/provider/invocation/controller.go` | `F-063`, `F-064`, `F-065`, `NF-001`, `NF-003` |
 | Shared HTTP normalization + payload safety controls | `httpadapter` performs unary request normalization, status mapping, capture-mode control (`redacted/full/hash`), and compatibility stream wrapper. | `providers/common/httpadapter/httpadapter.go` | `F-055`, `F-117`, `F-131`, `NF-002` |
+| Secret-ref config normalization | Provider config layer now supports secret refs (`env://...`) with deterministic env fallback and adapter wiring for API key/endpoint refs. | `internal/runtime/provider/config/config.go`, `providers/*/*/adapter.go` | `F-061`, `F-117`, `F-114` |
+| Adapter conformance coverage | Adapter-specific suites now cover all MVP adapters, plus provider contract-level conformance tests in `test/contract`. | `providers/llm/gemini/adapter_test.go`, `providers/stt/deepgram/adapter_test.go`, `providers/stt/google/adapter_test.go`, `providers/tts/elevenlabs/adapter_test.go`, `providers/tts/google/adapter_test.go`, `test/contract/provider_adapter_contract_test.go` | `F-164`, `NF-013` |
 | MVP provider matrix present in code | 9 adapters are wired in bootstrap (STT: `deepgram`, `google`, `assemblyai`; LLM: `anthropic`, `gemini`, `cohere`; TTS: `elevenlabs`, `google`, `amazon-polly`). | `internal/runtime/provider/bootstrap/bootstrap.go` | `F-055`, PRD §5.2 intent (multi-provider per modality) |
 
 ### Streaming maturity by adapter (implemented behavior)
@@ -247,12 +250,9 @@ Evidence:
 
 ### Divergence from target architecture
 
-1. `internal/runtime/provider/policy` and `internal/runtime/provider/capability` seams are not implemented yet; policy/candidate logic is still composed in invocation input + registry ordering. (`F-056`, `F-057`, `F-060`, `F-066`, `F-102`, `F-161`)
-2. OR-02 provider evidence writer module is not yet explicit; current path emits telemetry and in-memory invocation result but no dedicated provider evidence component in provider subsystem. (`F-149`, `F-153`, `F-154`, `F-160`, `F-176`)
-3. Stream lifecycle monotonicity (`start -> chunk* -> final/error` with strict sequence progression) is not centrally state-machine enforced in invocation controller; current runtime observer validates chunk structure per event. (`F-063`, `F-064`, `F-150`)
-4. Fallback and provider-switch share the same emitted control signal name (`provider_switch`); `RetryDecision` differentiates `"provider_switch"` vs `"fallback"`. (`F-047`, `F-133`, `F-136`)
-5. Provider config currently uses direct environment keys in adapters; secret-reference resolution is not yet represented as a first-class provider config object in this subsystem. (`F-061`, `F-117`)
-6. Adapter test coverage is partial: tests exist for `anthropic`, `cohere`, `assemblyai`, `polly`, and `httpadapter`, while `stt-deepgram`, `stt-google`, `llm-gemini`, `tts-elevenlabs`, and `tts-google` currently lack adapter-specific unit suites. (`F-164`, `NF-013`)
+1. OR-02 provider evidence writer module is not yet explicit; current path emits telemetry and timeline append through scheduler seams rather than a provider-local evidence writer package. (`F-149`, `F-153`, `F-154`, `F-160`, `F-176`)
+2. Stream lifecycle monotonicity (`start -> chunk* -> final/error` with strict sequence progression) is validated per chunk and observer callback, but still lacks a single explicit finite-state guard in controller internals. (`F-063`, `F-064`, `F-150`)
+3. Fallback and provider-switch share the same emitted control signal name (`provider_switch`); `RetryDecision` differentiates `"provider_switch"` vs `"fallback"`. (`F-047`, `F-133`, `F-136`)
 
 ## 8) Implementation-Ready Work Packages
 
@@ -260,11 +260,11 @@ Execution order is designed to reduce risk and preserve compatibility.
 
 | Work package | Objective | File scope (expected) | Done criteria |
 | --- | --- | --- | --- |
-| `WP-1 Policy/Capability Plan Freeze` | Separate policy resolution and capability snapshot freeze from invocation mechanics. | Add `internal/runtime/provider/policy/*`, `internal/runtime/provider/capability/*`; update `internal/runtime/provider/invocation/controller.go`. | Deterministic `ResolvedProviderPlan` produced at turn start, with snapshot refs persisted in invocation result (`F-056`, `F-060`, `F-066`, `F-149`, `F-161`). |
+| `WP-1 Policy/Capability Plan Freeze` | Complete. Policy resolution and capability snapshot freeze are now separated from invocation mechanics. | Implemented in `internal/runtime/provider/policy/*`, `internal/runtime/provider/capability/*`, and `internal/runtime/provider/invocation/controller.go`. | Deterministic `ResolvedProviderPlan` is produced and consumed with snapshot refs persisted in invocation result (`F-056`, `F-060`, `F-066`, `F-149`, `F-161`). |
 | `WP-2 Provider Evidence Writer` | Add explicit provider evidence emission for OR-02 baseline fields. | Add `internal/runtime/provider/evidence/*`; integrate from invocation controller. | Provider invocation evidence includes invocation ID, attempts, normalized outcomes, cancel markers, and plan refs without blocking control path (`F-149`, `F-153`, `F-154`, `F-160`, `F-176`). |
 | `WP-3 Stream Lifecycle Guard` | Enforce monotonic sequence and legal chunk transition ordering centrally in invocation observer layer. | Update `internal/runtime/provider/invocation/controller.go` (observer state machine) + tests. | Invalid sequence/lifecycle causes deterministic failure classification and tests cover violation paths (`F-063`, `F-064`, `F-150`, `NF-013`). |
-| `WP-4 Config SecretRef Layer` | Introduce provider config model that accepts secret references, keeping env fallback for local runner. | Add `internal/runtime/provider/config/*`; update adapter constructors/bootstrap wiring. | Runtime accepts secret refs for provider keys/endpoints and preserves redaction guarantees (`F-061`, `F-117`, `F-114`). |
-| `WP-5 Adapter Conformance Coverage` | Close missing adapter test gaps and add provider contract suite path. | Add tests under `providers/stt/deepgram`, `providers/stt/google`, `providers/llm/gemini`, `providers/tts/elevenlabs`, `providers/tts/google`; add `test/contract/provider/*`. | Each adapter has success/error/cancel/stream-order tests; contract suite validates common adapter invariants (`F-164`, `F-131`, `F-160`, `NF-013`). |
+| `WP-4 Config SecretRef Layer` | Complete. Provider config now accepts secret refs with env fallback for local runner. | Implemented in `internal/runtime/provider/config/*` and adapter env-config wiring updates. | Runtime accepts secret refs for provider keys/endpoints and preserves redaction guarantees (`F-061`, `F-117`, `F-114`). |
+| `WP-5 Adapter Conformance Coverage` | Complete. Missing adapter gaps are closed and provider contract suite is added. | Implemented tests under `providers/stt/deepgram`, `providers/stt/google`, `providers/llm/gemini`, `providers/tts/elevenlabs`, `providers/tts/google`, plus `test/contract/provider_adapter_contract_test.go`. | Each adapter now has coverage for core success/error/cancel/stream behavior and contract-level invariants (`F-164`, `F-131`, `F-160`, `NF-013`). |
 
 Validation commands for work packages:
 - `go test ./providers/...`

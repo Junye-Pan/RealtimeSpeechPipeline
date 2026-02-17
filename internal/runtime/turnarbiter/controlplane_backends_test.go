@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/tiger/realtime-speech-pipeline/api/controlplane"
@@ -128,6 +129,139 @@ func TestNewControlPlaneBundleResolverWithBackends(t *testing.T) {
 	if !bundle.HasLeaseDecision || !bundle.LeaseAuthorityValid || !bundle.LeaseAuthorityGranted || bundle.LeaseAuthorityEpoch != 9 {
 		t.Fatalf("expected lease decision metadata from backend, got %+v", bundle)
 	}
+	if bundle.LeaseTokenID == "" || bundle.LeaseTokenExpiresAtUTC == "" {
+		t.Fatalf("expected lease token metadata in turn-start bundle, got %+v", bundle)
+	}
+}
+
+func TestNewControlPlaneBundleResolverWithBackendsThreadsTenantIDToAdmission(t *testing.T) {
+	t.Parallel()
+
+	var capturedTenantID string
+	resolver := NewControlPlaneBundleResolverWithBackends(ControlPlaneBackends{
+		Admission: stubAdmissionBackend{
+			evalFn: func(in admission.Input) (admission.Output, error) {
+				capturedTenantID = in.TenantID
+				return admission.Output{
+					AdmissionPolicySnapshot: "admission-policy/tenant",
+					OutcomeKind:             controlplane.OutcomeAdmit,
+					Reason:                  admission.ReasonAllowed,
+				}, nil
+			},
+		},
+	})
+
+	bundle, err := resolver.ResolveTurnStartBundle(TurnStartBundleInput{
+		TenantID:                 "tenant-backend-1",
+		SessionID:                "sess-tenant-backend-1",
+		TurnID:                   "turn-tenant-backend-1",
+		RequestedPipelineVersion: "pipeline-requested",
+		AuthorityEpoch:           5,
+	})
+	if err != nil {
+		t.Fatalf("unexpected resolver error: %v", err)
+	}
+	if capturedTenantID != "tenant-backend-1" {
+		t.Fatalf("expected tenant_id threading to admission backend, got %q", capturedTenantID)
+	}
+	if !bundle.HasCPAdmissionDecision || bundle.CPAdmissionOutcomeKind != controlplane.OutcomeAdmit {
+		t.Fatalf("expected admit CP admission decision, got %+v", bundle)
+	}
+	if bundle.CPAdmissionScope != controlplane.ScopeTenant {
+		t.Fatalf("expected tenant-scoped CP admission when tenant_id is set, got %+v", bundle)
+	}
+}
+
+func TestNewControlPlaneBundleResolverWithBackendsThreadsTenantIDToPolicy(t *testing.T) {
+	t.Parallel()
+
+	var capturedTenantID string
+	resolver := NewControlPlaneBundleResolverWithBackends(ControlPlaneBackends{
+		Policy: stubPolicyBackend{
+			evalFn: func(in policy.Input) (policy.Output, error) {
+				capturedTenantID = in.TenantID
+				return policy.Output{
+					PolicyResolutionSnapshot: "policy-resolution/tenant",
+					AllowedAdaptiveActions:   []string{"retry"},
+					ResolvedPolicy: policy.ResolvedTurnPolicy{
+						Budgets: controlplane.Budgets{
+							TurnBudgetMS:        5000,
+							NodeBudgetMSDefault: 1500,
+							PathBudgetMSDefault: 3000,
+							EdgeBudgetMSDefault: 500,
+						},
+						ProviderBindings: map[string]string{
+							"stt": "stt-default",
+							"llm": "llm-default",
+							"tts": "tts-default",
+						},
+						EdgeBufferPolicies: map[string]controlplane.EdgeBufferPolicy{
+							"default": {
+								Strategy:                 controlplane.BufferStrategyDrop,
+								MaxQueueItems:            64,
+								MaxQueueMS:               300,
+								MaxQueueBytes:            262144,
+								MaxLatencyContributionMS: 120,
+								Watermarks: controlplane.EdgeWatermarks{
+									QueueItems: &controlplane.WatermarkThreshold{High: 48, Low: 24},
+								},
+								LaneHandling: controlplane.LaneHandling{
+									DataLane:      "drop",
+									ControlLane:   "non_blocking_priority",
+									TelemetryLane: "best_effort_drop",
+								},
+								DefaultingSource: "execution_profile_default",
+							},
+						},
+						NodeExecutionPolicies: map[string]controlplane.NodeExecutionPolicy{
+							"provider-heavy": {
+								ConcurrencyLimit: 1,
+								FairnessKey:      "tenant-policy-heavy",
+							},
+						},
+						FlowControl: controlplane.FlowControl{
+							ModeByLane: controlplane.ModeByLane{
+								DataLane:      "signal",
+								ControlLane:   "signal",
+								TelemetryLane: "signal",
+							},
+							Watermarks: controlplane.FlowWatermarks{
+								DataLane:      controlplane.WatermarkThreshold{High: 100, Low: 50},
+								ControlLane:   controlplane.WatermarkThreshold{High: 20, Low: 10},
+								TelemetryLane: controlplane.WatermarkThreshold{High: 200, Low: 100},
+							},
+							SheddingStrategyByLane: controlplane.SheddingStrategyByLane{
+								DataLane:      "drop",
+								ControlLane:   "none",
+								TelemetryLane: "sample",
+							},
+						},
+						RecordingPolicy: controlplane.RecordingPolicy{
+							RecordingLevel:     "L0",
+							AllowedReplayModes: []string{"replay_decisions"},
+						},
+					},
+				}, nil
+			},
+		},
+	})
+
+	bundle, err := resolver.ResolveTurnStartBundle(TurnStartBundleInput{
+		TenantID:                 "tenant-policy-1",
+		SessionID:                "sess-policy-backend-1",
+		TurnID:                   "turn-policy-backend-1",
+		RequestedPipelineVersion: "pipeline-requested",
+		AuthorityEpoch:           5,
+	})
+	if err != nil {
+		t.Fatalf("unexpected resolver error: %v", err)
+	}
+	if capturedTenantID != "tenant-policy-1" {
+		t.Fatalf("expected tenant_id threading to policy backend, got %q", capturedTenantID)
+	}
+	if policyOut, ok := bundle.NodeExecutionPolicies["provider-heavy"]; !ok || policyOut.FairnessKey != "tenant-policy-heavy" {
+		t.Fatalf("expected tenant policy node_execution_policies in turn-start bundle, got %+v", bundle.NodeExecutionPolicies)
+	}
 }
 
 func TestNewControlPlaneBundleResolverWithBackendsFallsBackPerService(t *testing.T) {
@@ -214,6 +348,35 @@ func TestNewControlPlaneBundleResolverWithBackendsFallsBackPerService(t *testing
 	}
 	if !bundle.HasLeaseDecision || !bundle.LeaseAuthorityValid || !bundle.LeaseAuthorityGranted {
 		t.Fatalf("expected lease fallback defaults after backend error, got %+v", bundle)
+	}
+	if bundle.LeaseTokenID == "" || bundle.LeaseTokenExpiresAtUTC == "" {
+		t.Fatalf("expected fallback lease token metadata after backend error, got %+v", bundle)
+	}
+}
+
+func TestNewControlPlaneBundleResolverWithBackendsStrictModePropagatesNonStaleErrors(t *testing.T) {
+	t.Parallel()
+
+	resolver := NewControlPlaneBundleResolverWithBackends(ControlPlaneBackends{
+		FallbackMode: BackendFallbackModeStrict,
+		Registry: stubRegistryBackend{
+			resolveFn: func(string) (registry.PipelineRecord, error) {
+				return registry.PipelineRecord{}, errors.New("registry backend unavailable")
+			},
+		},
+	})
+
+	_, err := resolver.ResolveTurnStartBundle(TurnStartBundleInput{
+		SessionID:                "sess-strict-backend-1",
+		TurnID:                   "turn-strict-backend-1",
+		RequestedPipelineVersion: "pipeline-requested",
+		AuthorityEpoch:           1,
+	})
+	if err == nil {
+		t.Fatalf("expected strict-mode backend error propagation")
+	}
+	if !strings.Contains(err.Error(), "registry backend unavailable") {
+		t.Fatalf("expected strict-mode resolver to include backend error, got %v", err)
 	}
 }
 
@@ -328,6 +491,98 @@ func TestNewWithControlPlaneBackendsFromDistributionFile(t *testing.T) {
 	}
 }
 
+func TestNewWithControlPlaneBackendsFromDistributionFileAppliesTenantAdmissionOverride(t *testing.T) {
+	t.Parallel()
+
+	artifactPath := writeDistributionFixture(t, `{
+  "schema_version": "cp-snapshot-distribution/v1",
+  "registry": {
+    "records": {
+      "pipeline-requested": {
+        "pipeline_version": "pipeline-requested",
+        "graph_definition_ref": "graph/distribution",
+        "execution_profile": "simple"
+      }
+    }
+  },
+  "rollout": {
+    "by_requested_version": {
+      "pipeline-requested": "pipeline-distribution"
+    },
+    "version_resolution_snapshot": "version-resolution/distribution"
+  },
+  "routing_view": {
+    "default": {
+      "routing_view_snapshot": "routing-view/distribution",
+      "admission_policy_snapshot": "admission-policy/distribution",
+      "abi_compatibility_snapshot": "abi-compat/distribution"
+    }
+  },
+  "policy": {
+    "default": {
+      "policy_resolution_snapshot": "policy-resolution/distribution",
+      "allowed_adaptive_actions": ["fallback", "retry"]
+    }
+  },
+  "provider_health": {
+    "default": {
+      "provider_health_snapshot": "provider-health/distribution"
+    }
+  },
+  "admission": {
+    "default": {
+      "admission_policy_snapshot": "admission-policy/default",
+      "outcome_kind": "admit",
+      "scope": "session",
+      "reason": "cp_admission_allowed"
+    },
+    "by_tenant": {
+      "tenant-gold": {
+        "admission_policy_snapshot": "admission-policy/tenant-gold",
+        "outcome_kind": "defer",
+        "scope": "tenant",
+        "reason": "cp_admission_defer_capacity"
+      }
+    }
+  }
+}`)
+
+	recorder := timeline.NewRecorder(timeline.StageAConfig{BaselineCapacity: 8, DetailCapacity: 8})
+	arbiter, err := NewWithControlPlaneBackendsFromDistributionFile(&recorder, artifactPath)
+	if err != nil {
+		t.Fatalf("expected distribution-backed arbiter, got %v", err)
+	}
+
+	open, err := arbiter.HandleTurnOpenProposed(OpenRequest{
+		TenantID:             "tenant-gold",
+		SessionID:            "sess-distribution-tenant-1",
+		TurnID:               "turn-distribution-tenant-1",
+		EventID:              "evt-distribution-tenant-1",
+		RuntimeTimestampMS:   100,
+		WallClockTimestampMS: 100,
+		PipelineVersion:      "pipeline-requested",
+		AuthorityEpoch:       3,
+		SnapshotValid:        true,
+		AuthorityEpochValid:  true,
+		AuthorityAuthorized:  true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected open error with distribution backends: %v", err)
+	}
+	if open.State != controlplane.TurnIdle {
+		t.Fatalf("expected tenant admission defer to keep turn idle, got %s", open.State)
+	}
+	if open.Plan != nil {
+		t.Fatalf("expected no plan when CP admission defers turn, got %+v", open.Plan)
+	}
+	if open.Decision == nil ||
+		open.Decision.OutcomeKind != controlplane.OutcomeDefer ||
+		open.Decision.Scope != controlplane.ScopeTenant ||
+		open.Decision.Reason != "cp_admission_defer_capacity" {
+		t.Fatalf("expected tenant-scoped CP admission defer decision, got %+v", open.Decision)
+	}
+}
+
 func TestNewControlPlaneBackendsFromDistributionEnv(t *testing.T) {
 	artifactPath := writeDistributionFixture(t, `{
   "schema_version": "cp-snapshot-distribution/v1",
@@ -345,6 +600,37 @@ func TestNewControlPlaneBackendsFromDistributionEnv(t *testing.T) {
 	}
 	if backends.Registry == nil || backends.Rollout == nil || backends.RoutingView == nil || backends.Policy == nil || backends.ProviderHealth == nil || backends.GraphCompiler == nil || backends.Admission == nil || backends.Lease == nil {
 		t.Fatalf("expected all distribution env backends to be initialized")
+	}
+	if backends.FallbackMode != BackendFallbackModeAvailability {
+		t.Fatalf("expected availability fallback mode by default, got %s", backends.FallbackMode)
+	}
+}
+
+func TestNewControlPlaneBackendsFromDistributionEnvStrictMode(t *testing.T) {
+	artifactPath := writeDistributionFixture(t, `{
+  "schema_version": "cp-snapshot-distribution/v1",
+  "registry": {"records": {"pipeline-v1": {"graph_definition_ref": "graph/default", "execution_profile": "simple"}}}
+}`)
+	t.Setenv(ControlPlaneDistributionPathEnv, artifactPath)
+	t.Setenv(ControlPlaneBackendFallbackModeEnv, string(BackendFallbackModeStrict))
+
+	backends, err := NewControlPlaneBackendsFromDistributionEnv()
+	if err != nil {
+		t.Fatalf("expected strict fallback mode config to load, got %v", err)
+	}
+	if backends.FallbackMode != BackendFallbackModeStrict {
+		t.Fatalf("expected strict fallback mode, got %s", backends.FallbackMode)
+	}
+}
+
+func TestNewControlPlaneBackendsFromDistributionEnvInvalidFallbackMode(t *testing.T) {
+	t.Setenv(ControlPlaneBackendFallbackModeEnv, "unknown")
+	_, err := NewControlPlaneBackendsFromDistributionEnv()
+	if err == nil {
+		t.Fatalf("expected invalid fallback mode error")
+	}
+	if !strings.Contains(err.Error(), ControlPlaneBackendFallbackModeEnv) {
+		t.Fatalf("expected env-specific fallback mode validation error, got %v", err)
 	}
 }
 

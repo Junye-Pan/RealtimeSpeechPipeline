@@ -17,6 +17,7 @@ import (
 	replaycmp "github.com/tiger/realtime-speech-pipeline/internal/observability/replay"
 	"github.com/tiger/realtime-speech-pipeline/internal/observability/timeline"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/turnarbiter"
+	toolingconformance "github.com/tiger/realtime-speech-pipeline/internal/tooling/conformance"
 	"github.com/tiger/realtime-speech-pipeline/internal/tooling/ops"
 	"github.com/tiger/realtime-speech-pipeline/internal/tooling/regression"
 	toolingrelease "github.com/tiger/realtime-speech-pipeline/internal/tooling/release"
@@ -24,22 +25,28 @@ import (
 )
 
 const (
-	replaySmokeTimingToleranceMS        int64 = 15
-	replaySmokeFixtureID                      = "rd-001-smoke"
-	replayRegressionDefaultGate               = "full"
-	defaultReplayMetadataPath                 = "test/replay/fixtures/metadata.json"
-	defaultReplayRegressionReportPath         = ".codex/replay/regression-report.json"
-	replayFixtureReportsDirName               = "fixtures"
-	defaultRuntimeBaselineArtifactPath        = ".codex/replay/runtime-baseline.json"
-	defaultContractsReportPath                = ".codex/ops/contracts-report.json"
-	defaultSLOGatesReportPath                 = ".codex/ops/slo-gates-report.json"
-	defaultMVPSLOGatesReportPath              = ".codex/ops/slo-gates-mvp-report.json"
-	defaultLiveProviderChainReportPath        = ".codex/providers/live-provider-chain-report.json"
-	defaultStreamingChainReportPath           = ".codex/providers/live-provider-chain-report.streaming.json"
-	defaultNonStreamingChainReportPath        = ".codex/providers/live-provider-chain-report.nonstreaming.json"
-	defaultLiveLatencyCompareReportPath       = ".codex/providers/live-latency-compare.json"
-	defaultLiveKitSmokeReportPath             = ".codex/providers/livekit-smoke-report.json"
-	mvpE2EWaiveAfterAttempts                  = 3
+	replaySmokeTimingToleranceMS           int64 = 15
+	replaySmokeFixtureID                         = "rd-001-smoke"
+	replayRegressionDefaultGate                  = "full"
+	defaultReplayMetadataPath                    = "test/replay/fixtures/metadata.json"
+	defaultReplayRegressionReportPath            = ".codex/replay/regression-report.json"
+	replayFixtureReportsDirName                  = "fixtures"
+	defaultRuntimeBaselineArtifactPath           = ".codex/replay/runtime-baseline.json"
+	defaultContractsReportPath                   = ".codex/ops/contracts-report.json"
+	defaultSLOGatesReportPath                    = ".codex/ops/slo-gates-report.json"
+	defaultMVPSLOGatesReportPath                 = ".codex/ops/slo-gates-mvp-report.json"
+	defaultLiveProviderChainReportPath           = ".codex/providers/live-provider-chain-report.json"
+	defaultStreamingChainReportPath              = ".codex/providers/live-provider-chain-report.streaming.json"
+	defaultNonStreamingChainReportPath           = ".codex/providers/live-provider-chain-report.nonstreaming.json"
+	defaultLiveLatencyCompareReportPath          = ".codex/providers/live-latency-compare.json"
+	defaultLiveKitSmokeReportPath                = ".codex/providers/livekit-smoke-report.json"
+	defaultConformanceGovernanceReportPath       = ".codex/ops/conformance-governance-report.json"
+	defaultVersionSkewPolicyPath                 = "pipelines/compat/version_skew_policy_v1.json"
+	defaultDeprecationPolicyPath                 = "pipelines/compat/deprecation_policy_v1.json"
+	defaultConformanceProfilePath                = "pipelines/compat/conformance_profile_v1.json"
+	defaultConformanceResultsPath                = "test/contract/fixtures/conformance_results_v1.json"
+	defaultFeatureStatusFrameworkPath            = "docs/RSPP_features_framework.json"
+	mvpE2EWaiveAfterAttempts                     = 3
 )
 
 func main() {
@@ -49,6 +56,20 @@ func main() {
 	}
 
 	switch os.Args[1] {
+	case "validate-spec":
+		specPath, mode, err := runValidateSpec(os.Args[2:])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to validate spec: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("spec validation passed: %s (mode=%s)\n", specPath, mode)
+	case "validate-policy":
+		policyPath, mode, err := runValidatePolicy(os.Args[2:])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to validate policy: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("policy validation passed: %s (mode=%s)\n", policyPath, mode)
 	case "validate-contracts":
 		fixtureRoot := filepath.Join("test", "contract", "fixtures")
 		if len(os.Args) >= 3 {
@@ -185,6 +206,45 @@ func main() {
 		summaryPath := strings.TrimSuffix(outputPath, filepath.Ext(outputPath)) + ".md"
 		fmt.Printf("live latency compare report written: %s\n", outputPath)
 		fmt.Printf("live latency compare summary written: %s\n", summaryPath)
+	case "conformance-governance-report":
+		outputPath := defaultConformanceGovernanceReportPath
+		versionSkewPolicyPath := defaultVersionSkewPolicyPath
+		deprecationPolicyPath := defaultDeprecationPolicyPath
+		conformanceProfilePath := defaultConformanceProfilePath
+		conformanceResultsPath := defaultConformanceResultsPath
+		featureStatusFrameworkPath := defaultFeatureStatusFrameworkPath
+		if len(os.Args) >= 3 {
+			outputPath = os.Args[2]
+		}
+		if len(os.Args) >= 4 {
+			versionSkewPolicyPath = os.Args[3]
+		}
+		if len(os.Args) >= 5 {
+			deprecationPolicyPath = os.Args[4]
+		}
+		if len(os.Args) >= 6 {
+			conformanceProfilePath = os.Args[5]
+		}
+		if len(os.Args) >= 7 {
+			conformanceResultsPath = os.Args[6]
+		}
+		if len(os.Args) >= 8 {
+			featureStatusFrameworkPath = os.Args[7]
+		}
+		if err := writeConformanceGovernanceReport(
+			outputPath,
+			versionSkewPolicyPath,
+			deprecationPolicyPath,
+			conformanceProfilePath,
+			conformanceResultsPath,
+			featureStatusFrameworkPath,
+		); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to write conformance governance report: %v\n", err)
+			os.Exit(1)
+		}
+		summaryPath := strings.TrimSuffix(outputPath, filepath.Ext(outputPath)) + ".md"
+		fmt.Printf("conformance governance report written: %s\n", outputPath)
+		fmt.Printf("conformance governance summary written: %s\n", summaryPath)
 	case "publish-release":
 		if len(os.Args) < 4 {
 			fmt.Fprintln(os.Stderr, "publish-release requires spec_ref and rollout_cfg_path")
@@ -234,6 +294,8 @@ func main() {
 
 func printUsage() {
 	fmt.Println("rspp-cli usage:")
+	fmt.Println("  rspp-cli validate-spec <spec_path> [strict|relaxed]")
+	fmt.Println("  rspp-cli validate-policy <policy_path> [strict|relaxed]")
 	fmt.Println("  rspp-cli validate-contracts [fixture_root]")
 	fmt.Println("  rspp-cli validate-contracts-report [fixture_root] [output_path]")
 	fmt.Println("  rspp-cli replay-smoke-report [output_path] [metadata_path]")
@@ -242,13 +304,56 @@ func printUsage() {
 	fmt.Println("  rspp-cli slo-gates-report [output_path] [baseline_artifact_path]")
 	fmt.Println("  rspp-cli slo-gates-mvp-report [output_path] [baseline_artifact_path] [live_provider_chain_report_path] [livekit_smoke_report_path]")
 	fmt.Println("  rspp-cli live-latency-compare-report [output_path] [streaming_report_path] [non_streaming_report_path]")
+	fmt.Println("  rspp-cli conformance-governance-report [output_path] [version_skew_policy_path] [deprecation_policy_path] [conformance_profile_path] [conformance_results_path] [feature_status_framework_path]")
 	fmt.Println("  rspp-cli publish-release <spec_ref> <rollout_cfg_path> [output_path] [contracts_report_path] [replay_report_path] [slo_report_path]")
+}
+
+func runValidateSpec(args []string) (string, validation.ValidationMode, error) {
+	if len(args) < 1 || strings.TrimSpace(args[0]) == "" {
+		return "", "", fmt.Errorf("validate-spec requires spec_path")
+	}
+	modeArg := ""
+	if len(args) >= 2 {
+		modeArg = args[1]
+	}
+	mode, err := validation.ParseValidationMode(modeArg)
+	if err != nil {
+		return "", "", err
+	}
+	specPath := strings.TrimSpace(args[0])
+	if err := validation.ValidatePipelineSpecFile(specPath, string(mode)); err != nil {
+		return "", "", err
+	}
+	return specPath, mode, nil
+}
+
+func runValidatePolicy(args []string) (string, validation.ValidationMode, error) {
+	if len(args) < 1 || strings.TrimSpace(args[0]) == "" {
+		return "", "", fmt.Errorf("validate-policy requires policy_path")
+	}
+	modeArg := ""
+	if len(args) >= 2 {
+		modeArg = args[1]
+	}
+	mode, err := validation.ParseValidationMode(modeArg)
+	if err != nil {
+		return "", "", err
+	}
+	policyPath := strings.TrimSpace(args[0])
+	if err := validation.ValidatePolicyBundleFile(policyPath, string(mode)); err != nil {
+		return "", "", err
+	}
+	return policyPath, mode, nil
 }
 
 type replaySmokeReport struct {
 	GeneratedAtUTC     string                 `json:"generated_at_utc"`
 	FixtureID          string                 `json:"fixture_id"`
 	MetadataPath       string                 `json:"metadata_path"`
+	Mode               obs.ReplayMode         `json:"mode"`
+	ReplayRunID        string                 `json:"replay_run_id"`
+	RequestCursor      *obs.ReplayCursor      `json:"request_cursor,omitempty"`
+	ResultCursor       *obs.ReplayCursor      `json:"result_cursor,omitempty"`
 	TimingToleranceMS  int64                  `json:"timing_tolerance_ms"`
 	TotalDivergences   int                    `json:"total_divergences"`
 	ByClass            map[string]int         `json:"by_class"`
@@ -265,16 +370,14 @@ func writeReplaySmokeReport(outputPath string, metadataPath string) error {
 	if err != nil {
 		return err
 	}
-	divergences := buildReplaySmokeDivergences(effectiveTimingToleranceMS)
+	run, err := buildReplaySmokeRun(effectiveTimingToleranceMS)
+	if err != nil {
+		return err
+	}
+	divergences := run.Result.Divergences
 	evaluation := regression.EvaluateDivergences(divergences, policy)
 
-	byClass := map[string]int{
-		string(obs.PlanDivergence):      0,
-		string(obs.OutcomeDivergence):   0,
-		string(obs.OrderingDivergence):  0,
-		string(obs.AuthorityDivergence): 0,
-		string(obs.TimingDivergence):    0,
-	}
+	byClass := replayByClassCounter()
 	for _, d := range divergences {
 		byClass[string(d.Class)]++
 	}
@@ -282,6 +385,10 @@ func writeReplaySmokeReport(outputPath string, metadataPath string) error {
 		GeneratedAtUTC:     time.Now().UTC().Format(time.RFC3339),
 		FixtureID:          replaySmokeFixtureID,
 		MetadataPath:       metadataPath,
+		Mode:               run.Result.Mode,
+		ReplayRunID:        run.Result.RunID,
+		RequestCursor:      run.Request.Cursor,
+		ResultCursor:       run.Result.Cursor,
 		TimingToleranceMS:  effectiveTimingToleranceMS,
 		TotalDivergences:   len(divergences),
 		ByClass:            byClass,
@@ -375,19 +482,23 @@ func fixtureTimingTolerance(policy replayFixturePolicy, defaultTimingToleranceMS
 }
 
 type replayFixtureExecutionReport struct {
-	FixtureID                         string         `json:"fixture_id"`
-	Gate                              string         `json:"gate"`
-	TimingToleranceMS                 int64          `json:"timing_tolerance_ms"`
-	FinalAttemptLatencyThresholdMS    *int64         `json:"final_attempt_latency_threshold_ms,omitempty"`
-	TotalInvocationLatencyThresholdMS *int64         `json:"total_invocation_latency_threshold_ms,omitempty"`
-	InvocationLatencyBreaches         int            `json:"invocation_latency_breaches,omitempty"`
-	TotalDivergences                  int            `json:"total_divergences"`
-	FailingCount                      int            `json:"failing_count"`
-	UnexplainedCount                  int            `json:"unexplained_count"`
-	MissingExpected                   int            `json:"missing_expected"`
-	ExpectedConfigured                int            `json:"expected_configured"`
-	ByClass                           map[string]int `json:"by_class"`
-	FailingClasses                    []string       `json:"failing_classes,omitempty"`
+	FixtureID                         string            `json:"fixture_id"`
+	Gate                              string            `json:"gate"`
+	Mode                              obs.ReplayMode    `json:"mode"`
+	ReplayRunID                       string            `json:"replay_run_id"`
+	RequestCursor                     *obs.ReplayCursor `json:"request_cursor,omitempty"`
+	ResultCursor                      *obs.ReplayCursor `json:"result_cursor,omitempty"`
+	TimingToleranceMS                 int64             `json:"timing_tolerance_ms"`
+	FinalAttemptLatencyThresholdMS    *int64            `json:"final_attempt_latency_threshold_ms,omitempty"`
+	TotalInvocationLatencyThresholdMS *int64            `json:"total_invocation_latency_threshold_ms,omitempty"`
+	InvocationLatencyBreaches         int               `json:"invocation_latency_breaches,omitempty"`
+	TotalDivergences                  int               `json:"total_divergences"`
+	FailingCount                      int               `json:"failing_count"`
+	UnexplainedCount                  int               `json:"unexplained_count"`
+	MissingExpected                   int               `json:"missing_expected"`
+	ExpectedConfigured                int               `json:"expected_configured"`
+	ByClass                           map[string]int    `json:"by_class"`
+	FailingClasses                    []string          `json:"failing_classes,omitempty"`
 }
 
 type replayFixtureArtifact struct {
@@ -398,6 +509,7 @@ type replayFixtureArtifact struct {
 }
 
 type replayRegressionReport struct {
+	SchemaVersion      string                         `json:"schema_version"`
 	GeneratedAtUTC     string                         `json:"generated_at_utc"`
 	Gate               string                         `json:"gate"`
 	MetadataPath       string                         `json:"metadata_path"`
@@ -411,7 +523,12 @@ type replayRegressionReport struct {
 	Fixtures           []replayFixtureExecutionReport `json:"fixtures"`
 }
 
-type replayFixtureBuilder func(timingToleranceMS int64) []obs.ReplayDivergence
+type replayFixtureRun struct {
+	Request obs.ReplayRunRequest `json:"request"`
+	Result  obs.ReplayRunResult  `json:"result"`
+}
+
+type replayFixtureBuilder func(timingToleranceMS int64) (replayFixtureRun, error)
 
 type invocationLatencySample struct {
 	Scope                    string
@@ -439,13 +556,7 @@ func writeReplayRegressionReport(outputPath string, metadataPath string, gate st
 	builders := replayFixtureBuilders()
 
 	fixtureReports := make([]replayFixtureExecutionReport, 0, len(fixtureIDs))
-	totalByClass := map[string]int{
-		string(obs.PlanDivergence):      0,
-		string(obs.OutcomeDivergence):   0,
-		string(obs.OrderingDivergence):  0,
-		string(obs.AuthorityDivergence): 0,
-		string(obs.TimingDivergence):    0,
-	}
+	totalByClass := replayByClassCounter()
 	latencySamplesByScope, latencySamplesErr := runtimeBaselineInvocationLatencySamplesForReplay()
 
 	failingEntries := make([]obs.ReplayDivergence, 0)
@@ -462,7 +573,11 @@ func writeReplayRegressionReport(outputPath string, metadataPath string, gate st
 		}
 
 		timingToleranceMS := fixtureTimingTolerance(policy, replaySmokeTimingToleranceMS)
-		divergences := builder(timingToleranceMS)
+		run, err := builder(timingToleranceMS)
+		if err != nil {
+			return fmt.Errorf("execute replay fixture %s: %w", fixtureID, err)
+		}
+		divergences := append([]obs.ReplayDivergence(nil), run.Result.Divergences...)
 		latencyThresholdDivergences := buildInvocationLatencyThresholdDivergences(fixtureID, policy, latencySamplesByScope, latencySamplesErr)
 		divergences = append(divergences, latencyThresholdDivergences...)
 		evaluation := regression.EvaluateDivergences(divergences, regression.DivergencePolicy{
@@ -470,13 +585,7 @@ func writeReplayRegressionReport(outputPath string, metadataPath string, gate st
 			Expected:          policy.ExpectedDivergences,
 		})
 
-		byClass := map[string]int{
-			string(obs.PlanDivergence):      0,
-			string(obs.OutcomeDivergence):   0,
-			string(obs.OrderingDivergence):  0,
-			string(obs.AuthorityDivergence): 0,
-			string(obs.TimingDivergence):    0,
-		}
+		byClass := replayByClassCounter()
 		for _, entry := range divergences {
 			byClass[string(entry.Class)]++
 			totalByClass[string(entry.Class)]++
@@ -485,6 +594,10 @@ func writeReplayRegressionReport(outputPath string, metadataPath string, gate st
 		report := replayFixtureExecutionReport{
 			FixtureID:                         fixtureID,
 			Gate:                              normalizedGate,
+			Mode:                              run.Result.Mode,
+			ReplayRunID:                       run.Result.RunID,
+			RequestCursor:                     run.Request.Cursor,
+			ResultCursor:                      run.Result.Cursor,
 			TimingToleranceMS:                 timingToleranceMS,
 			FinalAttemptLatencyThresholdMS:    normalizeNonNegativeThreshold(policy.FinalAttemptLatencyThresholdMS),
 			TotalInvocationLatencyThresholdMS: normalizeNonNegativeThreshold(policy.TotalInvocationLatencyThresholdMS),
@@ -507,6 +620,7 @@ func writeReplayRegressionReport(outputPath string, metadataPath string, gate st
 	}
 
 	summary := replayRegressionReport{
+		SchemaVersion:      toolingrelease.ReplayRegressionReportSchemaVersionV1,
 		GeneratedAtUTC:     time.Now().UTC().Format(time.RFC3339),
 		Gate:               normalizedGate,
 		MetadataPath:       metadataPath,
@@ -630,7 +744,7 @@ func replayFixtureBuilders() map[string]replayFixtureBuilder {
 		"ae-004-ingress-authority-enrichment":  buildReplayNoDivergence,
 		"ae-005-preturn-deauthorization":       buildReplayNoDivergence,
 		"cf-001-cancel-fence":                  buildReplayNoDivergence,
-		"cf-002-provider-late-output":          buildReplayNoDivergence,
+		"cf-002-provider-late-output":          buildReplayNoDivergencePlayback,
 		"cf-003-cancel-terminalization":        buildReplayNoDivergence,
 		"cf-004-cancel-observability":          buildReplayNoDivergence,
 		"f1-admission-overload":                buildReplayNoDivergence,
@@ -645,7 +759,7 @@ func replayFixtureBuilders() map[string]replayFixtureBuilder {
 		"ml-002-deterministic-merge":           buildReplayNoDivergence,
 		"ml-003-replay-absence-classification": buildReplayML003OutcomeDivergence,
 		"ml-004-sync-discontinuity":            buildReplayNoDivergence,
-		"rd-001-smoke":                         buildReplaySmokeDivergences,
+		"rd-001-smoke":                         buildReplaySmokeRun,
 		"rd-002-recompute-within-tolerance":    buildReplayTimingDivergenceWithinTolerance,
 		"rd-003-baseline-completeness":         buildReplayNoDivergence,
 		"rd-004-snapshot-provenance-plan":      buildReplayPlanDivergence,
@@ -825,11 +939,15 @@ func isDigits(v string) bool {
 	return true
 }
 
-func buildReplayNoDivergence(timingToleranceMS int64) []obs.ReplayDivergence {
-	return buildReplaySmokeDivergences(timingToleranceMS)
+func buildReplayNoDivergence(timingToleranceMS int64) (replayFixtureRun, error) {
+	return buildReplaySmokeRunWithMode(timingToleranceMS, obs.ReplayModeReSimulateNodes, nil)
 }
 
-func buildReplayTimingDivergenceWithinTolerance(timingToleranceMS int64) []obs.ReplayDivergence {
+func buildReplayNoDivergencePlayback(timingToleranceMS int64) (replayFixtureRun, error) {
+	return buildReplaySmokeRunWithMode(timingToleranceMS, obs.ReplayModePlaybackRecordedProvider, nil)
+}
+
+func buildReplayTimingDivergenceWithinTolerance(timingToleranceMS int64) (replayFixtureRun, error) {
 	decision := controlplane.DecisionOutcome{
 		OutcomeKind:        controlplane.OutcomeAdmit,
 		Phase:              controlplane.PhasePreTurn,
@@ -845,6 +963,10 @@ func buildReplayTimingDivergenceWithinTolerance(timingToleranceMS int64) []obs.R
 	baseline := []replaycmp.TraceArtifact{{
 		PlanHash:              "plan-rd-002",
 		SnapshotProvenanceRef: "snapshot-rd-002",
+		Lane:                  eventabi.LaneControl,
+		RuntimeSequence:       100,
+		ProviderID:            "provider-a",
+		ProviderModel:         "model-a",
 		Decision:              decision,
 		OrderingMarker:        "runtime_sequence:100",
 		AuthorityEpoch:        7,
@@ -853,15 +975,19 @@ func buildReplayTimingDivergenceWithinTolerance(timingToleranceMS int64) []obs.R
 	replayed := []replaycmp.TraceArtifact{{
 		PlanHash:              "plan-rd-002",
 		SnapshotProvenanceRef: "snapshot-rd-002",
+		Lane:                  eventabi.LaneControl,
+		RuntimeSequence:       100,
+		ProviderID:            "provider-a",
+		ProviderModel:         "model-a",
 		Decision:              decision,
 		OrderingMarker:        "runtime_sequence:100",
 		AuthorityEpoch:        7,
 		RuntimeTimestampMS:    112,
 	}}
-	return replaycmp.CompareTraceArtifacts(baseline, replayed, replaycmp.CompareConfig{TimingToleranceMS: timingToleranceMS})
+	return runReplayFixture(obs.ReplayModeRecomputeDecisions, timingToleranceMS, baseline, replayed, nil, nil, nil)
 }
 
-func buildReplayPlanDivergence(timingToleranceMS int64) []obs.ReplayDivergence {
+func buildReplayPlanDivergence(timingToleranceMS int64) (replayFixtureRun, error) {
 	decision := controlplane.DecisionOutcome{
 		OutcomeKind:        controlplane.OutcomeAdmit,
 		Phase:              controlplane.PhasePreTurn,
@@ -877,6 +1003,10 @@ func buildReplayPlanDivergence(timingToleranceMS int64) []obs.ReplayDivergence {
 	baseline := []replaycmp.TraceArtifact{{
 		PlanHash:              "plan-rd-004",
 		SnapshotProvenanceRef: "snapshot-a",
+		Lane:                  eventabi.LaneControl,
+		RuntimeSequence:       200,
+		ProviderID:            "provider-a",
+		ProviderModel:         "model-a",
 		Decision:              decision,
 		OrderingMarker:        "runtime_sequence:200",
 		AuthorityEpoch:        9,
@@ -885,15 +1015,19 @@ func buildReplayPlanDivergence(timingToleranceMS int64) []obs.ReplayDivergence {
 	replayed := []replaycmp.TraceArtifact{{
 		PlanHash:              "plan-rd-004",
 		SnapshotProvenanceRef: "snapshot-b",
+		Lane:                  eventabi.LaneControl,
+		RuntimeSequence:       200,
+		ProviderID:            "provider-a",
+		ProviderModel:         "model-a",
 		Decision:              decision,
 		OrderingMarker:        "runtime_sequence:200",
 		AuthorityEpoch:        9,
 		RuntimeTimestampMS:    100,
 	}}
-	return replaycmp.CompareTraceArtifacts(baseline, replayed, replaycmp.CompareConfig{TimingToleranceMS: timingToleranceMS})
+	return runReplayFixture(obs.ReplayModeReSimulateNodes, timingToleranceMS, baseline, replayed, nil, nil, nil)
 }
 
-func buildReplayOrderingDivergence(timingToleranceMS int64) []obs.ReplayDivergence {
+func buildReplayOrderingDivergence(timingToleranceMS int64) (replayFixtureRun, error) {
 	decision := controlplane.DecisionOutcome{
 		OutcomeKind:        controlplane.OutcomeAdmit,
 		Phase:              controlplane.PhasePreTurn,
@@ -909,6 +1043,10 @@ func buildReplayOrderingDivergence(timingToleranceMS int64) []obs.ReplayDivergen
 	baseline := []replaycmp.TraceArtifact{{
 		PlanHash:              "plan-ordering-1",
 		SnapshotProvenanceRef: "snapshot-ordering-1",
+		Lane:                  eventabi.LaneControl,
+		RuntimeSequence:       300,
+		ProviderID:            "provider-a",
+		ProviderModel:         "model-a",
 		Decision:              decision,
 		OrderingMarker:        "runtime_sequence:300",
 		AuthorityEpoch:        11,
@@ -917,15 +1055,26 @@ func buildReplayOrderingDivergence(timingToleranceMS int64) []obs.ReplayDivergen
 	replayed := []replaycmp.TraceArtifact{{
 		PlanHash:              "plan-ordering-1",
 		SnapshotProvenanceRef: "snapshot-ordering-1",
+		Lane:                  eventabi.LaneControl,
+		RuntimeSequence:       300,
+		ProviderID:            "provider-a",
+		ProviderModel:         "model-a",
 		Decision:              decision,
 		OrderingMarker:        "runtime_sequence:301",
 		AuthorityEpoch:        11,
 		RuntimeTimestampMS:    300,
 	}}
-	return replaycmp.CompareTraceArtifacts(baseline, replayed, replaycmp.CompareConfig{TimingToleranceMS: timingToleranceMS})
+	cursor := &obs.ReplayCursor{
+		SessionID:       decision.SessionID,
+		TurnID:          decision.TurnID,
+		Lane:            eventabi.LaneControl,
+		RuntimeSequence: 300,
+		EventID:         decision.EventID,
+	}
+	return runReplayFixture(obs.ReplayModeReSimulateNodes, timingToleranceMS, baseline, replayed, nil, nil, cursor)
 }
 
-func buildReplayML003OutcomeDivergence(_ int64) []obs.ReplayDivergence {
+func buildReplayML003OutcomeDivergence(timingToleranceMS int64) (replayFixtureRun, error) {
 	baseline := []replaycmp.LineageRecord{
 		{EventID: "evt-ml003-drop", Dropped: true, MergeGroupID: ""},
 		{EventID: "evt-ml003-merge", Dropped: false, MergeGroupID: "merge-ml003"},
@@ -933,7 +1082,126 @@ func buildReplayML003OutcomeDivergence(_ int64) []obs.ReplayDivergence {
 	replayed := []replaycmp.LineageRecord{
 		{EventID: "evt-ml003-drop", Dropped: true, MergeGroupID: ""},
 	}
-	return replaycmp.CompareLineageRecords(baseline, replayed)
+	return runReplayFixture(obs.ReplayModeReplayDecisions, timingToleranceMS, nil, nil, baseline, replayed, nil)
+}
+
+func buildReplaySmokeRun(timingToleranceMS int64) (replayFixtureRun, error) {
+	return buildReplaySmokeRunWithMode(timingToleranceMS, obs.ReplayModeReSimulateNodes, nil)
+}
+
+func buildReplaySmokeRunWithMode(timingToleranceMS int64, mode obs.ReplayMode, cursor *obs.ReplayCursor) (replayFixtureRun, error) {
+	epoch := int64(7)
+	baseline := []replaycmp.TraceArtifact{
+		{
+			PlanHash:              "plan-smoke-a",
+			SnapshotProvenanceRef: "snapshot-a",
+			Lane:                  eventabi.LaneControl,
+			RuntimeSequence:       100,
+			ProviderID:            "provider-a",
+			ProviderModel:         "model-a",
+			OrderingMarker:        "runtime_sequence:100",
+			AuthorityEpoch:        7,
+			RuntimeTimestampMS:    100,
+			Decision: controlplane.DecisionOutcome{
+				OutcomeKind:        controlplane.OutcomeAdmit,
+				Phase:              controlplane.PhasePreTurn,
+				Scope:              controlplane.ScopeSession,
+				SessionID:          "sess-rd-smoke",
+				EventID:            "evt-rd-smoke-1",
+				RuntimeTimestampMS: 100,
+				WallClockMS:        100,
+				EmittedBy:          controlplane.EmitterRK25,
+				Reason:             "admission_capacity_allow",
+			},
+		},
+		{
+			PlanHash:              "plan-smoke-a",
+			SnapshotProvenanceRef: "snapshot-a",
+			Lane:                  eventabi.LaneControl,
+			RuntimeSequence:       110,
+			ProviderID:            "provider-a",
+			ProviderModel:         "model-a",
+			OrderingMarker:        "runtime_sequence:110",
+			AuthorityEpoch:        7,
+			RuntimeTimestampMS:    110,
+			Decision: controlplane.DecisionOutcome{
+				OutcomeKind:        controlplane.OutcomeStaleEpochReject,
+				Phase:              controlplane.PhasePreTurn,
+				Scope:              controlplane.ScopeTurn,
+				SessionID:          "sess-rd-smoke",
+				TurnID:             "turn-rd-smoke-1",
+				EventID:            "evt-rd-smoke-2",
+				RuntimeTimestampMS: 110,
+				WallClockMS:        110,
+				EmittedBy:          controlplane.EmitterRK24,
+				AuthorityEpoch:     &epoch,
+				Reason:             "authority_epoch_mismatch",
+			},
+		},
+	}
+	replayed := append([]replaycmp.TraceArtifact(nil), baseline...)
+	return runReplayFixture(mode, timingToleranceMS, baseline, replayed, nil, nil, cursor)
+}
+
+func runReplayFixture(
+	mode obs.ReplayMode,
+	timingToleranceMS int64,
+	baselineTrace []replaycmp.TraceArtifact,
+	candidateTrace []replaycmp.TraceArtifact,
+	baselineLineage []replaycmp.LineageRecord,
+	candidateLineage []replaycmp.LineageRecord,
+	cursor *obs.ReplayCursor,
+) (replayFixtureRun, error) {
+	request := obs.ReplayRunRequest{
+		BaselineRef:      "fixture://baseline",
+		CandidatePlanRef: "fixture://candidate",
+		Mode:             mode,
+		Cursor:           cloneReplayCursor(cursor),
+	}
+	engine := replaycmp.Engine{
+		ArtifactResolver: replaycmp.StaticReplayArtifactResolver{
+			Artifacts: map[string]replaycmp.ReplayArtifact{
+				request.BaselineRef: {
+					TraceArtifacts: append([]replaycmp.TraceArtifact(nil), baselineTrace...),
+					LineageRecords: append([]replaycmp.LineageRecord(nil), baselineLineage...),
+				},
+				request.CandidatePlanRef: {
+					TraceArtifacts: append([]replaycmp.TraceArtifact(nil), candidateTrace...),
+					LineageRecords: append([]replaycmp.LineageRecord(nil), candidateLineage...),
+				},
+			},
+		},
+		CompareConfig: replaycmp.CompareConfig{TimingToleranceMS: timingToleranceMS},
+		NewRunID:      func() string { return replayRunID(request) },
+	}
+	result, err := engine.Run(request)
+	if err != nil {
+		return replayFixtureRun{}, err
+	}
+	return replayFixtureRun{Request: request, Result: result}, nil
+}
+
+func cloneReplayCursor(cursor *obs.ReplayCursor) *obs.ReplayCursor {
+	if cursor == nil {
+		return nil
+	}
+	cloned := *cursor
+	return &cloned
+}
+
+func replayRunID(request obs.ReplayRunRequest) string {
+	cursorSegment := "cursor:none"
+	if request.Cursor != nil {
+		cursorSegment = fmt.Sprintf(
+			"cursor:%s|%s|%s|%d|%s",
+			request.Cursor.SessionID,
+			request.Cursor.TurnID,
+			request.Cursor.Lane,
+			request.Cursor.RuntimeSequence,
+			request.Cursor.EventID,
+		)
+	}
+	return fmt.Sprintf("run:%s|%s|%s|%s", request.Mode, request.BaselineRef, request.CandidatePlanRef, cursorSegment)
 }
 
 func renderReplayRegressionSummary(report replayRegressionReport) string {
@@ -956,6 +1224,7 @@ func renderReplayRegressionSummary(report replayRegressionReport) string {
 		obs.OutcomeDivergence,
 		obs.OrderingDivergence,
 		obs.AuthorityDivergence,
+		obs.ProviderChoiceDivergence,
 		obs.TimingDivergence,
 	} {
 		lines = append(lines, fmt.Sprintf("- %s: %d", cls, report.ByClass[string(cls)]))
@@ -975,6 +1244,8 @@ func renderReplayFixtureSummary(report replayFixtureArtifact) string {
 		"Generated at (UTC): " + report.GeneratedAtUTC,
 		"Fixture: " + report.FixtureID,
 		"Gate: " + report.Gate,
+		"Replay mode: " + string(report.Mode),
+		"Replay run id: " + report.ReplayRunID,
 		"Metadata path: " + report.MetadataPath,
 		fmt.Sprintf("Timing tolerance (ms): %d", report.TimingToleranceMS),
 		renderThresholdSummary("Final-attempt latency threshold (ms)", report.FinalAttemptLatencyThresholdMS),
@@ -993,6 +1264,7 @@ func renderReplayFixtureSummary(report replayFixtureArtifact) string {
 		obs.OutcomeDivergence,
 		obs.OrderingDivergence,
 		obs.AuthorityDivergence,
+		obs.ProviderChoiceDivergence,
 		obs.TimingDivergence,
 	} {
 		lines = append(lines, fmt.Sprintf("- %s: %d", cls, report.ByClass[string(cls)]))
@@ -1016,49 +1288,15 @@ func renderThresholdSummary(label string, threshold *int64) string {
 }
 
 func buildReplaySmokeDivergences(timingToleranceMS int64) []obs.ReplayDivergence {
-	epoch := int64(7)
-	baseline := []replaycmp.TraceArtifact{
-		{
-			PlanHash:              "plan-smoke-a",
-			SnapshotProvenanceRef: "snapshot-a",
-			OrderingMarker:        "runtime_sequence:100",
-			AuthorityEpoch:        7,
-			RuntimeTimestampMS:    100,
-			Decision: controlplane.DecisionOutcome{
-				OutcomeKind:        controlplane.OutcomeAdmit,
-				Phase:              controlplane.PhasePreTurn,
-				Scope:              controlplane.ScopeSession,
-				SessionID:          "sess-rd-smoke",
-				EventID:            "evt-rd-smoke-1",
-				RuntimeTimestampMS: 100,
-				WallClockMS:        100,
-				EmittedBy:          controlplane.EmitterRK25,
-				Reason:             "admission_capacity_allow",
-			},
-		},
-		{
-			PlanHash:              "plan-smoke-a",
-			SnapshotProvenanceRef: "snapshot-a",
-			OrderingMarker:        "runtime_sequence:110",
-			AuthorityEpoch:        7,
-			RuntimeTimestampMS:    110,
-			Decision: controlplane.DecisionOutcome{
-				OutcomeKind:        controlplane.OutcomeStaleEpochReject,
-				Phase:              controlplane.PhasePreTurn,
-				Scope:              controlplane.ScopeTurn,
-				SessionID:          "sess-rd-smoke",
-				TurnID:             "turn-rd-smoke-1",
-				EventID:            "evt-rd-smoke-2",
-				RuntimeTimestampMS: 110,
-				WallClockMS:        110,
-				EmittedBy:          controlplane.EmitterRK24,
-				AuthorityEpoch:     &epoch,
-				Reason:             "authority_epoch_mismatch",
-			},
-		},
+	run, err := buildReplaySmokeRun(timingToleranceMS)
+	if err != nil {
+		return []obs.ReplayDivergence{{
+			Class:   obs.OutcomeDivergence,
+			Scope:   "fixture:rd-001-smoke",
+			Message: fmt.Sprintf("replay engine execution failed: %v", err),
+		}}
 	}
-	replayed := append([]replaycmp.TraceArtifact(nil), baseline...)
-	return replaycmp.CompareTraceArtifacts(baseline, replayed, replaycmp.CompareConfig{TimingToleranceMS: timingToleranceMS})
+	return run.Result.Divergences
 }
 
 func uniqueFailingClasses(failing []obs.ReplayDivergence) []string {
@@ -1075,6 +1313,17 @@ func uniqueFailingClasses(failing []obs.ReplayDivergence) []string {
 	}
 	sort.Strings(classes)
 	return classes
+}
+
+func replayByClassCounter() map[string]int {
+	return map[string]int{
+		string(obs.PlanDivergence):           0,
+		string(obs.OutcomeDivergence):        0,
+		string(obs.OrderingDivergence):       0,
+		string(obs.AuthorityDivergence):      0,
+		string(obs.ProviderChoiceDivergence): 0,
+		string(obs.TimingDivergence):         0,
+	}
 }
 
 func normalizeNonNegativeThreshold(in *int64) *int64 {
@@ -1094,6 +1343,8 @@ func renderReplaySmokeSummary(report replaySmokeReport) string {
 		"",
 		"Generated at (UTC): " + report.GeneratedAtUTC,
 		"Fixture: " + report.FixtureID,
+		"Replay mode: " + string(report.Mode),
+		"Replay run id: " + report.ReplayRunID,
 		"Metadata path: " + report.MetadataPath,
 		fmt.Sprintf("Timing tolerance (ms): %d", report.TimingToleranceMS),
 		fmt.Sprintf("Total divergences: %d", report.TotalDivergences),
@@ -1109,6 +1360,7 @@ func renderReplaySmokeSummary(report replaySmokeReport) string {
 		obs.OutcomeDivergence,
 		obs.OrderingDivergence,
 		obs.AuthorityDivergence,
+		obs.ProviderChoiceDivergence,
 		obs.TimingDivergence,
 	} {
 		lines = append(lines, fmt.Sprintf("- %s: %d", cls, report.ByClass[string(cls)]))
@@ -1123,6 +1375,7 @@ func renderReplaySmokeSummary(report replaySmokeReport) string {
 }
 
 type sloGateArtifact struct {
+	SchemaVersion        string               `json:"schema_version"`
 	GeneratedAtUTC       string               `json:"generated_at_utc"`
 	BaselineArtifactPath string               `json:"baseline_artifact_path"`
 	Thresholds           ops.MVPSLOThresholds `json:"thresholds"`
@@ -1130,6 +1383,7 @@ type sloGateArtifact struct {
 }
 
 type mvpSLOGateArtifact struct {
+	SchemaVersion          string                `json:"schema_version"`
 	GeneratedAtUTC         string                `json:"generated_at_utc"`
 	BaselineArtifactPath   string                `json:"baseline_artifact_path"`
 	LiveProviderChainPath  string                `json:"live_provider_chain_path"`
@@ -1280,10 +1534,22 @@ type liveLatencyMetricAggregate struct {
 }
 
 type contractsReportArtifact struct {
+	SchemaVersion  string                               `json:"schema_version"`
 	GeneratedAtUTC string                               `json:"generated_at_utc"`
 	FixtureRoot    string                               `json:"fixture_root"`
 	Summary        validation.ContractValidationSummary `json:"summary"`
 	Passed         bool                                 `json:"passed"`
+}
+
+type conformanceGovernanceArtifact struct {
+	SchemaVersion              string                                  `json:"schema_version"`
+	GeneratedAtUTC             string                                  `json:"generated_at_utc"`
+	VersionSkewPolicyPath      string                                  `json:"version_skew_policy_path"`
+	DeprecationPolicyPath      string                                  `json:"deprecation_policy_path"`
+	ConformanceProfilePath     string                                  `json:"conformance_profile_path"`
+	ConformanceResultsPath     string                                  `json:"conformance_results_path"`
+	FeatureStatusFrameworkPath string                                  `json:"feature_status_framework_path"`
+	Report                     toolingconformance.GovernanceEvaluation `json:"report"`
 }
 
 func writeSLOGatesReport(outputPath string, baselineArtifactPath string) error {
@@ -1295,6 +1561,7 @@ func writeSLOGatesReport(outputPath string, baselineArtifactPath string) error {
 	thresholds := ops.DefaultMVPSLOThresholds()
 	report := ops.EvaluateMVPSLOGates(toTurnMetrics(entries), thresholds)
 	artifact := sloGateArtifact{
+		SchemaVersion:        toolingrelease.SLOGatesReportSchemaVersionV1,
 		GeneratedAtUTC:       time.Now().UTC().Format(time.RFC3339),
 		BaselineArtifactPath: effectiveArtifactPath,
 		Thresholds:           thresholds,
@@ -1339,6 +1606,7 @@ func writeMVPSLOGatesReport(outputPath string, baselineArtifactPath string, live
 	fixedDecisions := evaluateMVPFixedDecisionGates(chainReport, liveKitSmokePath)
 
 	artifact := mvpSLOGateArtifact{
+		SchemaVersion:          toolingrelease.MVPSLOGatesReportSchemaVersionV1,
 		GeneratedAtUTC:         time.Now().UTC().Format(time.RFC3339),
 		BaselineArtifactPath:   effectiveBaselinePath,
 		LiveProviderChainPath:  effectiveChainPath,
@@ -1976,6 +2244,99 @@ func discoverLiveE2EAttemptFiles(chainPath string) []string {
 	return matches
 }
 
+func writeConformanceGovernanceReport(
+	outputPath string,
+	versionSkewPolicyPath string,
+	deprecationPolicyPath string,
+	conformanceProfilePath string,
+	conformanceResultsPath string,
+	featureStatusFrameworkPath string,
+) error {
+	if strings.TrimSpace(outputPath) == "" {
+		return fmt.Errorf("conformance governance output path is required")
+	}
+
+	resolvedVersionSkewPolicyPath, err := resolveProjectRelativePath(versionSkewPolicyPath)
+	if err != nil {
+		return err
+	}
+	resolvedDeprecationPolicyPath, err := resolveProjectRelativePath(deprecationPolicyPath)
+	if err != nil {
+		return err
+	}
+	resolvedConformanceProfilePath, err := resolveProjectRelativePath(conformanceProfilePath)
+	if err != nil {
+		return err
+	}
+	resolvedConformanceResultsPath, err := resolveProjectRelativePath(conformanceResultsPath)
+	if err != nil {
+		return err
+	}
+	resolvedFeatureStatusFrameworkPath, err := resolveProjectRelativePath(featureStatusFrameworkPath)
+	if err != nil {
+		return err
+	}
+
+	versionSkewPolicy, err := toolingconformance.ReadVersionSkewPolicy(resolvedVersionSkewPolicyPath)
+	if err != nil {
+		return err
+	}
+	deprecationPolicy, err := toolingconformance.ReadDeprecationPolicy(resolvedDeprecationPolicyPath)
+	if err != nil {
+		return err
+	}
+	conformanceProfile, err := toolingconformance.ReadConformanceProfile(resolvedConformanceProfilePath)
+	if err != nil {
+		return err
+	}
+	conformanceResults, err := toolingconformance.ReadConformanceResults(resolvedConformanceResultsPath)
+	if err != nil {
+		return err
+	}
+	featureStatusEntries, err := toolingconformance.ReadFeatureStatusEntries(resolvedFeatureStatusFrameworkPath)
+	if err != nil {
+		return err
+	}
+
+	report := toolingconformance.EvaluateGovernance(toolingconformance.GovernanceInput{
+		VersionSkewPolicy:    versionSkewPolicy,
+		DeprecationPolicy:    deprecationPolicy,
+		ConformanceProfile:   conformanceProfile,
+		ConformanceResults:   conformanceResults,
+		FeatureStatusEntries: featureStatusEntries,
+		FeatureExpectations:  toolingconformance.DefaultUBT05FeatureExpectations(),
+	})
+	artifact := conformanceGovernanceArtifact{
+		SchemaVersion:              toolingconformance.GovernanceReportSchemaVersionV1,
+		GeneratedAtUTC:             time.Now().UTC().Format(time.RFC3339),
+		VersionSkewPolicyPath:      resolvedVersionSkewPolicyPath,
+		DeprecationPolicyPath:      resolvedDeprecationPolicyPath,
+		ConformanceProfilePath:     resolvedConformanceProfilePath,
+		ConformanceResultsPath:     resolvedConformanceResultsPath,
+		FeatureStatusFrameworkPath: resolvedFeatureStatusFrameworkPath,
+		Report:                     report,
+	}
+
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(artifact, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(outputPath, data, 0o644); err != nil {
+		return err
+	}
+	summaryPath := strings.TrimSuffix(outputPath, filepath.Ext(outputPath)) + ".md"
+	if err := os.WriteFile(summaryPath, []byte(renderConformanceGovernanceSummary(artifact)), 0o644); err != nil {
+		return err
+	}
+	if !artifact.Report.Passed {
+		return fmt.Errorf("conformance governance checks failed: %v", artifact.Report.Violations)
+	}
+	return nil
+}
+
 func percentile(values []int64, pct float64) int64 {
 	if len(values) == 0 {
 		return 0
@@ -2010,6 +2371,7 @@ func writeContractsReport(outputPath string, fixtureRoot string) error {
 		return err
 	}
 	artifact := contractsReportArtifact{
+		SchemaVersion:  toolingrelease.ContractsReportSchemaVersionV1,
 		GeneratedAtUTC: time.Now().UTC().Format(time.RFC3339),
 		FixtureRoot:    resolvedFixtureRoot,
 		Summary:        summary,
@@ -2591,6 +2953,47 @@ func renderMVPSLOGatesSummary(artifact mvpSLOGateArtifact) string {
 		lines = append(lines, "", "Status: PASS")
 	} else {
 		lines = append(lines, "", "Status: FAIL")
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
+func renderConformanceGovernanceSummary(artifact conformanceGovernanceArtifact) string {
+	lines := []string{
+		"# Conformance Governance Report",
+		"",
+		"Generated at (UTC): " + artifact.GeneratedAtUTC,
+		"Version skew policy: " + artifact.VersionSkewPolicyPath,
+		"Deprecation policy: " + artifact.DeprecationPolicyPath,
+		"Conformance profile: " + artifact.ConformanceProfilePath,
+		"Conformance results: " + artifact.ConformanceResultsPath,
+		"Feature status framework: " + artifact.FeatureStatusFrameworkPath,
+		"",
+		"## Version Skew",
+		fmt.Sprintf("- Passed: %t", artifact.Report.VersionSkew.Passed),
+		fmt.Sprintf("- Allowed matrix tests: %d", artifact.Report.VersionSkew.AllowedTestCount),
+		fmt.Sprintf("- Disallowed matrix tests: %d", artifact.Report.VersionSkew.DisallowedTestCount),
+		"",
+		"## Deprecation Lifecycle",
+		fmt.Sprintf("- Passed: %t", artifact.Report.Deprecation.Passed),
+		fmt.Sprintf("- Rules: %d", artifact.Report.Deprecation.RuleCount),
+		fmt.Sprintf("- Usage checks: %d", artifact.Report.Deprecation.CheckCount),
+		"",
+		"## Conformance Profile",
+		fmt.Sprintf("- Passed: %t", artifact.Report.Conformance.Passed),
+		fmt.Sprintf("- Mandatory categories: %d", artifact.Report.Conformance.MandatoryCount),
+		"",
+		"## Feature Status Stewardship",
+		fmt.Sprintf("- Passed: %t", artifact.Report.FeatureStatus.Passed),
+		fmt.Sprintf("- Checked features: %d", artifact.Report.FeatureStatus.CheckedCount),
+	}
+
+	if len(artifact.Report.Violations) == 0 {
+		lines = append(lines, "", "Status: PASS")
+		return strings.Join(lines, "\n") + "\n"
+	}
+	lines = append(lines, "", "Status: FAIL", "## Violations")
+	for _, violation := range artifact.Report.Violations {
+		lines = append(lines, "- "+violation)
 	}
 	return strings.Join(lines, "\n") + "\n"
 }

@@ -10,7 +10,9 @@ import (
 
 	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
 	"github.com/tiger/realtime-speech-pipeline/internal/observability/telemetry"
+	telemetrycontext "github.com/tiger/realtime-speech-pipeline/internal/observability/telemetry/context"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/contracts"
+	providerpolicy "github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/policy"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/registry"
 )
 
@@ -51,10 +53,13 @@ type InvocationInput struct {
 	AuthorityEpoch           int64
 	RuntimeTimestampMS       int64
 	WallClockTimestampMS     int64
+	NodeID                   string
+	EdgeID                   string
 	CancelRequested          bool
 	EnableStreaming          bool
 	DisableProviderStreaming bool
 	StreamHooks              StreamEventHooks
+	ResolvedProviderPlan     *providerpolicy.ResolvedProviderPlan
 }
 
 // InvocationAttempt records one provider attempt with normalized outcome.
@@ -71,13 +76,17 @@ type InvocationAttempt struct {
 
 // InvocationResult summarizes deterministic invocation behavior.
 type InvocationResult struct {
-	ProviderInvocationID string
-	SelectedProvider     string
-	Outcome              contracts.Outcome
-	RetryDecision        string
-	Attempts             []InvocationAttempt
-	Signals              []eventabi.ControlSignal
-	StreamingUsed        bool
+	ProviderInvocationID  string
+	SelectedProvider      string
+	Outcome               contracts.Outcome
+	RetryDecision         string
+	Attempts              []InvocationAttempt
+	Signals               []eventabi.ControlSignal
+	StreamingUsed         bool
+	PolicySnapshotRef     string
+	CapabilitySnapshotRef string
+	RoutingReason         string
+	SignalSource          string
 }
 
 // NewController returns a controller with defaults suitable for MVP.
@@ -102,16 +111,37 @@ func (c Controller) Invoke(in InvocationInput) (InvocationResult, error) {
 		return InvocationResult{}, err
 	}
 
-	candidates, err := c.catalog.Candidates(in.Modality, in.PreferredProvider, c.cfg.MaxCandidateProviders)
+	plan, err := c.resolveInvocationPlan(in)
 	if err != nil {
 		return InvocationResult{}, err
 	}
+	candidates := plan.candidates
 
 	result := InvocationResult{
-		ProviderInvocationID: providerInvocationID(in),
-		RetryDecision:        "none",
-		Attempts:             make([]InvocationAttempt, 0, c.cfg.MaxAttemptsPerProvider*len(candidates)),
-		Signals:              make([]eventabi.ControlSignal, 0),
+		ProviderInvocationID:  providerInvocationID(in),
+		RetryDecision:         "none",
+		Attempts:              make([]InvocationAttempt, 0, plan.maxAttemptsPerProvider*len(candidates)),
+		Signals:               make([]eventabi.ControlSignal, 0),
+		PolicySnapshotRef:     plan.policySnapshotRef,
+		CapabilitySnapshotRef: plan.capabilitySnapshotRef,
+		RoutingReason:         plan.routingReason,
+		SignalSource:          plan.signalSource,
+	}
+	baseCorrelation, err := telemetrycontext.Resolve(telemetrycontext.ResolveInput{
+		SessionID:            in.SessionID,
+		TurnID:               in.TurnID,
+		EventID:              in.EventID,
+		PipelineVersion:      in.PipelineVersion,
+		NodeID:               in.NodeID,
+		EdgeID:               in.EdgeID,
+		AuthorityEpoch:       nonNegative(in.AuthorityEpoch),
+		Lane:                 eventabi.LaneTelemetry,
+		EmittedBy:            "OR-01",
+		RuntimeTimestampMS:   nonNegative(in.RuntimeTimestampMS),
+		WallClockTimestampMS: nonNegative(in.WallClockTimestampMS),
+	})
+	if err != nil {
+		return InvocationResult{}, err
 	}
 
 	if in.CancelRequested {
@@ -129,27 +159,32 @@ func (c Controller) Invoke(in InvocationInput) (InvocationResult, error) {
 				"provider_id": result.SelectedProvider,
 				"modality":    string(in.Modality),
 				"outcome":     string(result.Outcome.Class),
+				"node_id":     in.NodeID,
+				"edge_id":     in.EdgeID,
 			},
-			telemetry.Correlation{
-				SessionID:          in.SessionID,
-				TurnID:             in.TurnID,
-				EventID:            in.EventID,
-				PipelineVersion:    in.PipelineVersion,
-				AuthorityEpoch:     nonNegative(in.AuthorityEpoch),
-				Lane:               string(eventabi.LaneTelemetry),
-				EmittedBy:          "OR-01",
-				RuntimeTimestampMS: nonNegative(in.RuntimeTimestampMS),
-			},
+			baseCorrelation,
 		)
 		return result, nil
 	}
 
-	actions, err := parseAdaptiveActions(in.AllowedAdaptiveActions)
+	actionSource := in.AllowedAdaptiveActions
+	if len(plan.allowedAdaptiveActions) > 0 {
+		actionSource = plan.allowedAdaptiveActions
+	}
+	actions, err := parseAdaptiveActions(actionSource)
 	if err != nil {
 		return InvocationResult{}, err
 	}
+	totalAttempts := 0
+	totalLatencyMS := int64(0)
 	for providerIndex, adapter := range candidates {
-		for attempt := 1; attempt <= c.cfg.MaxAttemptsPerProvider; attempt++ {
+		for attempt := 1; attempt <= plan.maxAttemptsPerProvider; attempt++ {
+			if plan.budget.MaxTotalAttempts > 0 && totalAttempts >= plan.budget.MaxTotalAttempts {
+				return result, nil
+			}
+			if plan.budget.MaxTotalLatencyMS > 0 && totalLatencyMS >= plan.budget.MaxTotalLatencyMS {
+				return result, nil
+			}
 			req := contracts.InvocationRequest{
 				SessionID:              in.SessionID,
 				TurnID:                 in.TurnID,
@@ -166,7 +201,7 @@ func (c Controller) Invoke(in InvocationInput) (InvocationResult, error) {
 				WallClockTimestampMS:   nonNegative(in.WallClockTimestampMS),
 				CancelRequested:        in.CancelRequested,
 				AllowedAdaptiveActions: append([]string(nil), actions.normalized...),
-				RetryBudgetRemaining:   max(0, c.cfg.MaxAttemptsPerProvider-attempt),
+				RetryBudgetRemaining:   max(0, plan.maxAttemptsPerProvider-attempt),
 				CandidateProviderCount: len(candidates),
 			}
 			attemptStartedAt := time.Now()
@@ -203,17 +238,10 @@ func (c Controller) Invoke(in InvocationInput) (InvocationResult, error) {
 					"modality":    string(in.Modality),
 					"attempt":     strconv.Itoa(attempt),
 					"outcome":     string(outcome.Class),
+					"node_id":     in.NodeID,
+					"edge_id":     in.EdgeID,
 				},
-				telemetry.Correlation{
-					SessionID:          in.SessionID,
-					TurnID:             in.TurnID,
-					EventID:            in.EventID,
-					PipelineVersion:    in.PipelineVersion,
-					AuthorityEpoch:     nonNegative(in.AuthorityEpoch),
-					Lane:               string(eventabi.LaneTelemetry),
-					EmittedBy:          "OR-01",
-					RuntimeTimestampMS: attemptStartMS,
-				},
+				correlationWithTimestamps(baseCorrelation, attemptStartMS, nonNegative(in.WallClockTimestampMS)),
 			)
 			telemetry.DefaultEmitter().EmitSpan(
 				"provider_invocation_span",
@@ -225,17 +253,10 @@ func (c Controller) Invoke(in InvocationInput) (InvocationResult, error) {
 					"modality":    string(in.Modality),
 					"attempt":     strconv.Itoa(attempt),
 					"outcome":     string(outcome.Class),
+					"node_id":     in.NodeID,
+					"edge_id":     in.EdgeID,
 				},
-				telemetry.Correlation{
-					SessionID:          in.SessionID,
-					TurnID:             in.TurnID,
-					EventID:            in.EventID,
-					PipelineVersion:    in.PipelineVersion,
-					AuthorityEpoch:     nonNegative(in.AuthorityEpoch),
-					Lane:               string(eventabi.LaneTelemetry),
-					EmittedBy:          "OR-01",
-					RuntimeTimestampMS: attemptStartMS,
-				},
+				correlationWithTimestamps(baseCorrelation, attemptStartMS, nonNegative(in.WallClockTimestampMS)),
 			)
 			logSeverity := "info"
 			if outcome.Class != contracts.OutcomeSuccess {
@@ -251,17 +272,10 @@ func (c Controller) Invoke(in InvocationInput) (InvocationResult, error) {
 					"attempt":     strconv.Itoa(attempt),
 					"outcome":     string(outcome.Class),
 					"retryable":   strconv.FormatBool(outcome.Retryable),
+					"node_id":     in.NodeID,
+					"edge_id":     in.EdgeID,
 				},
-				telemetry.Correlation{
-					SessionID:          in.SessionID,
-					TurnID:             in.TurnID,
-					EventID:            in.EventID,
-					PipelineVersion:    in.PipelineVersion,
-					AuthorityEpoch:     nonNegative(in.AuthorityEpoch),
-					Lane:               string(eventabi.LaneTelemetry),
-					EmittedBy:          "OR-01",
-					RuntimeTimestampMS: attemptEndMS,
-				},
+				correlationWithTimestamps(baseCorrelation, attemptEndMS, nonNegative(in.WallClockTimestampMS)),
 			)
 
 			result.Attempts = append(result.Attempts, InvocationAttempt{
@@ -274,6 +288,8 @@ func (c Controller) Invoke(in InvocationInput) (InvocationResult, error) {
 				FirstChunkLatencyMS: attemptStats.firstChunkLatencyMS,
 				AttemptLatencyMS:    attemptLatencyMS,
 			})
+			totalAttempts++
+			totalLatencyMS += attemptLatencyMS
 			result.SelectedProvider = adapter.ProviderID()
 			result.Outcome = outcome
 			result.StreamingUsed = result.StreamingUsed || streamingUsed
@@ -291,7 +307,13 @@ func (c Controller) Invoke(in InvocationInput) (InvocationResult, error) {
 				}
 			}
 
-			if outcome.Retryable && actions.retry && attempt < c.cfg.MaxAttemptsPerProvider {
+			if outcome.Retryable && actions.retry && attempt < plan.maxAttemptsPerProvider {
+				if plan.budget.MaxTotalAttempts > 0 && totalAttempts >= plan.budget.MaxTotalAttempts {
+					break
+				}
+				if plan.budget.MaxTotalLatencyMS > 0 && totalLatencyMS >= plan.budget.MaxTotalLatencyMS {
+					break
+				}
 				result.RetryDecision = "retry"
 				continue
 			}
@@ -315,6 +337,96 @@ func (c Controller) Invoke(in InvocationInput) (InvocationResult, error) {
 	}
 
 	return result, nil
+}
+
+type invocationPlan struct {
+	candidates             []contracts.Adapter
+	maxAttemptsPerProvider int
+	allowedAdaptiveActions []string
+	budget                 providerpolicy.Budget
+	policySnapshotRef      string
+	capabilitySnapshotRef  string
+	routingReason          string
+	signalSource           string
+}
+
+func (c Controller) resolveInvocationPlan(in InvocationInput) (invocationPlan, error) {
+	plan := invocationPlan{
+		maxAttemptsPerProvider: c.cfg.MaxAttemptsPerProvider,
+		allowedAdaptiveActions: append([]string(nil), in.AllowedAdaptiveActions...),
+	}
+	if in.ResolvedProviderPlan == nil {
+		candidates, err := c.catalog.Candidates(in.Modality, in.PreferredProvider, c.cfg.MaxCandidateProviders)
+		if err != nil {
+			return invocationPlan{}, err
+		}
+		plan.candidates = candidates
+		return plan, nil
+	}
+
+	resolved := in.ResolvedProviderPlan
+	if resolved.MaxAttemptsPerProvider > 0 {
+		plan.maxAttemptsPerProvider = resolved.MaxAttemptsPerProvider
+	}
+	if len(resolved.AllowedActions) > 0 {
+		plan.allowedAdaptiveActions = append([]string(nil), resolved.AllowedActions...)
+	}
+	plan.budget = resolved.Budget
+	plan.policySnapshotRef = resolved.PolicySnapshotRef
+	plan.capabilitySnapshotRef = resolved.CapabilitySnapshotRef
+	plan.routingReason = resolved.RoutingReason
+	plan.signalSource = resolved.SignalSource
+
+	var (
+		candidates []contracts.Adapter
+		err        error
+	)
+	if len(resolved.OrderedCandidates) == 0 {
+		preferred := in.PreferredProvider
+		if preferred == "" && len(resolved.OrderedCandidates) > 0 {
+			preferred = resolved.OrderedCandidates[0]
+		}
+		candidates, err = c.catalog.Candidates(in.Modality, preferred, c.cfg.MaxCandidateProviders)
+		if err != nil {
+			return invocationPlan{}, err
+		}
+	} else {
+		candidates, err = c.candidatesFromOrderedIDs(in.Modality, resolved.OrderedCandidates)
+		if err != nil {
+			return invocationPlan{}, err
+		}
+	}
+	if len(candidates) == 0 {
+		return invocationPlan{}, fmt.Errorf("resolved provider plan produced no candidates for modality %s", in.Modality)
+	}
+	plan.candidates = candidates
+	return plan, nil
+}
+
+func (c Controller) candidatesFromOrderedIDs(modality contracts.Modality, orderedIDs []string) ([]contracts.Adapter, error) {
+	candidates := make([]contracts.Adapter, 0, len(orderedIDs))
+	seen := make(map[string]struct{}, len(orderedIDs))
+	for _, providerID := range orderedIDs {
+		if providerID == "" {
+			continue
+		}
+		if _, exists := seen[providerID]; exists {
+			continue
+		}
+		adapter, ok := c.catalog.Adapter(modality, providerID)
+		if !ok {
+			continue
+		}
+		seen[providerID] = struct{}{}
+		candidates = append(candidates, adapter)
+		if len(candidates) >= c.cfg.MaxCandidateProviders {
+			break
+		}
+	}
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("no registered candidates match ordered provider ids")
+	}
+	return candidates, nil
 }
 
 func validateInput(in InvocationInput) error {
@@ -533,6 +645,13 @@ func nonNegative(value int64) int64 {
 		return 0
 	}
 	return value
+}
+
+func correlationWithTimestamps(correlation telemetry.Correlation, runtimeTimestampMS int64, wallClockTimestampMS int64) telemetry.Correlation {
+	out := correlation
+	out.RuntimeTimestampMS = nonNegative(runtimeTimestampMS)
+	out.WallClockTimestampMS = nonNegative(wallClockTimestampMS)
+	return out
 }
 
 func max[T ~int | ~int64](a, b T) T {

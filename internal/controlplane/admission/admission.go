@@ -15,6 +15,8 @@ const (
 	ReasonDeferCapacity = "cp_admission_defer_capacity"
 	// ReasonRejectPolicy is emitted for deterministic CP-05 rejections.
 	ReasonRejectPolicy = "cp_admission_reject_policy"
+	// ReasonRejectQuota is emitted for deterministic quota/rate-limit rejects.
+	ReasonRejectQuota = "cp_admission_reject_quota"
 	// ReasonInvalidInput is emitted when CP-05 input validation fails.
 	ReasonInvalidInput = "cp_admission_invalid_input"
 )
@@ -34,6 +36,10 @@ type Output struct {
 	OutcomeKind             controlplane.OutcomeKind
 	Scope                   controlplane.OutcomeScope
 	Reason                  string
+	SessionRateLimitPerMin  int
+	SessionRateObservedPM   int
+	TokenRateLimitPerMin    int
+	TokenRateObservedPM     int
 }
 
 // Backend evaluates admission decisions from a snapshot-fed control-plane source.
@@ -84,15 +90,26 @@ func (s Service) normalizeOutput(in Input, out Output) Output {
 		snapshot = out.AdmissionPolicySnapshot
 	}
 
+	sessionRateLimit := normalizeNonNegativeInt(out.SessionRateLimitPerMin)
+	sessionRateObserved := normalizeNonNegativeInt(out.SessionRateObservedPM)
+	tokenRateLimit := normalizeNonNegativeInt(out.TokenRateLimitPerMin)
+	tokenRateObserved := normalizeNonNegativeInt(out.TokenRateObservedPM)
+
+	hasQuotaViolation := quotaExceeded(sessionRateLimit, sessionRateObserved) || quotaExceeded(tokenRateLimit, tokenRateObserved)
+
 	outcome := out.OutcomeKind
-	if outcome == "" {
-		outcome = s.DefaultOutcomeKind
-	}
-	if outcome == "" {
-		outcome = controlplane.OutcomeAdmit
-	}
-	if outcome != controlplane.OutcomeAdmit && outcome != controlplane.OutcomeReject && outcome != controlplane.OutcomeDefer {
+	if hasQuotaViolation {
 		outcome = controlplane.OutcomeReject
+	} else {
+		if outcome == "" {
+			outcome = s.DefaultOutcomeKind
+		}
+		if outcome == "" {
+			outcome = controlplane.OutcomeAdmit
+		}
+		if outcome != controlplane.OutcomeAdmit && outcome != controlplane.OutcomeReject && outcome != controlplane.OutcomeDefer {
+			outcome = controlplane.OutcomeReject
+		}
 	}
 
 	defaultScope := controlplane.ScopeSession
@@ -109,7 +126,11 @@ func (s Service) normalizeOutput(in Input, out Output) Output {
 
 	reason := out.Reason
 	if reason == "" {
-		reason = defaultReasonForOutcome(outcome, s.DefaultReason)
+		if hasQuotaViolation {
+			reason = ReasonRejectQuota
+		} else {
+			reason = defaultReasonForOutcome(outcome, s.DefaultReason)
+		}
 	}
 
 	return Output{
@@ -117,6 +138,10 @@ func (s Service) normalizeOutput(in Input, out Output) Output {
 		OutcomeKind:             outcome,
 		Scope:                   scope,
 		Reason:                  reason,
+		SessionRateLimitPerMin:  sessionRateLimit,
+		SessionRateObservedPM:   sessionRateObserved,
+		TokenRateLimitPerMin:    tokenRateLimit,
+		TokenRateObservedPM:     tokenRateObserved,
 	}
 }
 
@@ -132,4 +157,18 @@ func defaultReasonForOutcome(outcome controlplane.OutcomeKind, fallback string) 
 		}
 		return ReasonAllowed
 	}
+}
+
+func normalizeNonNegativeInt(v int) int {
+	if v < 0 {
+		return 0
+	}
+	return v
+}
+
+func quotaExceeded(limit int, observed int) bool {
+	if limit <= 0 {
+		return false
+	}
+	return observed > limit
 }

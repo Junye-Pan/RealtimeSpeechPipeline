@@ -23,6 +23,24 @@ const (
 	MetricProviderRTTMS = "provider_rtt_ms"
 	// MetricShedRate captures scheduling-point shed outcomes.
 	MetricShedRate = "shed_rate"
+	// MetricNodeLatencyMS captures per-node scheduling latency observations.
+	MetricNodeLatencyMS = "node_latency_ms"
+	// MetricEdgeLatencyMS captures per-edge handoff latency observations.
+	MetricEdgeLatencyMS = "edge_latency_ms"
+	// MetricEdgeQueueDepth captures per-edge queue depth observations.
+	MetricEdgeQueueDepth = "edge_queue_depth"
+	// MetricEdgeDropsTotal captures per-edge dropped item counters.
+	MetricEdgeDropsTotal = "edge_drops_total"
+	// MetricEdgeMergesTotal captures per-edge merge counters.
+	MetricEdgeMergesTotal = "edge_merges_total"
+	// MetricDurableExportRetriesTotal captures durable-export retry attempts.
+	MetricDurableExportRetriesTotal = "durable_export_retries_total"
+	// MetricDurableExportFailuresTotal captures durable-export terminal failures.
+	MetricDurableExportFailuresTotal = "durable_export_failures_total"
+	// MetricDurableExportQueueDepth captures durable-export queue depth observations.
+	MetricDurableExportQueueDepth = "durable_export_queue_depth"
+	// MetricDurableExportLagMS captures durable-export enqueue-to-export lag.
+	MetricDurableExportLagMS = "durable_export_lag_ms"
 )
 
 // EventKind defines telemetry payload kind.
@@ -40,6 +58,8 @@ type Correlation struct {
 	TurnID               string `json:"turn_id,omitempty"`
 	EventID              string `json:"event_id,omitempty"`
 	PipelineVersion      string `json:"pipeline_version,omitempty"`
+	NodeID               string `json:"node_id,omitempty"`
+	EdgeID               string `json:"edge_id,omitempty"`
 	AuthorityEpoch       int64  `json:"authority_epoch,omitempty"`
 	Lane                 string `json:"lane,omitempty"`
 	EmittedBy            string `json:"emitted_by,omitempty"`
@@ -369,6 +389,8 @@ func normalizeCorrelation(c Correlation) Correlation {
 	c.TurnID = strings.TrimSpace(c.TurnID)
 	c.EventID = strings.TrimSpace(c.EventID)
 	c.PipelineVersion = strings.TrimSpace(c.PipelineVersion)
+	c.NodeID = strings.TrimSpace(c.NodeID)
+	c.EdgeID = strings.TrimSpace(c.EdgeID)
 	c.Lane = strings.TrimSpace(c.Lane)
 	c.EmittedBy = strings.TrimSpace(c.EmittedBy)
 	return c
@@ -404,6 +426,8 @@ func hashCorrelation(hasher hash.Hash64, correlation Correlation) {
 	hashString(hasher, correlation.TurnID)
 	hashString(hasher, correlation.EventID)
 	hashString(hasher, correlation.PipelineVersion)
+	hashString(hasher, correlation.NodeID)
+	hashString(hasher, correlation.EdgeID)
 	hashInt64(hasher, correlation.AuthorityEpoch)
 	hashString(hasher, correlation.Lane)
 	hashString(hasher, correlation.EmittedBy)

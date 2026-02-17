@@ -64,14 +64,17 @@ func TestEvaluateReadinessPass(t *testing.T) {
 	sloPath := filepath.Join(tmp, "slo.json")
 
 	mustWriteJSON(t, contractsPath, map[string]any{
+		"schema_version":   ContractsReportSchemaVersionV1,
 		"generated_at_utc": now.Add(-1 * time.Hour).Format(time.RFC3339),
 		"passed":           true,
 	})
 	mustWriteJSON(t, replayPath, map[string]any{
+		"schema_version":   ReplayRegressionReportSchemaVersionV1,
 		"generated_at_utc": now.Add(-30 * time.Minute).Format(time.RFC3339),
 		"failing_count":    0,
 	})
 	mustWriteJSON(t, sloPath, map[string]any{
+		"schema_version":   SLOGatesReportSchemaVersionV1,
 		"generated_at_utc": now.Add(-10 * time.Minute).Format(time.RFC3339),
 		"report": map[string]any{
 			"passed": true,
@@ -104,14 +107,17 @@ func TestEvaluateReadinessFailClosed(t *testing.T) {
 	sloPath := filepath.Join(tmp, "slo.json")
 
 	mustWriteJSON(t, contractsPath, map[string]any{
+		"schema_version":   ContractsReportSchemaVersionV1,
 		"generated_at_utc": now.Add(-48 * time.Hour).Format(time.RFC3339),
 		"passed":           true,
 	})
 	mustWriteJSON(t, replayPath, map[string]any{
+		"schema_version":   ReplayRegressionReportSchemaVersionV1,
 		"generated_at_utc": now.Add(-10 * time.Minute).Format(time.RFC3339),
 		"failing_count":    2,
 	})
 	mustWriteJSON(t, sloPath, map[string]any{
+		"schema_version":   SLOGatesReportSchemaVersionV1,
 		"generated_at_utc": now.Add(-10 * time.Minute).Format(time.RFC3339),
 		"report": map[string]any{
 			"passed": false,
@@ -133,6 +139,49 @@ func TestEvaluateReadinessFailClosed(t *testing.T) {
 	}
 	if len(sources) != 0 {
 		t.Fatalf("expected no accepted sources on fail-closed readiness, got %+v", sources)
+	}
+}
+
+func TestEvaluateReadinessRejectsUnexpectedArtifactSchemaVersion(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 2, 11, 4, 0, 0, 0, time.UTC)
+	tmp := t.TempDir()
+
+	contractsPath := filepath.Join(tmp, "contracts.json")
+	replayPath := filepath.Join(tmp, "replay.json")
+	sloPath := filepath.Join(tmp, "slo.json")
+
+	mustWriteJSON(t, contractsPath, map[string]any{
+		"schema_version":   "rspp.tooling.contracts-report.v0",
+		"generated_at_utc": now.Add(-1 * time.Hour).Format(time.RFC3339),
+		"passed":           true,
+	})
+	mustWriteJSON(t, replayPath, map[string]any{
+		"schema_version":   ReplayRegressionReportSchemaVersionV1,
+		"generated_at_utc": now.Add(-30 * time.Minute).Format(time.RFC3339),
+		"failing_count":    0,
+	})
+	mustWriteJSON(t, sloPath, map[string]any{
+		"schema_version":   SLOGatesReportSchemaVersionV1,
+		"generated_at_utc": now.Add(-10 * time.Minute).Format(time.RFC3339),
+		"report": map[string]any{
+			"passed": true,
+		},
+	})
+
+	readiness, _ := EvaluateReadiness(ReadinessInput{
+		ContractsReportPath:        contractsPath,
+		ReplayRegressionReportPath: replayPath,
+		SLOGatesReportPath:         sloPath,
+		MaxArtifactAge:             24 * time.Hour,
+		Now:                        now,
+	})
+	if readiness.Passed {
+		t.Fatalf("expected readiness failure on contracts schema version mismatch")
+	}
+	if len(readiness.Violations) == 0 {
+		t.Fatalf("expected readiness violations on schema mismatch")
 	}
 }
 
@@ -159,6 +208,9 @@ func TestBuildReleaseManifest(t *testing.T) {
 	}
 	if manifest.SpecRef != "specs/pipeline-v2.json" || manifest.RolloutConfig.PipelineVersion != "pipeline-v2" {
 		t.Fatalf("unexpected manifest payload: %+v", manifest)
+	}
+	if manifest.SchemaVersion != ReleaseManifestSchemaVersionV1 {
+		t.Fatalf("unexpected release manifest schema_version: %s", manifest.SchemaVersion)
 	}
 
 	readiness.Passed = false

@@ -66,7 +66,7 @@ func (e Engine) ProposeTurn(in Input) (Proposal, error) {
 	transport := nonNegative(in.TransportSequence)
 	signal := eventabi.ControlSignal{
 		SchemaVersion:      "v1.0",
-		EventScope:         eventabi.ScopeTurn,
+		EventScope:         eventabi.ScopeSession,
 		SessionID:          in.SessionID,
 		TurnID:             in.TurnID,
 		PipelineVersion:    in.PipelineVersion,

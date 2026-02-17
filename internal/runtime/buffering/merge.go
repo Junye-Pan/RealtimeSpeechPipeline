@@ -5,6 +5,8 @@ import (
 	"sort"
 
 	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
+	"github.com/tiger/realtime-speech-pipeline/internal/observability/telemetry"
+	telemetrycontext "github.com/tiger/realtime-speech-pipeline/internal/observability/telemetry/context"
 )
 
 // MergeSource represents one source event participating in deterministic coalescing.
@@ -16,8 +18,15 @@ type MergeSource struct {
 
 // MergeInput defines deterministic merge/coalesce context.
 type MergeInput struct {
-	MergeGroupID string
-	Sources      []MergeSource
+	SessionID            string
+	TurnID               string
+	PipelineVersion      string
+	EdgeID               string
+	AuthorityEpoch       int64
+	RuntimeTimestampMS   int64
+	WallClockTimestampMS int64
+	MergeGroupID         string
+	Sources              []MergeSource
 }
 
 // MergeResult carries merge lineage metadata required for replay explainability.
@@ -59,10 +68,44 @@ func MergeCoalescedEvents(in MergeInput) (MergeResult, error) {
 	if err := span.Validate(); err != nil {
 		return MergeResult{}, err
 	}
+	if in.SessionID != "" && in.PipelineVersion != "" {
+		correlation, err := telemetrycontext.Resolve(telemetrycontext.ResolveInput{
+			SessionID:            in.SessionID,
+			TurnID:               in.TurnID,
+			EventID:              sources[0].EventID,
+			PipelineVersion:      in.PipelineVersion,
+			EdgeID:               in.EdgeID,
+			AuthorityEpoch:       mergeNonNegative(in.AuthorityEpoch),
+			Lane:                 eventabi.LaneTelemetry,
+			EmittedBy:            "OR-01",
+			RuntimeTimestampMS:   mergeNonNegative(in.RuntimeTimestampMS),
+			WallClockTimestampMS: mergeNonNegative(in.WallClockTimestampMS),
+		})
+		if err == nil {
+			telemetry.DefaultEmitter().EmitMetric(
+				telemetry.MetricEdgeMergesTotal,
+				1,
+				"count",
+				map[string]string{
+					"edge_id":        in.EdgeID,
+					"merge_group_id": in.MergeGroupID,
+					"source_count":   fmt.Sprintf("%d", len(sources)),
+				},
+				correlation,
+			)
+		}
+	}
 
 	return MergeResult{
 		MergeGroupID:   in.MergeGroupID,
 		SourceEventIDs: ids,
 		SourceSpan:     span,
 	}, nil
+}
+
+func mergeNonNegative(v int64) int64 {
+	if v < 0 {
+		return 0
+	}
+	return v
 }

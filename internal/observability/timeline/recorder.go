@@ -1,12 +1,14 @@
 package timeline
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"sync"
 
 	"github.com/tiger/realtime-speech-pipeline/api/controlplane"
 	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
+	timelineexporter "github.com/tiger/realtime-speech-pipeline/internal/observability/timeline/exporter"
 )
 
 var (
@@ -430,6 +432,11 @@ type CompletenessReport struct {
 	CompletenessRatio         float64
 }
 
+// DurableExporter defines async durable-export behavior for local timeline appends.
+type DurableExporter interface {
+	Enqueue(record timelineexporter.Record) bool
+}
+
 // Recorder is the OR-02 Stage-A in-memory append recorder.
 type Recorder struct {
 	cfg             StageAConfig
@@ -441,6 +448,7 @@ type Recorder struct {
 	snapshotEntries []InvocationSnapshotEvidence
 	droppedDetails  int
 	downgradeByTurn map[string]bool
+	durableExporter DurableExporter
 }
 
 // NewRecorder constructs a recorder with bounded capacities.
@@ -466,6 +474,13 @@ func NewRecorder(cfg StageAConfig) Recorder {
 	}
 }
 
+// NewRecorderWithDurableExporter constructs a recorder with optional durable-export wiring.
+func NewRecorderWithDurableExporter(cfg StageAConfig, durableExporter DurableExporter) Recorder {
+	recorder := NewRecorder(cfg)
+	recorder.durableExporter = durableExporter
+	return recorder
+}
+
 // AppendBaseline appends replay-critical evidence without blocking.
 func (r *Recorder) AppendBaseline(evidence BaselineEvidence) error {
 	if err := evidence.ValidateCompleteness(); err != nil {
@@ -473,12 +488,15 @@ func (r *Recorder) AppendBaseline(evidence BaselineEvidence) error {
 	}
 
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	if len(r.baselineEntries) >= r.cfg.BaselineCapacity {
+		r.mu.Unlock()
 		return ErrBaselineCapacityExhausted
 	}
 	r.baselineEntries = append(r.baselineEntries, evidence)
+	durableExporter := r.durableExporter
+	r.mu.Unlock()
+
+	appendDurableBaseline(durableExporter, evidence)
 	return nil
 }
 
@@ -880,4 +898,46 @@ func deriveTotalInvocationLatencyMS(group []ProviderAttemptEvidence) int64 {
 		return last.WallClockTimestampMS - first.WallClockTimestampMS
 	}
 	return 0
+}
+
+func appendDurableBaseline(durableExporter DurableExporter, evidence BaselineEvidence) {
+	if durableExporter == nil {
+		return
+	}
+	payload, err := json.Marshal(evidence)
+	if err != nil {
+		return
+	}
+
+	durableExporter.Enqueue(timelineexporter.Record{
+		Kind:                 "baseline",
+		SessionID:            evidence.SessionID,
+		TurnID:               evidence.TurnID,
+		EventID:              evidence.EventID,
+		PipelineVersion:      evidence.PipelineVersion,
+		AuthorityEpoch:       evidence.AuthorityEpoch,
+		RuntimeTimestampMS:   baselineRuntimeTimestamp(evidence),
+		WallClockTimestampMS: baselineRuntimeTimestamp(evidence),
+		Payload:              payload,
+	})
+}
+
+func baselineRuntimeTimestamp(evidence BaselineEvidence) int64 {
+	if evidence.TurnTerminalAtMS != nil {
+		return baselineNonNegative(*evidence.TurnTerminalAtMS)
+	}
+	if evidence.TurnOpenAtMS != nil {
+		return baselineNonNegative(*evidence.TurnOpenAtMS)
+	}
+	if evidence.TurnOpenProposedAtMS != nil {
+		return baselineNonNegative(*evidence.TurnOpenProposedAtMS)
+	}
+	return 0
+}
+
+func baselineNonNegative(value int64) int64 {
+	if value < 0 {
+		return 0
+	}
+	return value
 }

@@ -1,0 +1,12 @@
+{
+  "schema_version": "rspp.pipeline.bundle.v1",
+  "bundle_id": "voice_assistant_bundle_v1",
+  "pipeline_version": "pipeline-v1",
+  "spec_ref": "pipelines/specs/voice_assistant_spec_v1.json",
+  "profile_ref": "pipelines/profiles/simple_profile_v1.json",
+  "rollout_ref": "pipelines/rollouts/voice_assistant_rollout_v1.json",
+  "policy_ref": "pipelines/policies/voice_assistant_policy_v1.json",
+  "compat_ref": "pipelines/compat/voice_assistant_compat_v1.json",
+  "extensions_ref": "pipelines/extensions/voice_assistant_extensions_v1.json",
+  "replay_manifest_ref": "pipelines/replay/voice_assistant_replay_manifest_v1.json"
+}

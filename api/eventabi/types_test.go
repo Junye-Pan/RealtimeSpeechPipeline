@@ -95,6 +95,91 @@ func TestCT002ControlSignalEmitterMappingAndUnknownSignal(t *testing.T) {
 			},
 			shouldErr: true,
 		},
+		{
+			name: "turn_open_proposed valid session emitter",
+			mutate: func(sig *ControlSignal) {
+				sig.EventScope = ScopeSession
+				sig.TurnID = ""
+				sig.Signal = "turn_open_proposed"
+				sig.EmittedBy = "RK-02"
+			},
+		},
+		{
+			name: "turn_open_proposed invalid emitter",
+			mutate: func(sig *ControlSignal) {
+				sig.EventScope = ScopeSession
+				sig.TurnID = ""
+				sig.Signal = "turn_open_proposed"
+				sig.EmittedBy = "RK-03"
+			},
+			shouldErr: true,
+		},
+		{
+			name: "barge_in valid emitter",
+			mutate: func(sig *ControlSignal) {
+				sig.Signal = "barge_in"
+				sig.EmittedBy = "RK-06"
+			},
+		},
+		{
+			name: "barge_in invalid emitter",
+			mutate: func(sig *ControlSignal) {
+				sig.Signal = "barge_in"
+				sig.EmittedBy = "RK-03"
+			},
+			shouldErr: true,
+		},
+		{
+			name: "cancel valid scope and emitter",
+			mutate: func(sig *ControlSignal) {
+				sig.Signal = "cancel"
+				sig.Scope = "provider_invocation"
+				sig.EmittedBy = "RK-16"
+			},
+		},
+		{
+			name: "cancel invalid scope",
+			mutate: func(sig *ControlSignal) {
+				sig.Signal = "cancel"
+				sig.Scope = "edge"
+				sig.EmittedBy = "RK-16"
+			},
+			shouldErr: true,
+		},
+		{
+			name: "budget_warning invalid emitter",
+			mutate: func(sig *ControlSignal) {
+				sig.Signal = "budget_warning"
+				sig.EmittedBy = "RK-13"
+				sig.Reason = "budget_threshold_warning"
+			},
+			shouldErr: true,
+		},
+		{
+			name: "degrade valid emitter with reason",
+			mutate: func(sig *ControlSignal) {
+				sig.Signal = "degrade"
+				sig.EmittedBy = "RK-13"
+				sig.Reason = "degrade_due_to_pressure"
+			},
+		},
+		{
+			name: "fallback invalid missing reason",
+			mutate: func(sig *ControlSignal) {
+				sig.Signal = "fallback"
+				sig.EmittedBy = "RK-17"
+				sig.Reason = ""
+			},
+			shouldErr: true,
+		},
+		{
+			name: "timestamp_ms negative rejected",
+			mutate: func(sig *ControlSignal) {
+				ts := int64(-1)
+				sig.TimestampMS = &ts
+			},
+			shouldErr: true,
+		},
 	}
 
 	for _, tc := range tests {
@@ -111,6 +196,38 @@ func TestCT002ControlSignalEmitterMappingAndUnknownSignal(t *testing.T) {
 				t.Fatalf("expected valid signal, got error: %v", err)
 			}
 		})
+	}
+}
+
+func TestEventRecordValidateTimestampMS(t *testing.T) {
+	t.Parallel()
+
+	transport := int64(1)
+	authority := int64(3)
+	event := EventRecord{
+		SchemaVersion:      "v1.0",
+		EventScope:         ScopeTurn,
+		SessionID:          "sess-ts-1",
+		TurnID:             "turn-ts-1",
+		PipelineVersion:    "pipeline-v1",
+		EventID:            "evt-ts-1",
+		Lane:               LaneData,
+		TransportSequence:  &transport,
+		RuntimeSequence:    3,
+		AuthorityEpoch:     &authority,
+		RuntimeTimestampMS: 100,
+		WallClockMS:        100,
+		PayloadClass:       PayloadMetadata,
+	}
+
+	if err := event.Validate(); err != nil {
+		t.Fatalf("expected valid event record, got %v", err)
+	}
+
+	ts := int64(-1)
+	event.TimestampMS = &ts
+	if err := event.Validate(); err == nil {
+		t.Fatalf("expected negative timestamp_ms to fail validation")
 	}
 }
 

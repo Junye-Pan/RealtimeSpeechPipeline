@@ -1,0 +1,35 @@
+{
+  "schema_version": "rspp.deprecation-policy.v1",
+  "policy_id": "voice_assistant_deprecation_policy_v1",
+  "rules": [
+    {
+      "field_path": "policy.recording_policy.legacy_mode",
+      "warning_from_utc": "2026-01-01T00:00:00Z",
+      "enforce_from_utc": "2026-03-01T00:00:00Z",
+      "remove_from_utc": "2026-06-01T00:00:00Z",
+      "migration_hint": "Use policy.recording_policy.recording_level."
+    }
+  ],
+  "usage_checks": [
+    {
+      "field_path": "policy.recording_policy.legacy_mode",
+      "observed_at_utc": "2025-12-15T00:00:00Z",
+      "expected_state": "allowed"
+    },
+    {
+      "field_path": "policy.recording_policy.legacy_mode",
+      "observed_at_utc": "2026-02-01T00:00:00Z",
+      "expected_state": "warning"
+    },
+    {
+      "field_path": "policy.recording_policy.legacy_mode",
+      "observed_at_utc": "2026-04-01T00:00:00Z",
+      "expected_state": "enforced"
+    },
+    {
+      "field_path": "policy.recording_policy.legacy_mode",
+      "observed_at_utc": "2026-07-01T00:00:00Z",
+      "expected_state": "removed"
+    }
+  ]
+}

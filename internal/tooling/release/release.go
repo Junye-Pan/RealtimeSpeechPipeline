@@ -13,11 +13,16 @@ import (
 )
 
 const (
-	DefaultContractsReportPath        = ".codex/ops/contracts-report.json"
-	DefaultReplayRegressionReportPath = ".codex/replay/regression-report.json"
-	DefaultSLOGatesReportPath         = ".codex/ops/slo-gates-report.json"
-	DefaultReleaseManifestPath        = ".codex/release/release-manifest.json"
-	defaultClockSkewAllowance         = 5 * time.Minute
+	DefaultContractsReportPath            = ".codex/ops/contracts-report.json"
+	DefaultReplayRegressionReportPath     = ".codex/replay/regression-report.json"
+	DefaultSLOGatesReportPath             = ".codex/ops/slo-gates-report.json"
+	DefaultReleaseManifestPath            = ".codex/release/release-manifest.json"
+	defaultClockSkewAllowance             = 5 * time.Minute
+	ContractsReportSchemaVersionV1        = "rspp.tooling.contracts-report.v1"
+	ReplayRegressionReportSchemaVersionV1 = "rspp.tooling.replay-regression-report.v1"
+	SLOGatesReportSchemaVersionV1         = "rspp.tooling.slo-gates-report.v1"
+	MVPSLOGatesReportSchemaVersionV1      = "rspp.tooling.slo-gates-mvp-report.v1"
+	ReleaseManifestSchemaVersionV1        = "rspp.tooling.release-manifest.v1"
 )
 
 var DefaultMaxArtifactAge = 24 * time.Hour
@@ -82,6 +87,7 @@ type ReadinessInput struct {
 
 // ReleaseManifest captures deterministic release publish output for deployment handoff.
 type ReleaseManifest struct {
+	SchemaVersion   string                    `json:"schema_version"`
 	ReleaseID       string                    `json:"release_id"`
 	GeneratedAtUTC  string                    `json:"generated_at_utc"`
 	SpecRef         string                    `json:"spec_ref"`
@@ -91,16 +97,19 @@ type ReleaseManifest struct {
 }
 
 type contractsReportArtifact struct {
+	SchemaVersion  string `json:"schema_version"`
 	GeneratedAtUTC string `json:"generated_at_utc"`
 	Passed         bool   `json:"passed"`
 }
 
 type replayRegressionArtifact struct {
+	SchemaVersion  string `json:"schema_version"`
 	GeneratedAtUTC string `json:"generated_at_utc"`
 	FailingCount   int    `json:"failing_count"`
 }
 
 type sloGatesReportArtifact struct {
+	SchemaVersion  string `json:"schema_version"`
 	GeneratedAtUTC string `json:"generated_at_utc"`
 	Report         struct {
 		Passed bool `json:"passed"`
@@ -242,6 +251,7 @@ func BuildReleaseManifest(
 	}
 
 	return ReleaseManifest{
+		SchemaVersion:   ReleaseManifestSchemaVersionV1,
 		ReleaseID:       releaseID,
 		GeneratedAtUTC:  now.Format(time.RFC3339),
 		SpecRef:         trimmedSpecRef,
@@ -285,6 +295,10 @@ func evaluateContractsCheck(path string, now time.Time, maxAge time.Duration) (G
 		status.Reason = fmt.Sprintf("decode contracts report: %v", err)
 		return status, ArtifactSource{}
 	}
+	if err := requireSchemaVersion("contracts report", artifact.SchemaVersion, ContractsReportSchemaVersionV1); err != nil {
+		status.Reason = err.Error()
+		return status, ArtifactSource{}
+	}
 	status.GeneratedAtUTC = artifact.GeneratedAtUTC
 	generatedAt, freshnessErr := validateFreshness(artifact.GeneratedAtUTC, now, maxAge)
 	if freshnessErr != nil {
@@ -315,6 +329,10 @@ func evaluateReplayRegressionCheck(path string, now time.Time, maxAge time.Durat
 		status.Reason = fmt.Sprintf("decode replay regression report: %v", err)
 		return status, ArtifactSource{}
 	}
+	if err := requireSchemaVersion("replay regression report", artifact.SchemaVersion, ReplayRegressionReportSchemaVersionV1); err != nil {
+		status.Reason = err.Error()
+		return status, ArtifactSource{}
+	}
 	status.GeneratedAtUTC = artifact.GeneratedAtUTC
 	generatedAt, freshnessErr := validateFreshness(artifact.GeneratedAtUTC, now, maxAge)
 	if freshnessErr != nil {
@@ -343,6 +361,10 @@ func evaluateSLOGatesCheck(path string, now time.Time, maxAge time.Duration) (Ga
 	artifact := sloGatesReportArtifact{}
 	if err := strictUnmarshal(raw, &artifact); err != nil {
 		status.Reason = fmt.Sprintf("decode slo gates report: %v", err)
+		return status, ArtifactSource{}
+	}
+	if err := requireSchemaVersion("slo gates report", artifact.SchemaVersion, SLOGatesReportSchemaVersionV1); err != nil {
+		status.Reason = err.Error()
 		return status, ArtifactSource{}
 	}
 	status.GeneratedAtUTC = artifact.GeneratedAtUTC
@@ -390,6 +412,13 @@ func validateFreshness(generatedAtUTC string, now time.Time, maxAge time.Duratio
 		return time.Time{}, fmt.Errorf("artifact is stale (older than %s)", maxAge)
 	}
 	return parsed, nil
+}
+
+func requireSchemaVersion(artifactName string, actual string, expected string) error {
+	if strings.TrimSpace(actual) != expected {
+		return fmt.Errorf("%s schema_version must equal %q", artifactName, expected)
+	}
+	return nil
 }
 
 func strictUnmarshal(raw []byte, target any) error {

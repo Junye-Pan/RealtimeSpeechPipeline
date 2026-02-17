@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
+	"github.com/tiger/realtime-speech-pipeline/internal/observability/telemetry"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/localadmission"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/contracts"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/invocation"
@@ -175,6 +176,124 @@ func TestExecuteStreamingChainSequentialFallbackWhenDisabled(t *testing.T) {
 	}
 	if len(result.Handoffs) != 0 {
 		t.Fatalf("expected no handoff entries when policy disabled, got %+v", result.Handoffs)
+	}
+}
+
+func TestExecuteStreamingChainEmitsEdgeLatencyMetrics(t *testing.T) {
+	catalog, err := registry.NewCatalog([]contracts.Adapter{
+		contracts.StaticAdapter{
+			ID:   "stt-metric",
+			Mode: contracts.ModalitySTT,
+			InvokeStreamFn: func(req contracts.InvocationRequest, observer contracts.StreamObserver) (contracts.Outcome, error) {
+				if err := observer.OnStart(newChunk(req, contracts.StreamChunkStart, 0, "", nil)); err != nil {
+					return contracts.Outcome{}, err
+				}
+				if err := observer.OnChunk(newChunk(req, contracts.StreamChunkDelta, 1, "hello", nil)); err != nil {
+					return contracts.Outcome{}, err
+				}
+				if err := observer.OnComplete(newChunk(req, contracts.StreamChunkFinal, 2, "hello done", nil)); err != nil {
+					return contracts.Outcome{}, err
+				}
+				return contracts.Outcome{Class: contracts.OutcomeSuccess}, nil
+			},
+		},
+		contracts.StaticAdapter{
+			ID:   "llm-metric",
+			Mode: contracts.ModalityLLM,
+			InvokeStreamFn: func(req contracts.InvocationRequest, observer contracts.StreamObserver) (contracts.Outcome, error) {
+				if err := observer.OnStart(newChunk(req, contracts.StreamChunkStart, 0, "", nil)); err != nil {
+					return contracts.Outcome{}, err
+				}
+				if err := observer.OnChunk(newChunk(req, contracts.StreamChunkDelta, 1, "ok", nil)); err != nil {
+					return contracts.Outcome{}, err
+				}
+				if err := observer.OnComplete(newChunk(req, contracts.StreamChunkFinal, 2, "ok done", nil)); err != nil {
+					return contracts.Outcome{}, err
+				}
+				return contracts.Outcome{Class: contracts.OutcomeSuccess}, nil
+			},
+		},
+		contracts.StaticAdapter{
+			ID:   "tts-metric",
+			Mode: contracts.ModalityTTS,
+			InvokeStreamFn: func(req contracts.InvocationRequest, observer contracts.StreamObserver) (contracts.Outcome, error) {
+				if err := observer.OnStart(newChunk(req, contracts.StreamChunkStart, 0, "", nil)); err != nil {
+					return contracts.Outcome{}, err
+				}
+				if err := observer.OnChunk(newChunk(req, contracts.StreamChunkAudio, 1, "", []byte{1, 2})); err != nil {
+					return contracts.Outcome{}, err
+				}
+				if err := observer.OnComplete(newChunk(req, contracts.StreamChunkFinal, 2, "", nil)); err != nil {
+					return contracts.Outcome{}, err
+				}
+				return contracts.Outcome{Class: contracts.OutcomeSuccess}, nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected catalog error: %v", err)
+	}
+
+	sink := telemetry.NewMemorySink()
+	pipeline := telemetry.NewPipeline(sink, telemetry.Config{QueueCapacity: 128})
+	previous := telemetry.DefaultEmitter()
+	telemetry.SetDefaultEmitter(pipeline)
+	t.Cleanup(func() {
+		telemetry.SetDefaultEmitter(previous)
+		_ = pipeline.Close()
+	})
+
+	scheduler := NewSchedulerWithProviderInvoker(localadmission.Evaluator{}, invocation.NewController(catalog))
+	_, err = scheduler.ExecuteStreamingChain(
+		SchedulingInput{
+			SessionID:            "sess-stream-chain-metric-1",
+			TurnID:               "turn-stream-chain-metric-1",
+			PipelineVersion:      "pipeline-v1",
+			EventID:              "evt-stream-chain-metric-1",
+			TransportSequence:    1,
+			RuntimeSequence:      1,
+			AuthorityEpoch:       1,
+			RuntimeTimestampMS:   time.Now().UnixMilli(),
+			WallClockTimestampMS: time.Now().UnixMilli(),
+		},
+		ProviderInvocationInput{Modality: contracts.ModalitySTT, PreferredProvider: "stt-metric"},
+		ProviderInvocationInput{Modality: contracts.ModalityLLM, PreferredProvider: "llm-metric"},
+		ProviderInvocationInput{Modality: contracts.ModalityTTS, PreferredProvider: "tts-metric"},
+		StreamingHandoffPolicy{
+			Enabled:             true,
+			STTToLLMEnabled:     true,
+			LLMToTTSEnabled:     true,
+			MinPartialChars:     1,
+			MaxPendingRevisions: 4,
+			CoalesceLatestOnly:  true,
+		},
+	)
+	if err != nil {
+		t.Fatalf("execute streaming chain for telemetry metrics: %v", err)
+	}
+	if err := pipeline.Close(); err != nil {
+		t.Fatalf("close telemetry pipeline: %v", err)
+	}
+
+	edges := map[string]bool{}
+	for _, event := range sink.Events() {
+		if event.Correlation.SessionID != "sess-stream-chain-metric-1" {
+			continue
+		}
+		if event.Kind != telemetry.EventKindMetric || event.Metric == nil || event.Metric.Name != telemetry.MetricEdgeLatencyMS {
+			continue
+		}
+		if event.Correlation.EdgeID == "" {
+			t.Fatalf("expected edge latency metric to include edge correlation, got %+v", event.Correlation)
+		}
+		if event.Metric.Attributes["edge_id"] != event.Correlation.EdgeID {
+			t.Fatalf("expected stable edge_id metric linkage labels, got attrs=%+v correlation=%+v", event.Metric.Attributes, event.Correlation)
+		}
+		edges[event.Correlation.EdgeID] = true
+	}
+
+	if !edges["stt_to_llm"] || !edges["llm_to_tts"] {
+		t.Fatalf("expected edge latency metrics for stt_to_llm and llm_to_tts, got %+v", edges)
 	}
 }
 

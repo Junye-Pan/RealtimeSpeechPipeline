@@ -1,0 +1,96 @@
+MODULE SNAPSHOT
+- Area: Providers/Transports
+- Canonical guide: `providers/provider_adapter_guide.md` + `transports/transport_adapter_guide.md`
+- Code path prefixes: `providers`, `transports`
+- Public contract surfaces (api/*, pkg/*): `api/eventabi/types.go` and `api/controlplane/types.go` are directly consumed by LiveKit transport (`transports/livekit/adapter.go:8`, `transports/livekit/adapter.go:9`, `transports/livekit/config.go:10`, `transports/livekit/command.go:14`); target `api/transport` is specified but not implemented (`transports/transport_adapter_guide.md:13`, `transports/transport_adapter_guide.md:162`); no exported `pkg/*` runtime package is touched in this area (only docs scaffolds: `pkg/contracts/contracts_package_guide.md`, `pkg/public_package_scaffold_guide.md`); internal interfaces consumed/produced include provider contracts and controller (`internal/runtime/provider/contracts/contracts.go:287`, `internal/runtime/provider/contracts/contracts.go:294`, `internal/runtime/provider/invocation/controller.go:84`, `internal/runtime/provider/bootstrap/bootstrap.go:35`) and transport fence/adapter seams (`internal/runtime/transport/fence.go:38`, `transports/livekit/adapter.go:105`).
+- MVP responsibilities (bullets):
+- Provider subsystem must keep stable adapter ABI, normalized outcomes, deterministic candidate/attempt ordering, policy-budget-aware retry/switch/fallback, and non-blocking evidence (`providers/provider_adapter_guide.md:63`, `providers/provider_adapter_guide.md:66`, `providers/provider_adapter_guide.md:70`, `providers/provider_adapter_guide.md:191`).
+- Provider subsystem must remain transport-agnostic and must not become a model API abstraction that hides determinism/policy controls (`providers/provider_adapter_guide.md:206`, `providers/provider_adapter_guide.md:207`).
+- Transport subsystem must normalize transport-native media/control to ABI envelopes, validate authority/lease/token, enforce cancel fences, preserve sequencing, and execute deterministic lifecycle cleanup (`transports/transport_adapter_guide.md:13`, `transports/transport_adapter_guide.md:19`, `transports/transport_adapter_guide.md:119`).
+- Transport subsystem must reject stale/unauthorized ingress and prevent duplicate egress across routing epochs (`transports/transport_adapter_guide.md:121`, `transports/transport_adapter_guide.md:130`).
+- Suggested test topology for this area is provider contract/integration suites and LiveKit transport unit/integration conformance (`providers/provider_adapter_guide.md:74`, `transports/transport_adapter_guide.md:179`, `transports/transport_adapter_guide.md:215`).
+- MVP invariants to enforce (bullets):
+- Provider behavior is frozen at turn start (deterministic candidate order and monotonic attempt indices) (`providers/provider_adapter_guide.md:193`, `providers/provider_adapter_guide.md:195`).
+- Streaming lifecycle must be `start -> chunk* -> final/error`, with no post-terminal chunks (`providers/provider_adapter_guide.md:198`).
+- Cancel acceptance must fence further output acceptance/playback for scope (`providers/provider_adapter_guide.md:199`, `transports/transport_adapter_guide.md:124`).
+- OR-02 replay evidence is mandatory for accepted turns and telemetry/evidence must remain non-blocking (`providers/provider_adapter_guide.md:202`, `transports/transport_adapter_guide.md:132`, `transports/transport_adapter_guide.md:133`).
+- Secrets must be reference-based and never emitted in logs/debug payloads (`providers/provider_adapter_guide.md:203`).
+- Transport ingress/egress sequence monotonicity and deterministic lifecycle cleanup by timeout must hold (`transports/transport_adapter_guide.md:125`, `transports/transport_adapter_guide.md:128`, `transports/transport_adapter_guide.md:129`).
+- Current implementation status:
+  - Implemented:
+  - Provider contract/catalog/invocation stack is implemented in `internal/runtime/provider/contracts/contracts.go`, `internal/runtime/provider/registry/registry.go`, `internal/runtime/provider/invocation/controller.go`, `internal/runtime/provider/bootstrap/bootstrap.go`; 9 adapters are wired under `providers/stt/*/adapter.go`, `providers/llm/*/adapter.go`, `providers/tts/*/adapter.go` (`providers/provider_adapter_guide.md:227` to `providers/provider_adapter_guide.md:232`).
+  - LiveKit transport baseline is implemented in `transports/livekit/adapter.go`, `transports/livekit/config.go`, `transports/livekit/command.go`, `transports/livekit/probe.go` (`transports/transport_adapter_guide.md:172`).
+  - Existing deterministic tests cover provider helper + LiveKit baseline (`providers/common/httpadapter/httpadapter_test.go`, `transports/livekit/adapter_test.go`, `transports/livekit/command_test.go`, `transports/livekit/config_test.go`, `transports/livekit/probe_test.go`, `test/integration/livekit_transport_integration_test.go`).
+  - Partial:
+  - Provider target seams (`policy`, `capability`, explicit `evidence`, secret-ref config layer) are not yet split as dedicated modules (`providers/provider_adapter_guide.md:250`, `providers/provider_adapter_guide.md:251`, `providers/provider_adapter_guide.md:254`).
+  - Transport target modules are only partially represented; kernel/session/ingress/egress/authority/telemetry behavior remains embedded in LiveKit adapter code (`transports/transport_adapter_guide.md:163` to `transports/transport_adapter_guide.md:170`).
+  - Provider adapter unit coverage is partial (missing dedicated tests for `providers/llm/gemini`, `providers/stt/deepgram`, `providers/stt/google`, `providers/tts/elevenlabs`, `providers/tts/google`) (`providers/provider_adapter_guide.md:255`).
+  - Scaffold/Missing:
+  - Shared `api/transport` contract package is missing (`transports/transport_adapter_guide.md:162`; no `api/transport` path under `api/`).
+  - WebSocket and Telephony drivers are scaffold-only (`transports/websocket/websocket_transport_guide.md`, `transports/telephony/telephony_transport_guide.md`; `transports/transport_adapter_guide.md:173`, `transports/transport_adapter_guide.md:174`).
+  - Provider contract test suite path (`test/contract/provider/*`) is still absent (`providers/provider_adapter_guide.md:74`).
+  (Each with evidence: file paths)
+- MVP backlog candidates (items):
+  For each item:
+  - Title: Provider policy/capability freeze and deterministic routing
+  - Feature IDs / WP IDs: `F-056`, `F-057`, `F-060`, `F-062`, `F-066`; `WP-1`
+  - Target paths: `internal/runtime/provider/policy/*`, `internal/runtime/provider/capability/*`, `internal/runtime/provider/invocation/controller.go`
+  - Dependencies (contracts/other PRs): policy snapshot input contract from plan-resolution stream
+  - Implementation notes (minimal MVP approach): resolve `ResolvedProviderPlan` once per turn, freeze health/price/capability references, and apply deterministic candidate order for the full turn
+  - Tests to add (file/dir + scenario): `internal/runtime/provider/policy/resolver_test.go` (tenant/language/region/cost routing + deterministic fallback under stale signals), `internal/runtime/provider/capability/snapshot_test.go` (health/circuit affects new turns only), `test/integration/provider_policy_conformance_test.go` (selection traceability + compliance-node insertion audit)
+  - Done criteria (verifiable): identical inputs produce identical candidate order; stale signals force deterministic fallback with explicit reason metadata; unhealthy providers are avoided and later recovered for new turns
+
+  - Title: Provider budget and retry/backoff enforcement hardening
+  - Feature IDs / WP IDs: `F-058`, `F-059`
+  - Target paths: `internal/runtime/provider/invocation/controller.go`, `internal/runtime/provider/invocation/controller_test.go`, `internal/runtime/provider/strategy/*`
+  - Dependencies (contracts/other PRs): none
+  - Implementation notes (minimal MVP approach): centralize budget checks before retry/provider-switch and emit deterministic enforcement metadata
+  - Tests to add (file/dir + scenario): `internal/runtime/provider/invocation/controller_test.go` (retry backoff timing + stop-on-budget exhaustion), `test/integration/runtime_chain_test.go` (budget cap enforcement signals)
+  - Done criteria (verifiable): retries stop when remaining budget is insufficient; cost-cap behavior is deterministic and observable
+
+  - Title: Provider evidence writer, metrics normalization, and secret-ref config
+  - Feature IDs / WP IDs: `F-061`, `F-065`, `F-149`, `F-153`, `F-154`, `F-160`, `F-176`; `WP-2`, `WP-4`
+  - Target paths: `internal/runtime/provider/evidence/*`, `internal/runtime/provider/config/*`, `internal/runtime/provider/invocation/controller.go`, `providers/*/*/adapter.go`
+  - Dependencies (contracts/other PRs): secret-store interface from security/config workstream
+  - Implementation notes (minimal MVP approach): add non-blocking provider evidence sink and secret-reference resolver with local env fallback
+  - Tests to add (file/dir + scenario): `internal/runtime/provider/evidence/evidence_test.go` (non-blocking behavior under slow sink), `internal/runtime/provider/config/config_test.go` (secret-ref load/rotate/redact), `test/replay/rd001_replay_smoke_test.go` (provider evidence lineage fields)
+  - Done criteria (verifiable): accepted turns emit OR-02 provider lineage records; metrics use standardized labels; secrets do not appear in logs or evidence artifacts
+
+  - Title: Provider stream lifecycle guard and adapter conformance completion
+  - Feature IDs / WP IDs: `F-055`, `F-063`, `F-064`, `F-164`, `NF-013`; `WP-3`, `WP-5`
+  - Target paths: `internal/runtime/provider/invocation/controller.go`, `providers/llm/gemini/adapter_test.go`, `providers/stt/deepgram/adapter_test.go`, `providers/stt/google/adapter_test.go`, `providers/tts/elevenlabs/adapter_test.go`, `providers/tts/google/adapter_test.go`, `providers/common/streamsse/parser_test.go`, `test/contract/provider/*`
+  - Dependencies (contracts/other PRs): none
+  - Implementation notes (minimal MVP approach): add centralized stream observer state machine and close missing adapter/unit/contract suites
+  - Tests to add (file/dir + scenario): per-adapter success/error/cancel/stream-order suites + new provider contract suite for adapter swap parity and shared ABI invariants
+  - Done criteria (verifiable): invalid sequence or post-terminal chunks fail deterministically; missing adapter tests are present; provider contract suite is CI-runnable
+
+  - Title: Shared transport contract and LiveKit kernel split
+  - Feature IDs / WP IDs: `F-083`, `F-086`, `F-088`, `F-091`
+  - Target paths: `api/transport/*`, `internal/runtime/transport/kernel/*`, `internal/runtime/transport/sessionfsm/*`, `internal/runtime/transport/ingress/*`, `internal/runtime/transport/egress/*`, `internal/runtime/transport/authority/*`, `transports/livekit/adapter.go`
+  - Dependencies (contracts/other PRs): designated contract-owner PR for `api/transport`; runtime/local-runner command compatibility checks
+  - Implementation notes (minimal MVP approach): extract shared contract + kernel modules from current LiveKit behavior while preserving deterministic baseline behavior
+  - Tests to add (file/dir + scenario): unit tests for new transport submodules, `transports/livekit/adapter_test.go` compatibility regression, `test/integration/livekit_transport_integration_test.go` parity checks
+  - Done criteria (verifiable): LiveKit driver composes through shared contract/kernel seams; authority and lifecycle checks are reusable modules; existing LiveKit baseline tests still pass
+
+  - Title: Transport buffering, codec/control extensions, and routing safety
+  - Feature IDs / WP IDs: `F-087`, `F-089`, `F-090`, `NF-031`, `F-011`, `F-062`
+  - Target paths: `internal/runtime/transport/buffering/*`, `internal/runtime/transport/routing/*`, `internal/runtime/transport/extensions/*`, `internal/runtime/transport/telemetry/*`, `transports/livekit/adapter.go`
+  - Dependencies (contracts/other PRs): routing-view update feed and plugin/codec decisions
+  - Implementation notes (minimal MVP approach): add bounded jitter/loss policy, namespaced control mapping, codec transcode hooks, and routing-epoch single-writer fencing
+  - Tests to add (file/dir + scenario): buffering jitter/loss fixtures, namespaced control-signal tests, transcode latency-bound checks, routing migration no-duplicate-egress tests
+  - Done criteria (verifiable): jitter buffering is bounded with metrics; control fields are namespaced and ABI-safe; no duplicate egress during routing transitions
+
+  - Title: WebSocket and Telephony adapter implementation kickoff (post-MVP)
+  - Feature IDs / WP IDs: `F-084`, `F-085` (`post_mvp` in `docs/RSPP_features_framework.json`)
+  - Target paths: `transports/websocket/*.go`, `transports/telephony/*.go`, transport conformance profile tests
+  - Dependencies (contracts/other PRs): shared `api/transport` contract from transport contract owner stream
+  - Implementation notes (minimal MVP approach): start with dry-run skeletons implementing open/ingress/egress/close and deterministic timeout cleanup
+  - Tests to add (file/dir + scenario): adapter unit tests aligned to LiveKit baseline patterns + initial transport profile smoke checks
+  - Done criteria (verifiable): both adapters compile against shared transport contract and pass baseline contract/profile smoke tests
+- Risks & pitfalls (tail latency, determinism, race, compatibility):
+- Tail-latency regressions if policy/evidence paths block invocation or transport hot paths.
+- Determinism drift if health/price/policy signals are re-evaluated mid-turn.
+- Cancel-fence race conditions with late egress chunks during transport refactors.
+- Compatibility breaks across runtime/local-runner command paths when introducing `api/transport`.
+- Secret handling regressions if any capture/log path bypasses redaction during secret-ref rollout.
+- Suggested “owner stream” (which workstream should implement it): Provider Runtime stream for provider items (policy/capability, strategy, evidence, conformance); Transport Contract/Kernel stream for shared transport contract and module split; Transport Drivers stream for WebSocket/Telephony rollout after contract stabilization.

@@ -83,6 +83,31 @@ func TestEvaluateDivergencesAuthorityAlwaysFails(t *testing.T) {
 	}
 }
 
+func TestEvaluateDivergencesProviderChoiceRequiresExpectation(t *testing.T) {
+	t.Parallel()
+
+	divergence := obs.ReplayDivergence{
+		Class:   obs.ProviderChoiceDivergence,
+		Scope:   "turn:t-provider",
+		Message: "provider/model mismatch",
+	}
+
+	unexpected := EvaluateDivergences([]obs.ReplayDivergence{divergence}, DivergencePolicy{})
+	if len(unexpected.Failing) != 1 || len(unexpected.Unexplained) != 1 {
+		t.Fatalf("expected unexplained provider choice divergence to fail, got %+v", unexpected)
+	}
+
+	expected := EvaluateDivergences([]obs.ReplayDivergence{divergence}, DivergencePolicy{
+		Expected: []ExpectedDivergence{{
+			Class: obs.ProviderChoiceDivergence,
+			Scope: "turn:t-provider",
+		}},
+	})
+	if len(expected.Failing) != 0 || len(expected.Unexplained) != 0 {
+		t.Fatalf("expected configured provider choice divergence to pass, got %+v", expected)
+	}
+}
+
 func TestEvaluateDivergencesMissingExpectedFails(t *testing.T) {
 	t.Parallel()
 

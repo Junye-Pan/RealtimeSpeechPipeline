@@ -7,6 +7,7 @@ import (
 	"github.com/tiger/realtime-speech-pipeline/api/controlplane"
 	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
 	"github.com/tiger/realtime-speech-pipeline/internal/observability/telemetry"
+	telemetrycontext "github.com/tiger/realtime-speech-pipeline/internal/observability/telemetry/context"
 	"github.com/tiger/realtime-speech-pipeline/internal/observability/timeline"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/guard"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/localadmission"
@@ -22,6 +23,7 @@ type LifecycleEvent struct {
 
 // OpenRequest drives Idle -> Opening -> (Idle|Active) resolution.
 type OpenRequest struct {
+	TenantID              string
 	SessionID             string
 	TurnID                string
 	EventID               string
@@ -50,6 +52,7 @@ type OpenResult struct {
 
 // ActiveInput drives Active turn handling with precedence rules.
 type ActiveInput struct {
+	TenantID                     string
 	SessionID                    string
 	TurnID                       string
 	EventID                      string
@@ -156,22 +159,27 @@ func (a Arbiter) Apply(in ApplyInput) (ApplyResult, error) {
 }
 
 func emitOpenTelemetry(in OpenRequest, out OpenResult, err error) {
-	correlation := telemetry.Correlation{
+	correlation, resolveErr := telemetrycontext.Resolve(telemetrycontext.ResolveInput{
 		SessionID:            in.SessionID,
 		TurnID:               in.TurnID,
 		EventID:              in.EventID,
 		PipelineVersion:      defaultPipelineVersion(in.PipelineVersion),
+		NodeID:               "turn_arbiter",
 		AuthorityEpoch:       nonNegative(in.AuthorityEpoch),
-		Lane:                 string(eventabi.LaneTelemetry),
+		Lane:                 eventabi.LaneTelemetry,
 		EmittedBy:            "OR-01",
 		RuntimeTimestampMS:   nonNegative(in.RuntimeTimestampMS),
 		WallClockTimestampMS: nonNegative(in.WallClockTimestampMS),
+	})
+	if resolveErr != nil {
+		return
 	}
 	attrs := map[string]string{
 		"phase":       "pre_turn",
 		"state":       string(out.State),
 		"transitions": strconv.Itoa(len(out.Transitions)),
 		"error":       strconv.FormatBool(err != nil),
+		"node_id":     "turn_arbiter",
 	}
 	if out.Decision != nil {
 		attrs["decision"] = string(out.Decision.OutcomeKind)
@@ -201,22 +209,27 @@ func emitOpenTelemetry(in OpenRequest, out OpenResult, err error) {
 }
 
 func emitActiveTelemetry(in ActiveInput, out ActiveResult, err error) {
-	correlation := telemetry.Correlation{
+	correlation, resolveErr := telemetrycontext.Resolve(telemetrycontext.ResolveInput{
 		SessionID:            in.SessionID,
 		TurnID:               in.TurnID,
 		EventID:              in.EventID,
 		PipelineVersion:      defaultPipelineVersion(in.PipelineVersion),
+		NodeID:               "turn_arbiter",
 		AuthorityEpoch:       nonNegative(in.AuthorityEpoch),
-		Lane:                 string(eventabi.LaneTelemetry),
+		Lane:                 eventabi.LaneTelemetry,
 		EmittedBy:            "OR-01",
 		RuntimeTimestampMS:   nonNegative(in.RuntimeTimestampMS),
 		WallClockTimestampMS: nonNegative(in.WallClockTimestampMS),
+	})
+	if resolveErr != nil {
+		return
 	}
 	attrs := map[string]string{
 		"phase":       "active_turn",
 		"state":       string(out.State),
 		"transitions": strconv.Itoa(len(out.Transitions)),
 		"error":       strconv.FormatBool(err != nil),
+		"node_id":     "turn_arbiter",
 	}
 	terminalEvent := terminalLifecycleEvent(out.Events)
 	if terminalEvent != "" {
@@ -338,6 +351,7 @@ func (a Arbiter) HandleTurnOpenProposed(in OpenRequest) (OpenResult, error) {
 	}
 
 	turnStartBundle, err := a.resolveTurnStartBundle(TurnStartBundleInput{
+		TenantID:                 in.TenantID,
 		SessionID:                in.SessionID,
 		TurnID:                   in.TurnID,
 		RequestedPipelineVersion: in.PipelineVersion,
@@ -435,6 +449,12 @@ func (a Arbiter) HandleTurnOpenProposed(in OpenRequest) (OpenResult, error) {
 		GraphDefinitionRef:     turnStartBundle.GraphDefinitionRef,
 		ExecutionProfile:       turnStartBundle.ExecutionProfile,
 		AuthorityEpoch:         resolvedAuthorityEpoch,
+		Budgets:                turnStartBundle.Budgets,
+		ProviderBindings:       cloneStringMap(turnStartBundle.ProviderBindings),
+		EdgeBufferPolicies:     cloneEdgeBufferPolicies(turnStartBundle.EdgeBufferPolicies),
+		NodeExecutionPolicies:  cloneNodeExecutionPolicies(turnStartBundle.NodeExecutionPolicies),
+		FlowControl:            turnStartBundle.FlowControl,
+		RecordingPolicy:        cloneRecordingPolicy(turnStartBundle.RecordingPolicy),
 		SnapshotProvenance:     turnStartBundle.SnapshotProvenance,
 		AllowedAdaptiveActions: append([]string(nil), turnStartBundle.AllowedAdaptiveActions...),
 		FailMaterialization:    in.PlanShouldFail,
@@ -665,6 +685,7 @@ func (a Arbiter) appendBaselineEvidence(in ActiveInput, terminalOutcome string, 
 	}
 
 	turnStartBundle, err := a.resolveTurnStartBundle(TurnStartBundleInput{
+		TenantID:                 in.TenantID,
 		SessionID:                in.SessionID,
 		TurnID:                   in.TurnID,
 		RequestedPipelineVersion: in.PipelineVersion,

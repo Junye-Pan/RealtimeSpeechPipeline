@@ -18,6 +18,9 @@ func TestGetSnapshot(t *testing.T) {
 	if err := out.Validate(); err != nil {
 		t.Fatalf("expected valid snapshot, got %v", err)
 	}
+	if out.TransportKind == "" || out.TransportEndpoint == "" || out.RuntimeID == "" {
+		t.Fatalf("expected default transport routing metadata, got %+v", out)
+	}
 }
 
 func TestGetSnapshotRejectsNegativeEpoch(t *testing.T) {

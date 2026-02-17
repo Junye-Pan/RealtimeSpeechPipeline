@@ -1,0 +1,16 @@
+{
+  "schema_version": "rspp.execution.profile.v1",
+  "profile_id": "simple/v1",
+  "execution_profile": "simple",
+  "allowed_adaptive_actions": [
+    "retry",
+    "provider_switch",
+    "fallback"
+  ],
+  "budgets": {
+    "turn_budget_ms": 2000,
+    "node_budget_ms_default": 800,
+    "path_budget_ms_default": 1800,
+    "edge_budget_ms_default": 250
+  }
+}

@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rspp-control-plane
+  namespace: rspp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rspp-control-plane
+  template:
+    metadata:
+      labels:
+        app: rspp-control-plane
+    spec:
+      containers:
+      - name: rspp-control-plane
+        image: ghcr.io/tiger/rspp-control-plane:latest
+        args:
+        - "status"

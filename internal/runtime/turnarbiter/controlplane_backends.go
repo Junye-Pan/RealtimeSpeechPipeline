@@ -25,6 +25,18 @@ const (
 	ControlPlaneDistributionHTTPURLsEnv = distribution.EnvHTTPAdapterURLs
 	// ControlPlaneDistributionHTTPURLEnv configures the HTTP-backed CP distribution endpoint.
 	ControlPlaneDistributionHTTPURLEnv = distribution.EnvHTTPAdapterURL
+	// ControlPlaneBackendFallbackModeEnv configures strict-vs-availability backend fallback behavior.
+	ControlPlaneBackendFallbackModeEnv = "RSPP_CP_BACKEND_FALLBACK_MODE"
+)
+
+// BackendFallbackMode controls non-stale backend error handling behavior.
+type BackendFallbackMode string
+
+const (
+	// BackendFallbackModeAvailability keeps availability-mode behavior (fallback defaults on non-stale backend errors).
+	BackendFallbackModeAvailability BackendFallbackMode = "availability"
+	// BackendFallbackModeStrict propagates backend errors instead of applying fallback defaults.
+	BackendFallbackModeStrict BackendFallbackMode = "strict"
 )
 
 // ControlPlaneBackends declares optional backend resolvers used by CP turn-start services.
@@ -37,41 +49,63 @@ type ControlPlaneBackends struct {
 	GraphCompiler  graphcompiler.Backend
 	Admission      admission.Backend
 	Lease          lease.Backend
+	FallbackMode   BackendFallbackMode
 }
 
 // NewControlPlaneBackendsFromDistributionFile builds CP backends from a file-backed distribution artifact.
 func NewControlPlaneBackendsFromDistributionFile(path string) (ControlPlaneBackends, error) {
+	fallbackMode, err := backendFallbackModeFromEnv()
+	if err != nil {
+		return ControlPlaneBackends{}, err
+	}
 	serviceBackends, err := distribution.NewFileBackends(distribution.FileAdapterConfig{Path: path})
 	if err != nil {
 		return ControlPlaneBackends{}, fmt.Errorf("load control-plane distribution backends: %w", err)
 	}
-	return newControlPlaneBackends(serviceBackends), nil
+	out := newControlPlaneBackends(serviceBackends)
+	out.FallbackMode = fallbackMode
+	return out, nil
 }
 
 // NewControlPlaneBackendsFromDistributionHTTP builds CP backends from an HTTP distribution endpoint.
 func NewControlPlaneBackendsFromDistributionHTTP(url string) (ControlPlaneBackends, error) {
+	fallbackMode, err := backendFallbackModeFromEnv()
+	if err != nil {
+		return ControlPlaneBackends{}, err
+	}
 	serviceBackends, err := distribution.NewHTTPBackends(distribution.HTTPAdapterConfig{URL: url})
 	if err != nil {
 		return ControlPlaneBackends{}, fmt.Errorf("load control-plane distribution http backends: %w", err)
 	}
-	return newControlPlaneBackends(serviceBackends), nil
+	out := newControlPlaneBackends(serviceBackends)
+	out.FallbackMode = fallbackMode
+	return out, nil
 }
 
 // NewControlPlaneBackendsFromDistributionEnv builds CP backends from env-configured distribution artifacts.
 func NewControlPlaneBackendsFromDistributionEnv() (ControlPlaneBackends, error) {
+	fallbackMode, err := backendFallbackModeFromEnv()
+	if err != nil {
+		return ControlPlaneBackends{}, err
+	}
+
 	if strings.TrimSpace(os.Getenv(ControlPlaneDistributionHTTPURLsEnv)) != "" || strings.TrimSpace(os.Getenv(ControlPlaneDistributionHTTPURLEnv)) != "" {
 		serviceBackends, err := distribution.NewHTTPBackendsFromEnv()
 		if err != nil {
 			return ControlPlaneBackends{}, fmt.Errorf("load control-plane distribution http backends from env: %w", err)
 		}
-		return newControlPlaneBackends(serviceBackends), nil
+		out := newControlPlaneBackends(serviceBackends)
+		out.FallbackMode = fallbackMode
+		return out, nil
 	}
 
 	serviceBackends, err := distribution.NewFileBackendsFromEnv()
 	if err != nil {
 		return ControlPlaneBackends{}, fmt.Errorf("load control-plane distribution backends from env: %w", err)
 	}
-	return newControlPlaneBackends(serviceBackends), nil
+	out := newControlPlaneBackends(serviceBackends)
+	out.FallbackMode = fallbackMode
+	return out, nil
 }
 
 // NewWithControlPlaneBackendsFromDistributionFile loads CP backends from file and wires arbiter.
@@ -156,6 +190,10 @@ func newControlPlaneBackends(serviceBackends distribution.ServiceBackends) Contr
 }
 
 func withFallbackBackends(backends ControlPlaneBackends) ControlPlaneBackends {
+	if normalizeBackendFallbackMode(backends.FallbackMode) == BackendFallbackModeStrict {
+		return backends
+	}
+
 	out := backends
 	if out.Registry != nil {
 		out.Registry = fallbackRegistryBackend{backend: out.Registry}
@@ -307,4 +345,32 @@ func (b fallbackLeaseBackend) Resolve(in lease.Input) (lease.Output, error) {
 // NewWithControlPlaneBackends wires arbiter with CP backend resolver integration.
 func NewWithControlPlaneBackends(recorder *timeline.Recorder, backends ControlPlaneBackends) Arbiter {
 	return NewWithDependencies(recorder, NewControlPlaneBundleResolverWithBackends(backends))
+}
+
+func backendFallbackModeFromEnv() (BackendFallbackMode, error) {
+	raw := strings.TrimSpace(os.Getenv(ControlPlaneBackendFallbackModeEnv))
+	if raw == "" {
+		return BackendFallbackModeAvailability, nil
+	}
+	return parseBackendFallbackMode(raw)
+}
+
+func parseBackendFallbackMode(raw string) (BackendFallbackMode, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", string(BackendFallbackModeAvailability):
+		return BackendFallbackModeAvailability, nil
+	case string(BackendFallbackModeStrict):
+		return BackendFallbackModeStrict, nil
+	default:
+		return "", fmt.Errorf("invalid %s %q: expected one of [%s,%s]", ControlPlaneBackendFallbackModeEnv, raw, BackendFallbackModeAvailability, BackendFallbackModeStrict)
+	}
+}
+
+func normalizeBackendFallbackMode(mode BackendFallbackMode) BackendFallbackMode {
+	switch mode {
+	case BackendFallbackModeStrict:
+		return BackendFallbackModeStrict
+	default:
+		return BackendFallbackModeAvailability
+	}
 }

@@ -53,6 +53,11 @@ func EvaluateDivergences(divergences []obs.ReplayDivergence, policy DivergencePo
 				evaluation.Unexplained = append(evaluation.Unexplained, entryCopy)
 				evaluation.Failing = append(evaluation.Failing, entryCopy)
 			}
+		case obs.ProviderChoiceDivergence:
+			if !hasExpected {
+				evaluation.Unexplained = append(evaluation.Unexplained, entryCopy)
+				evaluation.Failing = append(evaluation.Failing, entryCopy)
+			}
 		case obs.AuthorityDivergence:
 			evaluation.Failing = append(evaluation.Failing, entryCopy)
 		case obs.OrderingDivergence:

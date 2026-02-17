@@ -1,0 +1,14 @@
+{
+  "schema_version": "rspp.deploy.rollout.v1",
+  "profile_id": "mvp-single-region",
+  "bundle_ref": "pipelines/bundles/voice_assistant_bundle_v1.json",
+  "target_region": "us-central1",
+  "replicas": {
+    "runtime": 1,
+    "control_plane": 1
+  },
+  "strategy": {
+    "kind": "direct",
+    "max_unavailable": 0
+  }
+}

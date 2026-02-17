@@ -1,0 +1,46 @@
+{
+  "generated_at_utc": "2026-02-16T23:00:00Z",
+  "status": "pass",
+  "execution_mode": "streaming",
+  "comparison_identity": "mvp-gate-fixture-v1",
+  "semantic_parity": true,
+  "parity_comparison_valid": true,
+  "parity_invalid_reason": "",
+  "enabled_providers": {
+    "stt": [
+      "stt-deepgram"
+    ],
+    "llm": [
+      "llm-anthropic"
+    ],
+    "tts": [
+      "tts-elevenlabs"
+    ]
+  },
+  "selected_combinations": [
+    {
+      "stt_provider_id": "stt-deepgram",
+      "llm_provider_id": "llm-anthropic",
+      "tts_provider_id": "tts-elevenlabs"
+    }
+  ],
+  "combinations": [
+    {
+      "combo_index": 1,
+      "combo_id": "fixture-streaming-01",
+      "stt_provider_id": "stt-deepgram",
+      "llm_provider_id": "llm-anthropic",
+      "tts_provider_id": "tts-elevenlabs",
+      "status": "pass",
+      "handoffs": [
+        {
+          "handoff_id": "stt->llm"
+        }
+      ],
+      "latency": {
+        "first_assistant_audio_e2e_latency_ms": 900,
+        "turn_completion_e2e_latency_ms": 1800
+      }
+    }
+  ]
+}

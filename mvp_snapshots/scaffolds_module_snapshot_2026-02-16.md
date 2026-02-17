@@ -1,0 +1,99 @@
+MODULE SNAPSHOT
+- Area: Scaffolds
+- Canonical guide: `pkg/public_package_scaffold_guide.md` + `deploy/deployment_scaffolds_guide.md` + `pipelines/pipeline_scaffolds_guide.md`
+- Code path prefixes: `pkg/` + `deploy/` + `pipelines/`
+- Public contract surfaces (api/*, pkg/*):
+- `api/*` currently carrying canonical contracts: `api/eventabi/types.go:101`, `api/controlplane/types.go:50`, `api/controlplane/types.go:576`, `api/observability/types.go:21`
+- `pkg/*` currently scaffold-only; no exported Go packages under `pkg/contracts/v1/*`: `pkg/public_package_scaffold_guide.md:34`, `pkg/public_package_scaffold_guide.md:36`, `pkg/contracts/contracts_package_guide.md:6`
+- Internal interfaces consumed/produced for this area today (adjacent): `internal/tooling/release/release.go:110`, `internal/tooling/release/release.go:133`, `internal/controlplane/rollout/rollout.go:21`, `internal/controlplane/lease/lease.go:35`, `internal/runtime/turnarbiter/controlplane_bundle.go:85`, `cmd/rspp-cli/main.go:2070`
+- MVP responsibilities (bullets):
+- Provide import-safe, versioned public contracts under `pkg/contracts/v1/*` without semantic drift from `api/*` (`pkg/public_package_scaffold_guide.md:62`, `pkg/public_package_scaffold_guide.md:309`)
+- Provide pipeline artifact scaffolds for specs/profiles/bundles/rollouts/extensions/replay/compat/tests (`pipelines/pipeline_scaffolds_guide.md:15`, `pipelines/pipeline_scaffolds_guide.md:45`)
+- Provide deployment scaffolds for K8s/Helm/Terraform/profiles/verification (`deploy/deployment_scaffolds_guide.md:31`, `deploy/deployment_scaffolds_guide.md:77`)
+- Keep MVP posture explicit: `simple/v1` + LiveKit + single-region authority (`deploy/deployment_scaffolds_guide.md:69`, `pipelines/pipeline_scaffolds_guide.md:230`)
+- Gate promotions through verify/gate/replay evidence checks (`deploy/deployment_scaffolds_guide.md:261`, `pkg/public_package_scaffold_guide.md:320`)
+- MUST NOT: promote contracts violating invariants (`pkg/public_package_scaffold_guide.md:346`)
+- MUST NOT: use mutable rollout targets (`deploy/deployment_scaffolds_guide.md:194`)
+- MUST NOT: allow mid-turn mutable plan semantics (turn-frozen plan invariant) (`pkg/public_package_scaffold_guide.md:219`, `pipelines/pipeline_scaffolds_guide.md:167`)
+- MVP invariants to enforce (bullets):
+- Turn plan immutability and lifecycle ordering: `OPEN -> ACTIVE -> (COMMIT|ABORT) -> CLOSE` (`pkg/public_package_scaffold_guide.md:219`, `pipelines/pipeline_scaffolds_guide.md:168`)
+- Pre-turn outcomes (`admit/reject/defer`) never emit turn terminal markers (`pkg/public_package_scaffold_guide.md:221`, `pipelines/pipeline_scaffolds_guide.md:169`)
+- Lane priority strictness `Control > Data > Telemetry` (`pkg/public_package_scaffold_guide.md:222`, `pipelines/pipeline_scaffolds_guide.md:170`)
+- Bounded buffering + deterministic shedding (`pkg/public_package_scaffold_guide.md:223`, `pipelines/pipeline_scaffolds_guide.md:172`)
+- Cancel propagation + egress fence after cancel acceptance (`pkg/public_package_scaffold_guide.md:225`, `pipelines/pipeline_scaffolds_guide.md:173`)
+- Lease epoch ingress/egress rejection of stale authority (`pkg/public_package_scaffold_guide.md:227`, `deploy/deployment_scaffolds_guide.md:193`)
+- OR-02 completeness for accepted turns (`pkg/public_package_scaffold_guide.md:231`, `deploy/deployment_scaffolds_guide.md:202`, `pipelines/pipeline_scaffolds_guide.md:177`)
+- Public compatibility policy is additive-only within major (`pkg/public_package_scaffold_guide.md:236`)
+- Deployment-side stateless runtime + immutable bundle rollout (`deploy/deployment_scaffolds_guide.md:192`, `deploy/deployment_scaffolds_guide.md:194`)
+- Current implementation status:
+  - Implemented:
+  - Canonical scaffold guides and phase/done-criteria are present: `pkg/public_package_scaffold_guide.md:289`, `deploy/deployment_scaffolds_guide.md:221`, `pipelines/pipeline_scaffolds_guide.md:195`
+  - Adjacent entrypoints/gates that scaffolds must feed are implemented: `cmd/rspp-cli/main.go:188`, `internal/tooling/release/release.go:110`, `Makefile:9`, `Makefile:12`
+  - Validation runs passed: `make verify-quick`, `go test ./test/contract ./test/integration ./test/replay ./test/failover`, `make verify-full`
+  - Partial:
+  - Release handoff exists but is not fully aligned with generated gate artifact schemas (strict decode vs extra fields): `internal/tooling/release/release.go:395`, `cmd/rspp-cli/main.go:1282`, `cmd/rspp-cli/main.go:400`, `cmd/rspp-cli/main.go:1125`
+  - Control-plane rollout/lease logic exists outside scaffold paths, but scaffold artifacts that should drive it are missing: `internal/controlplane/rollout/rollout.go:37`, `internal/controlplane/lease/lease.go:51`
+  - Scaffold/Missing:
+  - `pkg/`, `deploy/`, `pipelines/` contain only guide markdowns; no concrete artifacts/manifests/packages in target layout: `pkg/public_package_scaffold_guide.md:34`, `deploy/deployment_scaffolds_guide.md:12`, `pipelines/pipeline_scaffolds_guide.md:29`
+  - Placeholder-only sub-guides remain: `deploy/k8s/kubernetes_deployment_guide.md:1`, `deploy/helm/helm_deployment_guide.md:1`, `deploy/terraform/terraform_deployment_guide.md:1`, `pipelines/specs/pipeline_specs_guide.md:1`, `pipelines/profiles/pipeline_profiles_guide.md:1`
+  - No tests exist directly under `pkg/`, `deploy/`, or `pipelines/` (no `_test.go` there); coverage is only adjacent (`api/*`, `internal/*`, `cmd/*`, `test/*`)
+- MVP backlog candidates (items):
+  For each item:
+  - Title: Public `pkg/contracts/v1` bootstrap + MVP facade promotion
+  - Feature IDs / WP IDs: `BL-034`, `F-020`, `F-021`, `F-025`, `F-028`, `F-032`, `F-149`, `F-153`, `NF-010`, `NF-032`
+  - Target paths: `pkg/contracts/v1/core`, `pkg/contracts/v1/eventabi`, `pkg/contracts/v1/controlplane`, `pkg/contracts/v1/observability`
+  - Dependencies (contracts/other PRs): Depends on existing `api/*` type stability; no `api/*` changes in this stream
+  - Implementation notes (minimal MVP approach): Add `doc.go` + facade `types.go` first; then parity wrappers/aliases for `EventRecord`, `ControlSignal`, `DecisionOutcome`, `ResolvedTurnPlan`, replay types. Acceptance translation: `F-020/F-021` envelope fields + version present checks; `F-028/NF-010` compatibility freeze checks; `F-149/F-153` replay-critical fields parity checks
+  - Tests to add (file/dir + scenario): `pkg/contracts/v1/**/_test.go` (JSON tag parity, enum freeze, validate parity vs `api/*`), `test/contract` fixture additions for pkg import paths
+  - Done criteria (verifiable): `go test ./api/... ./pkg/... ./test/contract` green; `make verify-quick` green; no semantic drift from `api/*`
+  - Title: Pipeline minimal authoring path (`specs` + `profiles` + `bundles`)
+  - Feature IDs / WP IDs: `BL-032`, `F-001`, `F-015`, `F-019`, `F-078`, `F-081`
+  - Target paths: `pipelines/specs/simple_v1.yaml`, `pipelines/profiles/simple_v1.yaml`, `pipelines/bundles/voice_assistant_bundle_v1.json`
+  - Dependencies (contracts/other PRs): Depends on control-plane defaults (`simple`) and bundle reference conventions
+  - Implementation notes (minimal MVP approach): Introduce one canonical MVP spec/profile/bundle set. Acceptance translation: `F-001` schema-valid + invalid fixtures; `F-015` immutable versioned filenames/refs; `F-078/F-081` explicit default provenance in resolved metadata docs
+  - Tests to add (file/dir + scenario): `test/contract/pipeline_artifacts_test.go` (schema + required refs), `test/integration` smoke using bundle ref
+  - Done criteria (verifiable): Artifact validation succeeds; deterministic bundle ref resolution documented; `make verify-quick` unchanged
+  - Title: Pipeline rollouts/policies/compat scaffolds
+  - Feature IDs / WP IDs: `BL-032`, `F-092`, `F-093`, `F-100`, `F-102`, `F-028`, `NF-032`
+  - Target paths: `pipelines/rollouts/canary_10pct_v1.yaml`, `pipelines/policies/default_voice_policy_v1.yaml`, `pipelines/compat/version_skew_policy_v1.yaml`
+  - Dependencies (contracts/other PRs): Depends on control-plane rollout and policy snapshot readers
+  - Implementation notes (minimal MVP approach): Versioned manifests with explicit rollback refs and compatibility matrix. Acceptance translation: `F-093` canary cohort fields; `F-100` rollback target required; `F-102` policy version pinning; `NF-032` N/N-1 skew declarations
+  - Tests to add (file/dir + scenario): `test/contract` manifest consistency checks; `test/integration/runtime_chain_test.go` case wired to rollout manifest refs
+  - Done criteria (verifiable): Internal consistency checks pass; rollback refs resolve; compatibility manifest enforces allowed skew cells
+  - Title: Pipeline extensions/replay/conformance manifests
+  - Feature IDs / WP IDs: `BL-032`, `F-121`, `F-122`, `F-123`, `F-127`, `F-129`, `F-153`, `F-154`, `F-176`, `NF-028`, `NF-024`, `NF-025`, `NF-026`, `NF-027`, `NF-029`, `NF-038`
+  - Target paths: `pipelines/extensions/*.yaml`, `pipelines/replay/or02_baseline_v1.yaml`, `pipelines/tests/mvp_gates_manifest_v1.yaml`, `pipelines/examples/simple_livekit_voice_v1/`
+  - Dependencies (contracts/other PRs): Depends on replay/gate artifact schemas and OR-02 field contract
+  - Implementation notes (minimal MVP approach): Start with one custom-node manifest + one external-node manifest + OR-02 required fields list + gate manifest referencing canonical anchors. Acceptance translation: `F-153/F-154/F-176` recording policy checks; `NF-028` completeness = 100%; `NF-024..026/038` metric anchor declarations
+  - Tests to add (file/dir + scenario): `test/replay` OR-02 manifest validation; `test/contract` gate-manifest schema tests; `test/failover` authority gate manifest linkage checks
+  - Done criteria (verifiable): Manifest schema checks pass; OR-02 required-field validator enforced; gate manifest maps 1:1 to MVP gate formulas
+  - Title: Deployment profiles + K8s baseline manifests
+  - Feature IDs / WP IDs: `BL-033`, `F-103`, `F-106`, `F-108`, `F-114`, `F-119`, `F-120`, `NF-007`, `NF-011`, `NF-012`, `NF-016`
+  - Target paths: `deploy/profiles/mvp-single-region/rollout.json`, `deploy/k8s/base/*`, `deploy/k8s/runtime/*`, `deploy/k8s/controlplane/*`, `deploy/k8s/security/*`, `deploy/k8s/observability/*`
+  - Dependencies (contracts/other PRs): Depends on release config schema (`ValidateRolloutConfig`) and control-plane lease/rollout defaults
+  - Implementation notes (minimal MVP approach): Ship minimal dry-run-valid K8s manifests with probes, drain policy hooks, and tenant/security baseline. Acceptance translation: `F-103` stateless replicas; `F-106` drain on termination; `F-108` readiness/liveness; `F-119/F-120` token/mTLS config surfaces
+  - Tests to add (file/dir + scenario): `deploy/verification/smoke/` dry-run script; CI command `kubectl apply --dry-run=client -f deploy/k8s/...`
+  - Done criteria (verifiable): `kubectl --dry-run=client` passes across baseline dirs; profile docs declare MVP posture
+  - Title: Helm/Terraform scaffolds + deploy verification harness
+  - Feature IDs / WP IDs: `BL-033`, `F-125`, `F-126`, `F-127`, `F-129`, `NF-007`, `NF-031`, `NF-024`, `NF-025`, `NF-026`, `NF-027`, `NF-028`, `NF-029`, `NF-038`
+  - Target paths: `deploy/helm/charts/rspp-platform`, `deploy/helm/charts/rspp-runtime`, `deploy/terraform/modules/*`, `deploy/terraform/envs/dev|stage|prod`, `deploy/verification/gates/mvp_gate_runner.sh`
+  - Dependencies (contracts/other PRs): Depends on item 5 manifests; depends on tooling artifact compatibility PR (below)
+  - Implementation notes (minimal MVP approach): Create lintable chart/module skeletons plus one gate runner that executes contract/replay/baseline/SLO/publish in deterministic order
+  - Tests to add (file/dir + scenario): `helm lint deploy/helm/charts/rspp-platform`; `terraform -chdir=deploy/terraform/envs/dev validate`; gate runner CI smoke in `deploy/verification/gates`
+  - Done criteria (verifiable): helm/terraform validate; gate runner produces reproducible artifacts and release manifest
+  - Title: Release artifact schema compatibility alignment (dependency PR for scaffold stream)
+  - Feature IDs / WP IDs: `F-093`, `F-100`, `NF-016`, `NF-032` (dependency to unblock deploy scaffolds)
+  - Target paths: Dependency outside this area: `internal/tooling/release/release.go`, `cmd/rspp-cli/main.go`
+  - Dependencies (contracts/other PRs): Required before deploy verification can rely on native generated reports
+  - Implementation notes (minimal MVP approach): Align `EvaluateReadiness` decoding with report envelopes (or standardize report writers). Current mismatch evidenced by strict decode in `internal/tooling/release/release.go:395` versus extra fields in `cmd/rspp-cli/main.go:1282`, `cmd/rspp-cli/main.go:400`, `cmd/rspp-cli/main.go:1125`
+  - Tests to add (file/dir + scenario): Extend `internal/tooling/release/release_test.go` with real CLI artifact fixtures; add CLI integration test around `publish-release`
+  - Done criteria (verifiable): Guide-prescribed sequence (`validate-contracts-report` -> `replay-regression-report` -> `generate-runtime-baseline` -> `slo-gates-report` -> `publish-release`) succeeds without hand-crafted minimal artifacts
+- Risks & pitfalls (tail latency, determinism, race, compatibility):
+- Tail latency risk: missing explicit queue/budget/degrade scaffold defaults can violate gate 1/2/7 (`NF-024`, `NF-025`, `NF-038`)
+- Determinism risk: without immutable bundle/spec/profile + frozen provenance refs, replay reproducibility degrades (`F-015`, `F-149`, `F-153`)
+- Race/authority risk: missing routing/lease deploy scaffolds increases stale-epoch acceptance risk under failover (`F-095`, `F-156`, `NF-027`)
+- Compatibility risk: no `pkg/contracts/v1` public surface and no compatibility tests (`NF-010`, `NF-032`)
+- Tooling integration risk: current release-readiness strict decoder is incompatible with generated report envelopes (observed during recon run)
+- Suggested “owner stream” (which workstream should implement it):
+- Primary: Delivery Scaffolds stream (`BL-032` + `BL-033` + `BL-034`) aligned to `docs/rspp_SystemDesign.md:107`
+- Required cross-review: Contract owners (`api/controlplane`, `api/eventabi`, `api/observability`) and Tooling/Gates owners (`internal/tooling/release`, `cmd/rspp-cli`)

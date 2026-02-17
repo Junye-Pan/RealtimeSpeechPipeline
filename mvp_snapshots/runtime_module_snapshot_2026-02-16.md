@@ -1,0 +1,120 @@
+MODULE SNAPSHOT
+- Area: Runtime
+- Canonical guide: `internal/runtime/runtime_kernel_guide.md`
+- Code path prefixes: `internal/runtime`
+- Public contract surfaces (api/*, pkg/*):
+- `api/controlplane` consumed by lifecycle/plan/admission/determinism paths: `internal/runtime/turnarbiter/arbiter.go`, `internal/runtime/planresolver/resolver.go`, `internal/runtime/guard/guard.go`, `internal/runtime/localadmission/localadmission.go`, `internal/runtime/executor/scheduler.go`, `internal/runtime/determinism/service.go`
+- `api/eventabi` consumed by gateway/buffering/transport/executor/prelude: `internal/runtime/eventabi/gateway.go`, `internal/runtime/buffering/pressure.go`, `internal/runtime/transport/fence.go`, `internal/runtime/executor/scheduler.go`, `internal/runtime/prelude/engine.go`
+- `pkg/*` touched: none from `internal/runtime`
+- Internal interfaces consumed/produced: `TurnStartBundleResolver` (`internal/runtime/turnarbiter/controlplane_bundle.go`), `ProviderInvoker`/`ProviderAttemptAppender` (`internal/runtime/executor/scheduler.go`), `lanes.Router` (`internal/runtime/lanes/router.go`), `provider/contracts.Adapter` + `StreamingAdapter` + `StreamObserver` (`internal/runtime/provider/contracts/contracts.go`), `turnFence` (`internal/runtime/transport/fence.go`)
+- MVP responsibilities (bullets):
+- Pre-turn intent + arbitration + turn lifecycle terminalization: `internal/runtime/prelude/engine.go`, `internal/runtime/turnarbiter/arbiter.go`
+- Immutable turn-plan freeze and determinism seed creation: `internal/runtime/planresolver/resolver.go`, `internal/runtime/determinism/service.go`
+- Event ABI validation/normalization at runtime boundaries: `internal/runtime/eventabi/gateway.go`
+- Lane routing, buffering, pressure, and flow-control signals: `internal/runtime/lanes/router.go`, `internal/runtime/buffering/pressure.go`, `internal/runtime/flowcontrol/controller.go`
+- Graph/path execution + provider invocation orchestration: `internal/runtime/executor/plan.go`, `internal/runtime/executor/scheduler.go`, `internal/runtime/executor/streaming_handoff.go`
+- Cancel/fence semantics on egress and transport lifecycle signal emission: `internal/runtime/cancellation/fence.go`, `internal/runtime/transport/fence.go`, `internal/runtime/transport/signals.go`
+- Authority/identity correlation and migration guard artifacts: `internal/runtime/guard/guard.go`, `internal/runtime/guard/migration.go`, `internal/runtime/identity/context.go`
+- Admission + pooled scheduling baseline: `internal/runtime/localadmission/localadmission.go`, `internal/runtime/executionpool/pool.go`
+- MVP invariants to enforce (bullets):
+- `turn_open` only after authority + admission + plan freeze
+- Accepted turns must be exactly `OPEN -> ACTIVE -> (COMMIT|ABORT) -> CLOSE`
+- Pre-turn `reject/defer/stale_epoch_reject` must never emit accepted-turn terminal events
+- Exactly one terminal outcome per accepted turn
+- `ControlLane > DataLane > TelemetryLane` under pressure
+- No implicit unbounded queues
+- Watermark crossings must produce deterministic pressure actions
+- Low-latency profiles must use bounded block time and deterministic shedding/degrade (no indefinite blocking)
+- Cancel must propagate and fence egress; post-cancel `output_accepted`/`playback_started` invalid
+- Lease epoch must be enforced ingress + egress
+- Resolved turn plan immutable within a turn
+- Session/turn correlation IDs on events/logs/metrics
+- OR-02 replay-critical evidence required for accepted turns
+- Recording-level downgrade under timeline pressure must be deterministic and preserve control evidence
+- Runtime boundary non-goals must hold: no SFU/WebRTC stack ownership and no model-quality guarantees
+- Current implementation status:
+- Implemented:
+- RK-02 Event ABI gateway baseline is implemented: `internal/runtime/eventabi/gateway.go`, `internal/runtime/eventabi/gateway_test.go`
+- RK-06 cancellation + output fence baseline is implemented: `internal/runtime/cancellation/fence.go`, `internal/runtime/transport/fence.go`, `internal/runtime/transport/fence_test.go`
+- RK-07 budget decision engine baseline is implemented: `internal/runtime/budget/manager.go`, `internal/runtime/budget/manager_test.go`
+- RK-08 provider runtime baseline is implemented: `internal/runtime/provider/bootstrap/bootstrap.go`, `internal/runtime/provider/invocation/controller.go`, `internal/runtime/provider/registry/registry.go`
+- RK-10 admission/execution-pool baseline is implemented: `internal/runtime/localadmission/localadmission.go`, `internal/runtime/executionpool/pool.go`
+- RK-12 transport boundary baseline is implemented: `internal/runtime/transport/classification.go`, `internal/runtime/transport/signals.go`
+- Validation evidence: `go test ./...` passed, `go test ./internal/runtime/...` passed, `make verify-quick` passed
+- Partial:
+- RK-01 lifecycle orchestrator is partial (prelude + arbiter + resolver exist, no concrete session manager): `internal/runtime/prelude/engine.go`, `internal/runtime/turnarbiter/arbiter.go`, `internal/runtime/planresolver/resolver.go`, `internal/runtime/session/session_lifecycle_module_guide.md`
+- RK-03 lane scheduler is partial (router/pressure/flow exist, no unified priority dispatch loop): `internal/runtime/lanes/router.go`, `internal/runtime/buffering/pressure.go`, `internal/runtime/flowcontrol/controller.go`
+- RK-04 graph executor is partial (topological plan execution exists, resolver still default-heavy): `internal/runtime/executor/plan.go`, `internal/runtime/executor/scheduler.go`, `internal/runtime/planresolver/resolver.go`
+- RK-05 node host is partial (failure shaping exists; full host lifecycle missing): `internal/runtime/nodehost/failure.go`
+- RK-09 state/authority/identity is partial (guard + identity implemented; state service missing): `internal/runtime/guard/guard.go`, `internal/runtime/identity/context.go`, `internal/runtime/state/.gitkeep`
+- RK-11 determinism/timebase is partial (determinism exists; timebase absent): `internal/runtime/determinism/service.go`, `internal/runtime/timebase/timebase_service_module_guide.md`
+- Scaffold/Missing:
+- `internal/runtime/session` code scaffold only: `internal/runtime/session/session_lifecycle_module_guide.md`
+- `internal/runtime/state` service missing: `internal/runtime/state/.gitkeep`
+- `internal/runtime/timebase` service scaffold only: `internal/runtime/timebase/timebase_service_module_guide.md`
+- `internal/runtime/sync` engine scaffold only: `internal/runtime/sync/sync_integrity_module_guide.md`
+- `internal/runtime/externalnode` runtime scaffold only: `internal/runtime/externalnode/external_node_boundary_guide.md`
+- MVP backlog candidates (items):
+- Title: WP-01 Session Lifecycle Manager (authoritative session-owned state machine)
+- Feature IDs / WP IDs: `WP-01`, `F-138`, `F-139`, `F-140`, `F-141`, `F-175`, `NF-029`
+- Target paths: `internal/runtime/session`, `internal/runtime/prelude`, `internal/runtime/turnarbiter`
+- Dependencies (contracts/other PRs): `api/controlplane` lifecycle semantics; CP bundle resolution in `internal/runtime/turnarbiter/controlplane_bundle.go`
+- Implementation notes (minimal MVP approach): add `SessionManager` that owns session state + turn registry; route prelude/arbiter through one transition table; reject invalid transitions deterministically
+- Tests to add (file/dir + scenario): `internal/runtime/session/session_manager_test.go` invalid transitions + duplicate terminal; `test/integration/quick_conformance_test.go` pre-turn reject/defer no terminal; `test/failover/failure_smoke_test.go` authority-precedence checks
+- Done criteria (verifiable): all accepted turns follow canonical transition chain; invalid transition attempts mutate zero authoritative state; `make verify-quick` green
+- Title: WP-02 Plan Freeze Upgrade (remove resolver defaults, freeze CP-derived plan)
+- Feature IDs / WP IDs: `WP-02`, `F-149`, `F-150`, `F-102`, `F-078`, `F-079`, `NF-009`
+- Target paths: `internal/runtime/planresolver`, `internal/runtime/turnarbiter`, `internal/runtime/executor`
+- Dependencies (contracts/other PRs): CP snapshot inputs via `TurnStartBundle`; replay consumers in `internal/observability/replay`
+- Implementation notes (minimal MVP approach): materialize budgets/lane policies/provider bindings from CP bundle inputs instead of hard-coded defaults; keep hash deterministic and replay-visible
+- Tests to add (file/dir + scenario): `internal/runtime/planresolver/resolver_test.go` hash stability and CP-field projection; `test/integration/runtime_chain_test.go` resolved-plan provenance + adaptive actions; `test/replay/rd002_rd003_rd004_test.go` plan/provenance match checks
+- Done criteria (verifiable): resolved plan fields are CP-derived, immutable per turn, and replay-comparable; `go test ./internal/runtime/planresolver ./test/integration ./test/replay`
+- Title: WP-03 Lane Dispatch Scheduler (explicit priority + bounded queue loop)
+- Feature IDs / WP IDs: `WP-03`, `F-043`, `F-044`, `F-142`, `F-143`, `F-144`, `F-145`, `F-147`, `F-148`, `NF-004`
+- Target paths: `internal/runtime/lanes`, `internal/runtime/buffering`, `internal/runtime/flowcontrol`, `internal/runtime/executor`
+- Dependencies (contracts/other PRs): `api/eventabi` lane semantics; admission outcomes in `api/controlplane`
+- Implementation notes (minimal MVP approach): add per-lane bounded queues with strict dispatch precedence and deterministic watermark-driven actions
+- Tests to add (file/dir + scenario): new `internal/runtime/lanes/scheduler_test.go` saturation and preemption; extend `internal/runtime/buffering/pressure_test.go` for deterministic recovery; add integration saturation case under `test/integration`
+- Done criteria (verifiable): control-lane preempts under pressure; no unbounded growth; deterministic shed/degrade signals
+- Title: WP-04 Node Host Completion (registry + hook lifecycle + timeout enforcement)
+- Feature IDs / WP IDs: `WP-04`, `F-011`, `F-012`, `F-036`, `F-037`, `F-134`, `F-137`
+- Target paths: `internal/runtime/nodehost`, `internal/runtime/executor`
+- Dependencies (contracts/other PRs): provider/node contracts in `internal/runtime/provider/contracts`
+- Implementation notes (minimal MVP approach): implement in-process node registry with `init/start/stop/cancel` hook orchestration and hard timeout fallback path
+- Tests to add (file/dir + scenario): new `internal/runtime/nodehost/host_test.go` hook ordering + timeout; extend `test/failover/failure_full_test.go` for forced termination and degrade/fallback paths
+- Done criteria (verifiable): hooks invoked once per instance; timeout -> deterministic terminal/degrade behavior; node crash isolation remains bounded
+- Title: WP-05 State Service (turn/session state classes + idempotency)
+- Feature IDs / WP IDs: `WP-05`, `F-155`, `F-156`, `F-158`, `F-159`, `F-160`, `NF-018`, `NF-027`
+- Target paths: `internal/runtime/state`, `internal/runtime/guard`, `internal/runtime/identity`, `internal/runtime/transport`
+- Dependencies (contracts/other PRs): lease/routing snapshots from control-plane services
+- Implementation notes (minimal MVP approach): add scoped state API (`turn-ephemeral`, `session-hot`) plus epoch gating and idempotency-key dedupe registry
+- Tests to add (file/dir + scenario): new `internal/runtime/state/service_test.go`; extend `test/failover/failure_full_test.go` stale-writer rejection invariants; add reconnect/retry dedupe integration case
+- Done criteria (verifiable): stale-authority outputs accepted = 0 in failover tests; retries/reconnects dedupe deterministically
+- Title: WP-06 + WP-07 Timebase & Sync Integrity Engine
+- Feature IDs / WP IDs: `WP-06`, `WP-07`, `F-146`, `F-150`, `F-152`, `F-153`, `F-154`, `F-176`, `NF-009`, `NF-018`
+- Target paths: `internal/runtime/timebase`, `internal/runtime/sync`, `internal/runtime/buffering`, `internal/runtime/determinism`
+- Dependencies (contracts/other PRs): replay/timeline evidence in `internal/observability/timeline` and `test/replay`
+- Implementation notes (minimal MVP approach): central timebase mapping service (monotonic/wall/media) + sync policy engine (`atomic_drop`, `drop_with_discontinuity`) + deterministic recording downgrade policy
+- Tests to add (file/dir + scenario): new `internal/runtime/timebase/service_test.go` monotonic/skew bounds; new `internal/runtime/sync/engine_test.go`; replay test for deterministic downgrade evidence under pressure
+- Done criteria (verifiable): replay artifacts maintain deterministic ordering/time semantics and required OR-02 evidence across runs
+- Title: WP-08 External Node Runtime Boundary
+- Feature IDs / WP IDs: `WP-08`, `F-121`, `F-122`, `F-123`, `F-124`
+- Target paths: `internal/runtime/externalnode`, `internal/runtime/nodehost`
+- Dependencies (contracts/other PRs): cancellation/fence semantics; security policy stream for sandbox constraints
+- Implementation notes (minimal MVP approach): add minimal out-of-process adapter boundary with cancel propagation, timeout budget, and per-node resource limits
+- Tests to add (file/dir + scenario): new `internal/runtime/externalnode/runtime_test.go` timeout/cancel/resource-limit behavior; integration test for deterministic cancellation + telemetry injection
+- Done criteria (verifiable): external node path deterministic under cancel/failure; bounded resources enforced; `go test ./internal/runtime/...` and `make verify-quick` pass
+- Title: Runtime Admission & Execution Pool Hardening (MVP scope)
+- Feature IDs / WP IDs: `F-049`, `F-050`, `F-103`, `F-105`, `F-109`, `NF-024`, `NF-038`
+- Target paths: `internal/runtime/localadmission`, `internal/runtime/executionpool`, `internal/runtime/executor`
+- Dependencies (contracts/other PRs): control-plane quota/fairness policy inputs
+- Implementation notes (minimal MVP approach): extend local admission with deterministic tenant/session quota keys and tighten pooled scheduling behavior under overload; keep broader fairness scheduling as post-MVP follow-on.
+- Tests to add (file/dir + scenario): `internal/runtime/localadmission/localadmission_test.go` admission reject/defer by quota key; `internal/runtime/executionpool/pool_test.go` bounded queue rejection/drain behavior; overload integration scenario under `test/integration`
+- Done criteria (verifiable): overload paths deterministically reject/defer when limits are hit, pooled execution remains bounded, and quick-gate latency checks remain within target
+- Risks & pitfalls (tail latency, determinism, race, compatibility):
+- Tail latency: no unified lane-priority queue loop yet; control bursts can still indirectly affect data-path timing
+- Determinism drift: `planresolver` still injects defaults, so CP/runtime/replay provenance parity is weaker than target
+- Race/memory: cancel fence is in-memory map only, with no scope TTL/cleanup policy
+- Compatibility: scaffold modules (`state`, `timebase`, `sync`, `externalnode`, `session`) create gaps against guide invariants and conformance expectations
+- Suggested “owner stream” (which workstream should implement it)
+- Primary: Runtime Kernel stream (`runtime-lifecycle`, `runtime-scheduling`, `runtime-state-authority`, `runtime-extensibility`); cross-stream review from control-plane and observability/replay owners

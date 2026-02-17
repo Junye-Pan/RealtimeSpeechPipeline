@@ -1,0 +1,21 @@
+{
+  "schema_version": "rspp.policy.bundle.v1",
+  "policy_resolution_snapshot": "policy-resolution/v1",
+  "allowed_adaptive_actions": [
+    "retry",
+    "provider_switch",
+    "fallback"
+  ],
+  "provider_bindings": {
+    "stt": "stt-deepgram",
+    "llm": "llm-anthropic",
+    "tts": "tts-elevenlabs"
+  },
+  "recording_policy": {
+    "recording_level": "L0",
+    "allowed_replay_modes": [
+      "audit",
+      "regression"
+    ]
+  }
+}

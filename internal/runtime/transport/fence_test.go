@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/tiger/realtime-speech-pipeline/internal/observability/telemetry"
+	"github.com/tiger/realtime-speech-pipeline/internal/runtime/state"
 )
 
 func TestCF002LateOutputAfterCancelIsFenced(t *testing.T) {
@@ -104,17 +105,78 @@ func TestEvaluateOutputEmitsTelemetryEvents(t *testing.T) {
 		if event.Correlation.SessionID != "sess-rk22-telemetry-1" {
 			continue
 		}
+		if event.Correlation.NodeID != "transport_fence" || event.Correlation.EdgeID != "transport/egress" {
+			t.Fatalf("expected node/edge correlation IDs, got %+v", event.Correlation)
+		}
 		if event.Kind == telemetry.EventKindMetric && event.Metric != nil && event.Metric.Name == telemetry.MetricCancelLatencyMS {
+			if event.Metric.Attributes["node_id"] != "transport_fence" || event.Metric.Attributes["edge_id"] != "transport/egress" {
+				t.Fatalf("expected node/edge metric linkage labels, got %+v", event.Metric.Attributes)
+			}
 			cancelMetric = true
 		}
 		if event.Kind == telemetry.EventKindSpan && event.Span != nil && event.Span.Name == "node_span" {
+			if event.Span.Attributes["node_type"] != "transport_fence" {
+				t.Fatalf("expected node_type span linkage label, got %+v", event.Span.Attributes)
+			}
 			nodeSpan = true
 		}
 		if event.Kind == telemetry.EventKindLog && event.Log != nil && event.Log.Name == "output_fence_decision" {
+			if event.Log.Attributes["node_id"] != "transport_fence" || event.Log.Attributes["edge_id"] != "transport/egress" {
+				t.Fatalf("expected node/edge log linkage labels, got %+v", event.Log.Attributes)
+			}
 			decisionLog = true
 		}
 	}
 	if !cancelMetric || !nodeSpan || !decisionLog {
 		t.Fatalf("expected output-fence telemetry events, got cancel_latency=%v node_span=%v decision_log=%v", cancelMetric, nodeSpan, decisionLog)
+	}
+}
+
+func TestEvaluateOutputRejectsStaleAuthorityEpoch(t *testing.T) {
+	t.Parallel()
+
+	stateSvc := state.NewService()
+	if err := stateSvc.ValidateAuthority("sess-rk22-authority-1", 9); err != nil {
+		t.Fatalf("seed authority epoch: %v", err)
+	}
+	fence := NewOutputFenceWithDependencies(nil, stateSvc)
+
+	stale, err := fence.EvaluateOutput(OutputAttempt{
+		SessionID:            "sess-rk22-authority-1",
+		TurnID:               "turn-rk22-authority-1",
+		PipelineVersion:      "pipeline-v1",
+		EventID:              "evt-rk22-stale-1",
+		TransportSequence:    1,
+		RuntimeSequence:      1,
+		AuthorityEpoch:       8,
+		RuntimeTimestampMS:   100,
+		WallClockTimestampMS: 100,
+	})
+	if err != nil {
+		t.Fatalf("evaluate stale authority output: %v", err)
+	}
+	if stale.Accepted {
+		t.Fatalf("expected stale authority output to be rejected")
+	}
+	if stale.Signal.Signal != "stale_epoch_reject" || stale.Signal.EmittedBy != "RK-24" {
+		t.Fatalf("expected stale_epoch_reject emitted by RK-24, got %+v", stale.Signal)
+	}
+
+	fresh, err := fence.EvaluateOutput(OutputAttempt{
+		SessionID:            "sess-rk22-authority-1",
+		TurnID:               "turn-rk22-authority-1",
+		PipelineVersion:      "pipeline-v1",
+		EventID:              "evt-rk22-fresh-1",
+		TransportSequence:    2,
+		RuntimeSequence:      2,
+		AuthorityEpoch:       10,
+		RuntimeTimestampMS:   101,
+		WallClockTimestampMS: 101,
+	})
+	if err != nil {
+		t.Fatalf("evaluate fresh authority output: %v", err)
+	}
+	if !fresh.Accepted || fresh.Signal.Signal != "output_accepted" {
+		t.Fatalf("expected fresh authority output to be accepted, got %+v", fresh)
 	}
 }

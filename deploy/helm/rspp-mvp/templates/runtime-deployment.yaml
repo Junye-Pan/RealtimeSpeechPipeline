@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rspp-runtime
+  namespace: {{ .Values.namespace }}
+spec:
+  replicas: {{ .Values.runtime.replicas }}
+  selector:
+    matchLabels:
+      app: rspp-runtime
+  template:
+    metadata:
+      labels:
+        app: rspp-runtime
+    spec:
+      containers:
+      - name: rspp-runtime
+        image: {{ .Values.runtime.image }}
+        args:
+        - "--mode=runtime"

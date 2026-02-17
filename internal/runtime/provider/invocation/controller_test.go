@@ -6,6 +6,7 @@ import (
 
 	"github.com/tiger/realtime-speech-pipeline/internal/observability/telemetry"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/contracts"
+	providerpolicy "github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/policy"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/registry"
 )
 
@@ -348,6 +349,8 @@ func TestInvokeEmitsTelemetryEvents(t *testing.T) {
 		AuthorityEpoch:       1,
 		RuntimeTimestampMS:   10,
 		WallClockTimestampMS: 10,
+		NodeID:               "node-rk11-1",
+		EdgeID:               "edge-rk11-1",
 	})
 	if err != nil {
 		t.Fatalf("unexpected invoke error: %v", err)
@@ -363,18 +366,148 @@ func TestInvokeEmitsTelemetryEvents(t *testing.T) {
 		if event.Correlation.SessionID != "sess-rk11-telemetry-1" {
 			continue
 		}
+		if event.Correlation.NodeID != "node-rk11-1" || event.Correlation.EdgeID != "edge-rk11-1" {
+			t.Fatalf("expected node/edge correlation IDs, got %+v", event.Correlation)
+		}
 		if event.Kind == telemetry.EventKindMetric && event.Metric != nil && event.Metric.Name == telemetry.MetricProviderRTTMS {
+			if event.Metric.Attributes["node_id"] != "node-rk11-1" || event.Metric.Attributes["edge_id"] != "edge-rk11-1" {
+				t.Fatalf("expected node/edge metric linkage labels, got %+v", event.Metric.Attributes)
+			}
 			metricFound = true
 		}
 		if event.Kind == telemetry.EventKindSpan && event.Span != nil && event.Span.Name == "provider_invocation_span" {
+			if event.Span.Attributes["node_id"] != "node-rk11-1" || event.Span.Attributes["edge_id"] != "edge-rk11-1" {
+				t.Fatalf("expected node/edge span linkage labels, got %+v", event.Span.Attributes)
+			}
 			spanFound = true
 		}
 		if event.Kind == telemetry.EventKindLog && event.Log != nil && event.Log.Name == "provider_invocation_attempt" {
+			if event.Log.Attributes["node_id"] != "node-rk11-1" || event.Log.Attributes["edge_id"] != "edge-rk11-1" {
+				t.Fatalf("expected node/edge log linkage labels, got %+v", event.Log.Attributes)
+			}
 			logFound = true
 		}
 	}
 	if !metricFound || !spanFound || !logFound {
 		t.Fatalf("expected provider invocation telemetry events, got metric=%v span=%v log=%v", metricFound, spanFound, logFound)
+	}
+}
+
+func TestInvokeUsesResolvedProviderPlanOrderingAndRefs(t *testing.T) {
+	t.Parallel()
+
+	catalog, err := registry.NewCatalog([]contracts.Adapter{
+		contracts.StaticAdapter{
+			ID:   "stt-a",
+			Mode: contracts.ModalitySTT,
+			InvokeFn: func(req contracts.InvocationRequest) (contracts.Outcome, error) {
+				return contracts.Outcome{
+					Class:     contracts.OutcomeTimeout,
+					Retryable: true,
+					Reason:    "provider_timeout",
+				}, nil
+			},
+		},
+		contracts.StaticAdapter{
+			ID:   "stt-b",
+			Mode: contracts.ModalitySTT,
+			InvokeFn: func(req contracts.InvocationRequest) (contracts.Outcome, error) {
+				return contracts.Outcome{Class: contracts.OutcomeSuccess}, nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected catalog error: %v", err)
+	}
+
+	controller := NewControllerWithConfig(catalog, Config{MaxAttemptsPerProvider: 3})
+	result, err := controller.Invoke(InvocationInput{
+		SessionID:         "sess-rk11-plan-1",
+		TurnID:            "turn-rk11-plan-1",
+		PipelineVersion:   "pipeline-v1",
+		EventID:           "evt-rk11-plan-1",
+		Modality:          contracts.ModalitySTT,
+		PreferredProvider: "stt-a",
+		ResolvedProviderPlan: &providerpolicy.ResolvedProviderPlan{
+			OrderedCandidates:      []string{"stt-b", "stt-a"},
+			MaxAttemptsPerProvider: 2,
+			AllowedActions:         []string{"retry"},
+			PolicySnapshotRef:      "policy-resolution/v2",
+			CapabilitySnapshotRef:  "provider-health/v2",
+			RoutingReason:          "rule:tenant",
+			SignalSource:           "capability_snapshot",
+		},
+		TransportSequence:    1,
+		RuntimeSequence:      1,
+		AuthorityEpoch:       1,
+		RuntimeTimestampMS:   10,
+		WallClockTimestampMS: 10,
+	})
+	if err != nil {
+		t.Fatalf("unexpected invoke error: %v", err)
+	}
+	if result.SelectedProvider != "stt-b" {
+		t.Fatalf("expected resolved plan ordering to choose stt-b first, got %s", result.SelectedProvider)
+	}
+	if result.PolicySnapshotRef != "policy-resolution/v2" || result.CapabilitySnapshotRef != "provider-health/v2" {
+		t.Fatalf("expected snapshot refs on invocation result, got policy=%q capability=%q", result.PolicySnapshotRef, result.CapabilitySnapshotRef)
+	}
+	if result.RoutingReason != "rule:tenant" || result.SignalSource != "capability_snapshot" {
+		t.Fatalf("expected routing metadata from resolved plan, got reason=%q source=%q", result.RoutingReason, result.SignalSource)
+	}
+}
+
+func TestInvokeRespectsResolvedPlanAttemptBudget(t *testing.T) {
+	t.Parallel()
+
+	catalog, err := registry.NewCatalog([]contracts.Adapter{
+		contracts.StaticAdapter{
+			ID:   "stt-budget",
+			Mode: contracts.ModalitySTT,
+			InvokeFn: func(req contracts.InvocationRequest) (contracts.Outcome, error) {
+				return contracts.Outcome{
+					Class:     contracts.OutcomeTimeout,
+					Retryable: true,
+					Reason:    "provider_timeout",
+				}, nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected catalog error: %v", err)
+	}
+
+	controller := NewControllerWithConfig(catalog, Config{MaxAttemptsPerProvider: 3})
+	result, err := controller.Invoke(InvocationInput{
+		SessionID:         "sess-rk11-budget-1",
+		TurnID:            "turn-rk11-budget-1",
+		PipelineVersion:   "pipeline-v1",
+		EventID:           "evt-rk11-budget-1",
+		Modality:          contracts.ModalitySTT,
+		PreferredProvider: "stt-budget",
+		ResolvedProviderPlan: &providerpolicy.ResolvedProviderPlan{
+			OrderedCandidates:      []string{"stt-budget"},
+			MaxAttemptsPerProvider: 3,
+			AllowedActions:         []string{"retry"},
+			Budget: providerpolicy.Budget{
+				MaxTotalAttempts: 1,
+			},
+		},
+		AllowedAdaptiveActions: []string{"unsupported_action_that_should_be_ignored"},
+		TransportSequence:      1,
+		RuntimeSequence:        1,
+		AuthorityEpoch:         1,
+		RuntimeTimestampMS:     20,
+		WallClockTimestampMS:   20,
+	})
+	if err != nil {
+		t.Fatalf("unexpected invoke error: %v", err)
+	}
+	if len(result.Attempts) != 1 {
+		t.Fatalf("expected exactly one attempt due to max_total_attempts budget, got %d", len(result.Attempts))
+	}
+	if result.Outcome.Class != contracts.OutcomeTimeout {
+		t.Fatalf("expected timeout outcome after single budgeted attempt, got %s", result.Outcome.Class)
 	}
 }
 

@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
+	"github.com/tiger/realtime-speech-pipeline/internal/observability/telemetry"
+	telemetrycontext "github.com/tiger/realtime-speech-pipeline/internal/observability/telemetry/context"
 	"github.com/tiger/realtime-speech-pipeline/internal/observability/timeline"
 	runtimeflowcontrol "github.com/tiger/realtime-speech-pipeline/internal/runtime/flowcontrol"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/provider/contracts"
@@ -671,7 +673,7 @@ func shouldTriggerPartial(text string, minChars int) bool {
 }
 
 func appendHandoffEvidenceIfPossible(appender HandoffEdgeAppender, in SchedulingInput, handoffs []StreamingHandoffEdgeResult) {
-	if appender == nil || len(handoffs) == 0 {
+	if len(handoffs) == 0 {
 		return
 	}
 	eventID := in.EventID
@@ -684,6 +686,35 @@ func appendHandoffEvidenceIfPossible(appender HandoffEdgeAppender, in Scheduling
 
 	entries := make([]timeline.HandoffEdgeEvidence, 0, len(handoffs))
 	for _, handoff := range handoffs {
+		correlation, err := telemetrycontext.Resolve(telemetrycontext.ResolveInput{
+			SessionID:            in.SessionID,
+			TurnID:               in.TurnID,
+			EventID:              eventID,
+			PipelineVersion:      pipelineVersion,
+			NodeID:               "streaming_handoff",
+			EdgeID:               handoff.Edge,
+			AuthorityEpoch:       nonNegative(in.AuthorityEpoch),
+			Lane:                 eventabi.LaneTelemetry,
+			EmittedBy:            "OR-01",
+			RuntimeTimestampMS:   nonNegative(handoff.DownstreamStartedAtMS),
+			WallClockTimestampMS: wallClockTS,
+		})
+		if err == nil {
+			telemetry.DefaultEmitter().EmitMetric(
+				telemetry.MetricEdgeLatencyMS,
+				float64(nonNegative(handoff.HandoffLatencyMS)),
+				"ms",
+				map[string]string{
+					"edge_id":        handoff.Edge,
+					"action":         handoff.Action,
+					"watermark_high": strconv.FormatBool(handoff.WatermarkHigh),
+				},
+				correlation,
+			)
+		}
+		if appender == nil {
+			continue
+		}
 		entries = append(entries, timeline.HandoffEdgeEvidence{
 			SessionID:             in.SessionID,
 			TurnID:                in.TurnID,
@@ -701,6 +732,9 @@ func appendHandoffEvidenceIfPossible(appender HandoffEdgeAppender, in Scheduling
 			RuntimeTimestampMS:    runtimeTS,
 			WallClockTimestampMS:  wallClockTS,
 		})
+	}
+	if appender == nil || len(entries) == 0 {
+		return
 	}
 	_ = appender.AppendHandoffEdges(entries)
 }

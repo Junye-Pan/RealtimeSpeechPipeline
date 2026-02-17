@@ -3,6 +3,10 @@ package controlplane
 import (
 	"fmt"
 	"regexp"
+	"strings"
+	"time"
+
+	obs "github.com/tiger/realtime-speech-pipeline/api/observability"
 )
 
 // OutcomeKind mirrors docs/ContractArtifacts.schema.json decision_outcome.outcome_kind.
@@ -57,6 +61,7 @@ type DecisionOutcome struct {
 	EventID            string         `json:"event_id"`
 	RuntimeTimestampMS int64          `json:"runtime_timestamp_ms"`
 	WallClockMS        int64          `json:"wall_clock_timestamp_ms"`
+	TimestampMS        *int64         `json:"timestamp_ms,omitempty"`
 	EmittedBy          OutcomeEmitter `json:"emitted_by"`
 	AuthorityEpoch     *int64         `json:"authority_epoch,omitempty"`
 	Reason             string         `json:"reason"`
@@ -71,6 +76,9 @@ func (d DecisionOutcome) Validate() error {
 	}
 	if d.RuntimeTimestampMS < 0 || d.WallClockMS < 0 {
 		return fmt.Errorf("timestamps must be >= 0")
+	}
+	if d.TimestampMS != nil && *d.TimestampMS < 0 {
+		return fmt.Errorf("timestamp_ms must be >=0")
 	}
 
 	switch d.OutcomeKind {
@@ -275,6 +283,9 @@ func (s SyncDropPolicy) Validate() error {
 	if !inStringSet(s.Scope, []string{"edge_local", "plan_wide"}) {
 		return fmt.Errorf("invalid sync_drop_policy.scope")
 	}
+	if s.GroupBy != "" && !inStringSet(s.GroupBy, []string{"sync_id", "event_id", "custom"}) {
+		return fmt.Errorf("invalid sync_drop_policy.group_by")
+	}
 	if (s.Policy == "atomic_drop" || s.Policy == "drop_with_discontinuity") && s.GroupBy == "" {
 		return fmt.Errorf("sync_drop_policy.group_by is required for policy %s", s.Policy)
 	}
@@ -335,6 +346,22 @@ type Budgets struct {
 func (b Budgets) Validate() error {
 	if b.TurnBudgetMS < 1 || b.NodeBudgetMSDefault < 1 || b.PathBudgetMSDefault < 1 || b.EdgeBudgetMSDefault < 1 {
 		return fmt.Errorf("all budget defaults must be >=1")
+	}
+	return nil
+}
+
+// NodeExecutionPolicy captures CP-originated node-level execution fairness/concurrency settings.
+type NodeExecutionPolicy struct {
+	ConcurrencyLimit int    `json:"concurrency_limit,omitempty"`
+	FairnessKey      string `json:"fairness_key,omitempty"`
+}
+
+func (p NodeExecutionPolicy) Validate() error {
+	if p.ConcurrencyLimit < 0 {
+		return fmt.Errorf("node_execution_policies.*.concurrency_limit must be >=0")
+	}
+	if p.FairnessKey != "" && strings.TrimSpace(p.FairnessKey) == "" {
+		return fmt.Errorf("node_execution_policies.*.fairness_key must not be whitespace")
 	}
 	return nil
 }
@@ -447,7 +474,7 @@ func (r RecordingPolicy) Validate() error {
 	}
 	seen := map[string]struct{}{}
 	for _, mode := range r.AllowedReplayModes {
-		if !inStringSet(mode, []string{"re_simulate_nodes", "playback_recorded_provider_outputs", "replay_decisions", "recompute_decisions"}) {
+		if !obs.IsReplayMode(mode) {
 			return fmt.Errorf("invalid replay mode: %s", mode)
 		}
 		if _, ok := seen[mode]; ok {
@@ -574,21 +601,22 @@ func (p StreamingHandoffPolicy) Validate() error {
 
 // ResolvedTurnPlan is the immutable turn-start artifact.
 type ResolvedTurnPlan struct {
-	TurnID                 string                      `json:"turn_id"`
-	PipelineVersion        string                      `json:"pipeline_version"`
-	PlanHash               string                      `json:"plan_hash"`
-	GraphDefinitionRef     string                      `json:"graph_definition_ref"`
-	ExecutionProfile       string                      `json:"execution_profile"`
-	AuthorityEpoch         int64                       `json:"authority_epoch"`
-	Budgets                Budgets                     `json:"budgets"`
-	ProviderBindings       map[string]string           `json:"provider_bindings"`
-	EdgeBufferPolicies     map[string]EdgeBufferPolicy `json:"edge_buffer_policies"`
-	FlowControl            FlowControl                 `json:"flow_control"`
-	AllowedAdaptiveActions []string                    `json:"allowed_adaptive_actions"`
-	SnapshotProvenance     SnapshotProvenance          `json:"snapshot_provenance"`
-	RecordingPolicy        RecordingPolicy             `json:"recording_policy"`
-	Determinism            Determinism                 `json:"determinism"`
-	StreamingHandoff       *StreamingHandoffPolicy     `json:"streaming_handoff,omitempty"`
+	TurnID                 string                         `json:"turn_id"`
+	PipelineVersion        string                         `json:"pipeline_version"`
+	PlanHash               string                         `json:"plan_hash"`
+	GraphDefinitionRef     string                         `json:"graph_definition_ref"`
+	ExecutionProfile       string                         `json:"execution_profile"`
+	AuthorityEpoch         int64                          `json:"authority_epoch"`
+	Budgets                Budgets                        `json:"budgets"`
+	ProviderBindings       map[string]string              `json:"provider_bindings"`
+	EdgeBufferPolicies     map[string]EdgeBufferPolicy    `json:"edge_buffer_policies"`
+	NodeExecutionPolicies  map[string]NodeExecutionPolicy `json:"node_execution_policies,omitempty"`
+	FlowControl            FlowControl                    `json:"flow_control"`
+	AllowedAdaptiveActions []string                       `json:"allowed_adaptive_actions"`
+	SnapshotProvenance     SnapshotProvenance             `json:"snapshot_provenance"`
+	RecordingPolicy        RecordingPolicy                `json:"recording_policy"`
+	Determinism            Determinism                    `json:"determinism"`
+	StreamingHandoff       *StreamingHandoffPolicy        `json:"streaming_handoff,omitempty"`
 }
 
 func (p ResolvedTurnPlan) Validate() error {
@@ -623,6 +651,14 @@ func (p ResolvedTurnPlan) Validate() error {
 			return err
 		}
 	}
+	for nodeID, policy := range p.NodeExecutionPolicies {
+		if nodeID == "" {
+			return fmt.Errorf("node_execution_policies key cannot be empty")
+		}
+		if err := policy.Validate(); err != nil {
+			return err
+		}
+	}
 	if err := p.FlowControl.Validate(); err != nil {
 		return err
 	}
@@ -652,6 +688,287 @@ func (p ResolvedTurnPlan) Validate() error {
 		if err := p.StreamingHandoff.Validate(); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// TransportEndpointRef describes a transport-specific runtime endpoint.
+type TransportEndpointRef struct {
+	TransportKind string `json:"transport_kind"`
+	Endpoint      string `json:"endpoint"`
+	Region        string `json:"region,omitempty"`
+	RuntimeID     string `json:"runtime_id,omitempty"`
+}
+
+func (t TransportEndpointRef) Validate() error {
+	if t.TransportKind == "" {
+		return fmt.Errorf("transport_kind is required")
+	}
+	if t.Endpoint == "" {
+		return fmt.Errorf("endpoint is required")
+	}
+	return nil
+}
+
+// LeaseTokenRef describes the lease-token metadata bound to a placement decision.
+type LeaseTokenRef struct {
+	TokenID      string `json:"token_id"`
+	ExpiresAtUTC string `json:"expires_at_utc"`
+}
+
+func (l LeaseTokenRef) Validate() error {
+	if l.TokenID == "" {
+		return fmt.Errorf("token_id is required")
+	}
+	if l.ExpiresAtUTC == "" {
+		return fmt.Errorf("expires_at_utc is required")
+	}
+	if _, err := time.Parse(time.RFC3339, l.ExpiresAtUTC); err != nil {
+		return fmt.Errorf("invalid expires_at_utc: %w", err)
+	}
+	return nil
+}
+
+// PlacementLease captures authority metadata for a resolved session route.
+type PlacementLease struct {
+	AuthorityEpoch int64         `json:"authority_epoch"`
+	Granted        bool          `json:"granted"`
+	Valid          bool          `json:"valid"`
+	TokenRef       LeaseTokenRef `json:"token_ref"`
+}
+
+func (p PlacementLease) Validate() error {
+	if p.AuthorityEpoch < 0 {
+		return fmt.Errorf("authority_epoch must be >=0")
+	}
+	if err := p.TokenRef.Validate(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// SessionRoute is the client-consumable route contract returned at bootstrap.
+type SessionRoute struct {
+	TenantID                string               `json:"tenant_id"`
+	SessionID               string               `json:"session_id"`
+	PipelineVersion         string               `json:"pipeline_version"`
+	RoutingViewSnapshot     string               `json:"routing_view_snapshot"`
+	AdmissionPolicySnapshot string               `json:"admission_policy_snapshot"`
+	Endpoint                TransportEndpointRef `json:"endpoint"`
+	Lease                   PlacementLease       `json:"lease"`
+}
+
+func (s SessionRoute) Validate() error {
+	if s.TenantID == "" {
+		return fmt.Errorf("tenant_id is required")
+	}
+	if s.SessionID == "" {
+		return fmt.Errorf("session_id is required")
+	}
+	if s.PipelineVersion == "" {
+		return fmt.Errorf("pipeline_version is required")
+	}
+	if s.RoutingViewSnapshot == "" {
+		return fmt.Errorf("routing_view_snapshot is required")
+	}
+	if s.AdmissionPolicySnapshot == "" {
+		return fmt.Errorf("admission_policy_snapshot is required")
+	}
+	if err := s.Endpoint.Validate(); err != nil {
+		return err
+	}
+	if err := s.Lease.Validate(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// SessionTokenClaims are token claims required by transport adapters/runtime.
+type SessionTokenClaims struct {
+	TenantID        string `json:"tenant_id"`
+	SessionID       string `json:"session_id"`
+	PipelineVersion string `json:"pipeline_version"`
+	TransportKind   string `json:"transport_kind"`
+	AuthorityEpoch  int64  `json:"authority_epoch"`
+	IssuedAtUTC     string `json:"issued_at_utc"`
+	ExpiresAtUTC    string `json:"expires_at_utc"`
+}
+
+func (s SessionTokenClaims) Validate() error {
+	if s.TenantID == "" {
+		return fmt.Errorf("tenant_id is required")
+	}
+	if s.SessionID == "" {
+		return fmt.Errorf("session_id is required")
+	}
+	if s.PipelineVersion == "" {
+		return fmt.Errorf("pipeline_version is required")
+	}
+	if s.TransportKind == "" {
+		return fmt.Errorf("transport_kind is required")
+	}
+	if s.AuthorityEpoch < 0 {
+		return fmt.Errorf("authority_epoch must be >=0")
+	}
+	issuedAt, err := time.Parse(time.RFC3339, s.IssuedAtUTC)
+	if err != nil {
+		return fmt.Errorf("invalid issued_at_utc: %w", err)
+	}
+	expiresAt, err := time.Parse(time.RFC3339, s.ExpiresAtUTC)
+	if err != nil {
+		return fmt.Errorf("invalid expires_at_utc: %w", err)
+	}
+	if !expiresAt.After(issuedAt) {
+		return fmt.Errorf("expires_at_utc must be after issued_at_utc")
+	}
+	return nil
+}
+
+// SignedSessionToken is the token payload returned to clients.
+type SignedSessionToken struct {
+	Token        string             `json:"token"`
+	TokenID      string             `json:"token_id"`
+	ExpiresAtUTC string             `json:"expires_at_utc"`
+	Claims       SessionTokenClaims `json:"claims"`
+}
+
+func (s SignedSessionToken) Validate() error {
+	if s.Token == "" {
+		return fmt.Errorf("token is required")
+	}
+	if s.TokenID == "" {
+		return fmt.Errorf("token_id is required")
+	}
+	if s.ExpiresAtUTC == "" {
+		return fmt.Errorf("expires_at_utc is required")
+	}
+	if _, err := time.Parse(time.RFC3339, s.ExpiresAtUTC); err != nil {
+		return fmt.Errorf("invalid expires_at_utc: %w", err)
+	}
+	if err := s.Claims.Validate(); err != nil {
+		return err
+	}
+	if s.Claims.ExpiresAtUTC != s.ExpiresAtUTC {
+		return fmt.Errorf("claims.expires_at_utc must match token expires_at_utc")
+	}
+	if s.Claims.SessionID == "" {
+		return fmt.Errorf("claims.session_id is required")
+	}
+	return nil
+}
+
+// SessionStatus is the control-plane session lifecycle status exposed to operations.
+type SessionStatus string
+
+const (
+	SessionStatusConnected SessionStatus = "connected"
+	SessionStatusRunning   SessionStatus = "running"
+	SessionStatusDegraded  SessionStatus = "degraded"
+	SessionStatusEnded     SessionStatus = "ended"
+)
+
+func (s SessionStatus) Validate() error {
+	switch s {
+	case SessionStatusConnected, SessionStatusRunning, SessionStatusDegraded, SessionStatusEnded:
+		return nil
+	default:
+		return fmt.Errorf("invalid session status: %s", s)
+	}
+}
+
+// SessionStatusView is the status response contract for operations.
+type SessionStatusView struct {
+	TenantID        string        `json:"tenant_id"`
+	SessionID       string        `json:"session_id"`
+	Status          SessionStatus `json:"status"`
+	PipelineVersion string        `json:"pipeline_version,omitempty"`
+	AuthorityEpoch  int64         `json:"authority_epoch,omitempty"`
+	UpdatedAtUTC    string        `json:"updated_at_utc"`
+	LastReason      string        `json:"last_reason,omitempty"`
+}
+
+func (s SessionStatusView) Validate() error {
+	if s.TenantID == "" {
+		return fmt.Errorf("tenant_id is required")
+	}
+	if s.SessionID == "" {
+		return fmt.Errorf("session_id is required")
+	}
+	if err := s.Status.Validate(); err != nil {
+		return err
+	}
+	if s.UpdatedAtUTC == "" {
+		return fmt.Errorf("updated_at_utc is required")
+	}
+	if _, err := time.Parse(time.RFC3339, s.UpdatedAtUTC); err != nil {
+		return fmt.Errorf("invalid updated_at_utc: %w", err)
+	}
+	if s.AuthorityEpoch < 0 {
+		return fmt.Errorf("authority_epoch must be >=0")
+	}
+	return nil
+}
+
+// SessionRouteRequest defines control-plane request input for route resolution.
+type SessionRouteRequest struct {
+	TenantID                 string `json:"tenant_id"`
+	SessionID                string `json:"session_id"`
+	RequestedPipelineVersion string `json:"requested_pipeline_version,omitempty"`
+	TransportKind            string `json:"transport_kind,omitempty"`
+	RequestedAuthorityEpoch  int64  `json:"requested_authority_epoch,omitempty"`
+}
+
+func (r SessionRouteRequest) Validate() error {
+	if r.TenantID == "" {
+		return fmt.Errorf("tenant_id is required")
+	}
+	if r.SessionID == "" {
+		return fmt.Errorf("session_id is required")
+	}
+	if r.RequestedAuthorityEpoch < 0 {
+		return fmt.Errorf("requested_authority_epoch must be >=0")
+	}
+	return nil
+}
+
+// SessionTokenRequest defines control-plane request input for token issuance.
+type SessionTokenRequest struct {
+	TenantID                 string `json:"tenant_id"`
+	SessionID                string `json:"session_id"`
+	RequestedPipelineVersion string `json:"requested_pipeline_version,omitempty"`
+	TransportKind            string `json:"transport_kind,omitempty"`
+	RequestedAuthorityEpoch  int64  `json:"requested_authority_epoch,omitempty"`
+	TTLSeconds               int    `json:"ttl_seconds,omitempty"`
+}
+
+func (r SessionTokenRequest) Validate() error {
+	if r.TenantID == "" {
+		return fmt.Errorf("tenant_id is required")
+	}
+	if r.SessionID == "" {
+		return fmt.Errorf("session_id is required")
+	}
+	if r.RequestedAuthorityEpoch < 0 {
+		return fmt.Errorf("requested_authority_epoch must be >=0")
+	}
+	if r.TTLSeconds < 0 {
+		return fmt.Errorf("ttl_seconds must be >=0")
+	}
+	return nil
+}
+
+// SessionStatusRequest defines control-plane request input for session status lookup.
+type SessionStatusRequest struct {
+	TenantID  string `json:"tenant_id"`
+	SessionID string `json:"session_id"`
+}
+
+func (r SessionStatusRequest) Validate() error {
+	if r.TenantID == "" {
+		return fmt.Errorf("tenant_id is required")
+	}
+	if r.SessionID == "" {
+		return fmt.Errorf("session_id is required")
 	}
 	return nil
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/tiger/realtime-speech-pipeline/internal/observability/timeline"
 	runtimeeventabi "github.com/tiger/realtime-speech-pipeline/internal/runtime/eventabi"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/prelude"
+	"github.com/tiger/realtime-speech-pipeline/internal/runtime/session"
 	runtimetransport "github.com/tiger/realtime-speech-pipeline/internal/runtime/transport"
 	"github.com/tiger/realtime-speech-pipeline/internal/runtime/turnarbiter"
 )
@@ -107,11 +108,11 @@ type Dependencies struct {
 
 // Adapter maps transport events into RK-22/RK-23 and arbiter contract surfaces.
 type Adapter struct {
-	cfg     Config
-	now     func() time.Time
-	arbiter turnarbiter.Arbiter
-	prelude prelude.Engine
-	fence   *runtimetransport.OutputFence
+	cfg       Config
+	now       func() time.Time
+	prelude   prelude.Engine
+	lifecycle *session.Orchestrator
+	fence     *runtimetransport.OutputFence
 }
 
 // NewAdapter constructs a deterministic LiveKit transport adapter.
@@ -139,13 +140,17 @@ func NewAdapter(cfg Config, deps Dependencies) (Adapter, error) {
 		}
 		deps.Arbiter = arbiter
 	}
+	lifecycle, err := session.NewOrchestrator(cfg.SessionID, deps.Arbiter)
+	if err != nil {
+		return Adapter{}, err
+	}
 
 	return Adapter{
-		cfg:     cfg,
-		now:     deps.Now,
-		arbiter: deps.Arbiter,
-		prelude: deps.Prelude,
-		fence:   deps.OutputFence,
+		cfg:       cfg,
+		now:       deps.Now,
+		prelude:   deps.Prelude,
+		lifecycle: lifecycle,
+		fence:     deps.OutputFence,
 	}, nil
 }
 
@@ -209,7 +214,7 @@ func (a Adapter) Process(ctx context.Context, events []Event) (Report, error) {
 				return report, err
 			}
 
-			openResult, err := a.arbiter.HandleTurnOpenProposed(turnarbiter.OpenRequest{
+			openResult, err := a.lifecycle.HandleTurnOpen(turnarbiter.OpenRequest{
 				SessionID:             ev.SessionID,
 				TurnID:                ev.TurnID,
 				EventID:               proposal.Signal.EventID,
@@ -269,7 +274,7 @@ func (a Adapter) Process(ctx context.Context, events []Event) (Report, error) {
 			})
 
 		case EventCancel:
-			activeResult, err := a.arbiter.HandleActive(turnarbiter.ActiveInput{
+			activeResult, err := a.lifecycle.HandleActive(turnarbiter.ActiveInput{
 				SessionID:            ev.SessionID,
 				TurnID:               ev.TurnID,
 				EventID:              ev.EventID,
@@ -310,7 +315,7 @@ func (a Adapter) Process(ctx context.Context, events []Event) (Report, error) {
 			})
 
 		case EventAuthorityRevoked:
-			activeResult, err := a.arbiter.HandleActive(turnarbiter.ActiveInput{
+			activeResult, err := a.lifecycle.HandleActive(turnarbiter.ActiveInput{
 				SessionID:            ev.SessionID,
 				TurnID:               ev.TurnID,
 				EventID:              ev.EventID,
@@ -335,7 +340,7 @@ func (a Adapter) Process(ctx context.Context, events []Event) (Report, error) {
 			})
 
 		case EventTransportDisconnect:
-			activeResult, err := a.arbiter.HandleActive(turnarbiter.ActiveInput{
+			activeResult, err := a.lifecycle.HandleActive(turnarbiter.ActiveInput{
 				SessionID:                  ev.SessionID,
 				TurnID:                     ev.TurnID,
 				EventID:                    ev.EventID,
@@ -360,7 +365,7 @@ func (a Adapter) Process(ctx context.Context, events []Event) (Report, error) {
 			})
 
 		case EventTerminalSuccess:
-			activeResult, err := a.arbiter.HandleActive(turnarbiter.ActiveInput{
+			activeResult, err := a.lifecycle.HandleActive(turnarbiter.ActiveInput{
 				SessionID:            ev.SessionID,
 				TurnID:               ev.TurnID,
 				EventID:              ev.EventID,

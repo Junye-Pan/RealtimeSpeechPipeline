@@ -148,10 +148,10 @@ Custom runtimes:
 ## Current implementation inventory
 
 - `transports/livekit` (implemented baseline)
-- `transports/websocket` (scaffold)
-- `transports/telephony` (scaffold)
+- `transports/websocket` (implemented baseline over shared kernel)
+- `transports/telephony` (implemented baseline over shared kernel)
 
-## Current progress and divergence snapshot (2026-02-16)
+## Current progress and divergence snapshot (2026-02-17)
 
 This section reflects the current codebase state under `transports/` and related command/integration tests.
 
@@ -159,19 +159,19 @@ This section reflects the current codebase state under `transports/` and related
 
 | Target module | Current status | Current code evidence | Divergence from target |
 | --- | --- | --- | --- |
-| `api/transport` shared contract (`F-086`) | Not started | No shared transport contract package is present. | No cross-adapter `TransportAdapter` contract is implemented yet. |
-| `internal/runtime/transport/kernel` | Partial | Turn-oriented orchestration is embedded inside `transports/livekit/adapter.go`. | No standalone shared kernel module; behavior is LiveKit-specific. |
-| `internal/runtime/transport/sessionfsm` (`F-091`) | Partial | Lifecycle/control signals are produced in `transports/livekit/adapter.go` via runtime transport helpers. | No dedicated reusable session FSM module. |
-| `internal/runtime/transport/ingress` (`F-089`, `F-090`) | Partial | Ingress normalization is implemented in `transports/livekit/adapter.go` (`mapIngressEvent`). | No transport-agnostic ingress module and no codec plugin abstraction yet. |
-| `internal/runtime/transport/egress` | Partial | Output fencing behavior exists in `transports/livekit/adapter.go` via runtime output fence logic. | No standalone egress broker with shared pacing/delivery contracts. |
-| `internal/runtime/transport/buffering` (`F-087`, `NF-004`) | Not started | No transport-local jitter/loss manager package exists. | Jitter/loss policy module from target architecture is not implemented. |
-| `internal/runtime/transport/authority` (`F-088`) | Partial | Epoch/authority fields are propagated through LiveKit events in `transports/livekit/adapter.go`. | No explicit authority guard interface with dedicated ingress/egress validation layer. |
-| `internal/runtime/transport/routing` (`NF-031`) | Not started | No routing view update handling API is exposed by transport adapters. | Target routing/migration client is not implemented. |
+| `api/transport` shared contract (`F-086`) | Implemented baseline | Shared bootstrap + capabilities contract in `api/transport/types.go` with strict validators/tests. | Contract currently focuses on MVP bootstrap/capability surfaces, not full adapter interface typing. |
+| `internal/runtime/transport/kernel` | Implemented baseline | Shared session kernel orchestrator in `internal/runtime/transport/kernel/session.go`. | Full plugin/middleware extension hooks remain outside kernel baseline. |
+| `internal/runtime/transport/sessionfsm` (`F-091`) | Implemented baseline | Deterministic lifecycle FSM and cleanup deadline semantics in `internal/runtime/transport/sessionfsm/fsm.go`. | Advanced reconnect heuristics remain adapter-specific. |
+| `internal/runtime/transport/ingress` (`F-089`, `F-090`) | Implemented baseline | Transport-agnostic ingress normalization and codec guard in `internal/runtime/transport/ingress/normalize.go`. | No dedicated codec plugin registry yet. |
+| `internal/runtime/transport/egress` | Implemented baseline | Shared egress broker wrapping output fence behavior in `internal/runtime/transport/egress/broker.go`. | Delivery-ack pacing remains minimal for MVP baseline. |
+| `internal/runtime/transport/buffering` (`F-087`, `NF-004`) | Implemented baseline | Bounded jitter buffer with deterministic overflow policies in `internal/runtime/transport/buffering/jitter_buffer.go`. | No time-window/loss-repair algorithm yet beyond bounded queue baseline. |
+| `internal/runtime/transport/authority` (`F-088`) | Implemented baseline | Bootstrap token/epoch guard in `internal/runtime/transport/authority/guard.go`. | Token validation backend integration remains pluggable; no built-in remote verifier in this module. |
+| `internal/runtime/transport/routing` (`NF-031`) | Implemented baseline | Routing view client with stale-version/epoch rejection in `internal/runtime/transport/routing/client.go`. | Multi-endpoint migration orchestration remains thin beyond single-view application. |
 | `internal/runtime/transport/telemetry` (`F-065`, `NF-008`) | Partial | Deterministic report generation exists in `transports/livekit/adapter.go` and CLI reporting in `transports/livekit/command.go`. | No shared non-blocking telemetry emitter module aligned to target contract. |
 | `internal/runtime/transport/extensions` (`F-011`, `F-062`) | Not started | No plugin registry package is present under transports. | Plugin/custom-node extension registry is still pending. |
-| `transports/livekit` (`F-083`) | Implemented baseline | `transports/livekit/config.go`, `transports/livekit/adapter.go`, `transports/livekit/command.go`, `transports/livekit/probe.go`. | Baseline exists, but it is currently a deterministic adapter/report pipeline rather than full target modular split. |
-| `transports/websocket` (`F-084`) | Scaffold only | `transports/websocket/websocket_transport_guide.md` only. | No runtime adapter implementation yet. |
-| `transports/telephony` (`F-085`) | Scaffold only | `transports/telephony/telephony_transport_guide.md` only. | No runtime adapter implementation yet. |
+| `transports/livekit` (`F-083`) | Implemented baseline | `transports/livekit/{adapter,config,command,probe,contract}.go`. | Still focused on deterministic MVP/report flow rather than full production media stack integration. |
+| `transports/websocket` (`F-084`) | Implemented baseline | `transports/websocket/adapter.go` with shared kernel/contract wiring and tests. | MVP baseline surface only; production socket server/runtime wiring remains separate. |
+| `transports/telephony` (`F-085`) | Implemented baseline | `transports/telephony/adapter.go` with shared kernel/contract wiring and tests. | MVP baseline surface only; PSTN gateway integration remains external. |
 
 ### Test and evidence progress vs guide expectations
 
@@ -180,13 +180,17 @@ Implemented deterministic coverage:
 - `transports/livekit/command_test.go` covers CLI report generation and event fixture loading.
 - `transports/livekit/config_test.go` covers configuration validation.
 - `transports/livekit/probe_test.go` covers RoomService probe success/failure.
+- `transports/livekit/contract_test.go` validates shared transport contract capabilities/bootstrap.
+- `transports/websocket/adapter_test.go` validates shared-kernel open/ingress/egress/routing behavior.
+- `transports/telephony/adapter_test.go` validates shared-kernel open/ingress/egress/routing behavior.
+- `internal/runtime/transport/{sessionfsm,ingress,egress,authority,buffering,routing,kernel}/*_test.go` validate split-module safety semantics.
 - `test/integration/livekit_transport_integration_test.go` covers baseline integration paths.
 - `cmd/rspp-runtime/main_test.go` and `cmd/rspp-local-runner/main_test.go` cover command paths and report generation behavior.
 
 Known divergences:
-1. Tests primarily validate LiveKit baseline behavior and do not yet cover target-module concerns such as routing updates (`Req.28`), explicit authority guard boundaries (`Req.27`, `Req.31`), or shared buffer/loss modules (`Req.15`, `Req.16`, `F-087`).
-2. Operational appendix references `.codex/transports/livekit-report.json` and `.codex/transports/livekit-local-runner-report.json`; command tests currently validate report generation using test-local temp paths rather than asserting those fixed artifact paths.
-3. The probe-enabled runtime CLI path is documented, and low-level probe logic is unit tested, but there is no end-to-end command test that exercises the probe-enabled CLI path directly.
+1. Transport telemetry still uses adapter-level/report-level emission; a dedicated shared telemetry module is not yet extracted (`F-065`, `NF-008`, `NF-030`).
+2. Extension/plugin registry for transport-specific codec/control middleware is still pending (`F-011`, `F-062`, `Req.25`).
+3. Probe-enabled runtime CLI has unit-level probe coverage but no end-to-end command test that executes probe-enabled CLI flow in one scenario.
 
 ## Operational appendix (current baseline)
 

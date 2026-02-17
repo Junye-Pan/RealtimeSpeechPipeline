@@ -1,0 +1,53 @@
+{
+  "schema_version": "rspp.version-skew-policy.v1",
+  "policy_id": "voice_assistant_version_skew_policy_v1",
+  "allowed_cells": [
+    {
+      "runtime_version": "v1.0.0",
+      "control_plane_version": "v1.0.0",
+      "schema_version": "v1.0.0"
+    },
+    {
+      "runtime_version": "v1.1.0",
+      "control_plane_version": "v1.1.0",
+      "schema_version": "v1.1.0"
+    },
+    {
+      "runtime_version": "v1.1.0",
+      "control_plane_version": "v1.0.0",
+      "schema_version": "v1.0.0"
+    }
+  ],
+  "matrix_tests": [
+    {
+      "runtime_version": "v1.0.0",
+      "control_plane_version": "v1.0.0",
+      "schema_version": "v1.0.0",
+      "allowed": true
+    },
+    {
+      "runtime_version": "v1.1.0",
+      "control_plane_version": "v1.1.0",
+      "schema_version": "v1.1.0",
+      "allowed": true
+    },
+    {
+      "runtime_version": "v1.1.0",
+      "control_plane_version": "v1.0.0",
+      "schema_version": "v1.0.0",
+      "allowed": true
+    },
+    {
+      "runtime_version": "v2.0.0",
+      "control_plane_version": "v1.1.0",
+      "schema_version": "v1.1.0",
+      "allowed": false
+    },
+    {
+      "runtime_version": "v1.1.0",
+      "control_plane_version": "v1.1.0",
+      "schema_version": "v1.0.0",
+      "allowed": false
+    }
+  ]
+}

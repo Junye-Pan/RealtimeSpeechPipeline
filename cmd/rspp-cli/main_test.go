@@ -12,9 +12,11 @@ import (
 	"github.com/tiger/realtime-speech-pipeline/api/eventabi"
 	obs "github.com/tiger/realtime-speech-pipeline/api/observability"
 	"github.com/tiger/realtime-speech-pipeline/internal/observability/timeline"
+	toolingconformance "github.com/tiger/realtime-speech-pipeline/internal/tooling/conformance"
 	"github.com/tiger/realtime-speech-pipeline/internal/tooling/ops"
 	"github.com/tiger/realtime-speech-pipeline/internal/tooling/regression"
 	toolingrelease "github.com/tiger/realtime-speech-pipeline/internal/tooling/release"
+	"github.com/tiger/realtime-speech-pipeline/internal/tooling/validation"
 )
 
 func TestLoadReplayFixturePolicy(t *testing.T) {
@@ -949,13 +951,13 @@ func TestWriteReleaseManifest(t *testing.T) {
 }`)); err != nil {
 		t.Fatalf("unexpected rollout config write error: %v", err)
 	}
-	if err := osWriteFile(contractsPath, []byte(`{"generated_at_utc":"2026-02-11T11:00:00Z","passed":true}`)); err != nil {
+	if err := osWriteFile(contractsPath, []byte(`{"schema_version":"rspp.tooling.contracts-report.v1","generated_at_utc":"2026-02-11T11:00:00Z","passed":true}`)); err != nil {
 		t.Fatalf("unexpected contracts artifact write error: %v", err)
 	}
-	if err := osWriteFile(replayPath, []byte(`{"generated_at_utc":"2026-02-11T11:10:00Z","failing_count":0}`)); err != nil {
+	if err := osWriteFile(replayPath, []byte(`{"schema_version":"rspp.tooling.replay-regression-report.v1","generated_at_utc":"2026-02-11T11:10:00Z","failing_count":0}`)); err != nil {
 		t.Fatalf("unexpected replay artifact write error: %v", err)
 	}
-	if err := osWriteFile(sloPath, []byte(`{"generated_at_utc":"2026-02-11T11:20:00Z","report":{"passed":true}}`)); err != nil {
+	if err := osWriteFile(sloPath, []byte(`{"schema_version":"rspp.tooling.slo-gates-report.v1","generated_at_utc":"2026-02-11T11:20:00Z","report":{"passed":true}}`)); err != nil {
 		t.Fatalf("unexpected slo artifact write error: %v", err)
 	}
 
@@ -1012,13 +1014,13 @@ func TestWriteReleaseManifestFailsWhenReadinessFails(t *testing.T) {
 }`)); err != nil {
 		t.Fatalf("unexpected rollout config write error: %v", err)
 	}
-	if err := osWriteFile(contractsPath, []byte(`{"generated_at_utc":"2026-02-11T11:00:00Z","passed":true}`)); err != nil {
+	if err := osWriteFile(contractsPath, []byte(`{"schema_version":"rspp.tooling.contracts-report.v1","generated_at_utc":"2026-02-11T11:00:00Z","passed":true}`)); err != nil {
 		t.Fatalf("unexpected contracts artifact write error: %v", err)
 	}
-	if err := osWriteFile(replayPath, []byte(`{"generated_at_utc":"2026-02-11T11:10:00Z","failing_count":2}`)); err != nil {
+	if err := osWriteFile(replayPath, []byte(`{"schema_version":"rspp.tooling.replay-regression-report.v1","generated_at_utc":"2026-02-11T11:10:00Z","failing_count":2}`)); err != nil {
 		t.Fatalf("unexpected replay artifact write error: %v", err)
 	}
-	if err := osWriteFile(sloPath, []byte(`{"generated_at_utc":"2026-02-11T11:20:00Z","report":{"passed":true}}`)); err != nil {
+	if err := osWriteFile(sloPath, []byte(`{"schema_version":"rspp.tooling.slo-gates-report.v1","generated_at_utc":"2026-02-11T11:20:00Z","report":{"passed":true}}`)); err != nil {
 		t.Fatalf("unexpected slo artifact write error: %v", err)
 	}
 
@@ -1032,6 +1034,128 @@ func TestWriteReleaseManifestFailsWhenReadinessFails(t *testing.T) {
 		now,
 	); err == nil {
 		t.Fatalf("expected release manifest generation to fail when readiness fails")
+	}
+}
+
+func TestRunValidateSpec(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join("..", "..", "pipelines", "specs", "voice_assistant_spec_v1.json")
+	gotPath, mode, err := runValidateSpec([]string{path, "strict"})
+	if err != nil {
+		t.Fatalf("expected validate-spec command success, got %v", err)
+	}
+	if gotPath != path {
+		t.Fatalf("unexpected validated spec path: %s", gotPath)
+	}
+	if mode != validation.ValidationModeStrict {
+		t.Fatalf("expected strict mode, got %s", mode)
+	}
+}
+
+func TestRunValidateSpecRequiresPath(t *testing.T) {
+	t.Parallel()
+
+	if _, _, err := runValidateSpec(nil); err == nil {
+		t.Fatalf("expected missing spec_path to fail")
+	}
+}
+
+func TestRunValidatePolicy(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join("..", "..", "pipelines", "policies", "voice_assistant_policy_v1.json")
+	gotPath, mode, err := runValidatePolicy([]string{path, "strict"})
+	if err != nil {
+		t.Fatalf("expected validate-policy command success, got %v", err)
+	}
+	if gotPath != path {
+		t.Fatalf("unexpected validated policy path: %s", gotPath)
+	}
+	if mode != validation.ValidationModeStrict {
+		t.Fatalf("expected strict mode, got %s", mode)
+	}
+}
+
+func TestRunValidatePolicyRejectsInvalidMode(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join("..", "..", "pipelines", "policies", "voice_assistant_policy_v1.json")
+	if _, _, err := runValidatePolicy([]string{path, "invalid"}); err == nil {
+		t.Fatalf("expected invalid mode to fail")
+	}
+}
+
+func TestWriteConformanceGovernanceReport(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	outputPath := filepath.Join(tmp, "conformance-governance-report.json")
+
+	err := writeConformanceGovernanceReport(
+		outputPath,
+		filepath.Join("..", "..", "pipelines", "compat", "version_skew_policy_v1.json"),
+		filepath.Join("..", "..", "pipelines", "compat", "deprecation_policy_v1.json"),
+		filepath.Join("..", "..", "pipelines", "compat", "conformance_profile_v1.json"),
+		filepath.Join("..", "..", "test", "contract", "fixtures", "conformance_results_v1.json"),
+		filepath.Join("..", "..", "docs", "RSPP_features_framework.json"),
+	)
+	if err != nil {
+		t.Fatalf("expected conformance governance report generation to pass, got %v", err)
+	}
+
+	raw, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("read conformance governance report: %v", err)
+	}
+	var artifact conformanceGovernanceArtifact
+	if err := json.Unmarshal(raw, &artifact); err != nil {
+		t.Fatalf("decode conformance governance report: %v", err)
+	}
+	if artifact.SchemaVersion != toolingconformance.GovernanceReportSchemaVersionV1 {
+		t.Fatalf("unexpected conformance governance schema_version: %s", artifact.SchemaVersion)
+	}
+	if !artifact.Report.Passed {
+		t.Fatalf("expected conformance governance report to pass, got %+v", artifact.Report)
+	}
+
+	summaryPath := strings.TrimSuffix(outputPath, filepath.Ext(outputPath)) + ".md"
+	if _, err := os.Stat(summaryPath); err != nil {
+		t.Fatalf("expected conformance governance summary markdown artifact, got %v", err)
+	}
+}
+
+func TestWriteConformanceGovernanceReportFailsOnMandatoryCategoryFailure(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	outputPath := filepath.Join(tmp, "conformance-governance-report.json")
+	resultsPath := filepath.Join(tmp, "conformance-results.json")
+	if err := osWriteFile(resultsPath, []byte(`{
+  "schema_version": "rspp.conformance-results.v1",
+  "profile_id": "voice_assistant_mvp_conformance_v1",
+  "categories": {
+    "transport_adapter": true,
+    "provider_adapter": false,
+    "external_node_boundary": true
+  }
+}`)); err != nil {
+		t.Fatalf("write conformance results fixture: %v", err)
+	}
+
+	err := writeConformanceGovernanceReport(
+		outputPath,
+		filepath.Join("..", "..", "pipelines", "compat", "version_skew_policy_v1.json"),
+		filepath.Join("..", "..", "pipelines", "compat", "deprecation_policy_v1.json"),
+		filepath.Join("..", "..", "pipelines", "compat", "conformance_profile_v1.json"),
+		resultsPath,
+		filepath.Join("..", "..", "docs", "RSPP_features_framework.json"),
+	)
+	if err == nil {
+		t.Fatalf("expected conformance governance report generation to fail on failed mandatory category")
+	}
+	if !strings.Contains(err.Error(), "conformance governance checks failed") {
+		t.Fatalf("expected conformance governance failure message, got %v", err)
 	}
 }
 

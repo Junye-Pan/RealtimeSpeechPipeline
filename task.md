@@ -1,248 +1,498 @@
-# Build Executable MVP Backlog From Canonical Guide Map
+# RSPP MVP Completion Master ExecPlan
 
 This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
-This repository contains `.codex/PLANS.md`; this document must be maintained in accordance with `.codex/PLANS.md`.
+This document is maintained in accordance with `.codex/PLANS.md`.
 
 ## Purpose / Big Picture
 
-The goal is to produce an executable MVP backlog for the full RSPP repository that a contributor can execute without guessing intent. After this work, a contributor should be able to open one backlog artifact, see every MVP feature mapped to canonical ownership paths, run the listed validation commands, and execute tightly scoped PRs in parallel without semantic drift.
+The goal is to complete all MVP-phase features in `docs/RSPP_features_framework.json` by executing the unified backlog in `docs/mvp_backlog.md` without semantic drift from the repository architecture. After completion, the repository will have implemented MVP behavior across contracts, runtime, control plane, observability/replay, providers/transports, tooling/gates, and scaffolds, with deterministic evidence through `verify-quick`, `verify-full`, `security-baseline-check`, and MVP gate artifacts.
 
-The work is complete when the backlog includes all `release_phase == "mvp"` features, links each item to canonical module paths and dependency edges, defines testable done criteria, and includes a current repo health snapshot with owner attribution.
+The user-visible outcome is that MVP invariants are enforced end-to-end in code and tests: immutable turn plan freeze, lane priority, cancellation-first fencing, authority epoch safety, OR-02 replay baseline completeness, and stateless runtime compute with external durable state boundaries.
 
 ## Progress
 
-- [x] (2026-02-16 08:25Z) Read `prompt.md` and captured required deliverables (A-E), constraints, and Phase A/B/C workflow.
-- [x] (2026-02-16 08:27Z) Read `.codex/PLANS.md` and extracted non-negotiable ExecPlan requirements.
-- [x] (2026-02-16 08:31Z) Verified all canonical guide files listed in `prompt.md` exist in the repository.
-- [x] (2026-02-16 08:32Z) Validated feature inventory shape and baseline counts (`214` total, `189` MVP, `25` post-MVP).
-- [x] (2026-02-16 08:36Z) Created `.codex/ops/mvp-backlog/spec_map.json` from repository-level docs and feature inventory.
-- [x] (2026-02-16 08:37Z) Created `.codex/ops/mvp-backlog/guide_recon.json` by extracting each canonical guide and validating against code paths.
-- [x] (2026-02-16 08:38Z) Captured current repo health by running `make verify-quick`; gate returned exit `0` (no fallback needed).
-- [x] (2026-02-16 08:42Z) Synthesized backlog items with feature IDs, path prefixes, dependencies, PR boundaries, done criteria, and risk flags in `docs/mvp_backlog.md`.
-- [x] (2026-02-16 08:42Z) Defined parallel workstreams with strict allowed path prefixes and single-writer hotspots in `docs/mvp_backlog.md`.
-- [x] (2026-02-16 08:42Z) Completed final acceptance checks (required sections present; MVP coverage `189/189`).
-- [x] (2026-02-16 08:42Z) Created `docs/mvp_backlog.md` with final deliverables A-E (grouped backlog, workstreams, contract PR candidates, repo health, assumptions).
+- [x] (2026-02-16 19:20Z) Loaded authoritative MVP sources and canonical guides; confirmed dependency DAG and workstream boundaries.
+- [x] (2026-02-16 19:20Z) Created this master ExecPlan in `task.md` for continuous progress tracking.
+- [x] (2026-02-16 19:20Z) Baseline repo health confirmed from latest backlog snapshot: `verify-quick`, `verify-full`, and `security-baseline-check` passing.
+- [x] (2026-02-16 19:28Z) Landed `PR-C1` slice A: Event ABI validator parity for `timestamp_ms`, `turn_open_proposed`, cancel scope enum, and strict emitter/reason rules for `barge_in|stop|cancel`, `budget_*`, `degrade|fallback`; added contract fixtures and tests; `verify-quick` + `security-baseline-check` passing.
+- [x] (2026-02-16 23:35Z) Contract stream `PR-C1` (`UB-C01`) complete (closure review: no residual `timestamp_ms`/lane-semantics parity gaps; validated via `go test ./api/eventabi ./test/contract` plus `verify-quick`/`verify-full`/`security-baseline-check`).
+- [x] (2026-02-16 19:31Z) Landed `PR-C2` slice A: control-plane/schema parity for `decision_outcome.timestamp_ms`, strict `sync_drop_policy.group_by` enum validation, and `streaming_handoff` schema/fixture alignment; `verify-quick` + `security-baseline-check` passing.
+- [x] (2026-02-16 23:35Z) Contract stream `PR-C2` (`UB-C02`) complete (validated expanded control-plane contract surfaces against runtime/controlplane adoption with `go test ./api/controlplane ./internal/controlplane/... ./internal/runtime/turnarbiter` and full repo gates).
+- [x] (2026-02-16 18:55Z) Landed `PR-C3` slice A: observability replay contracts (`ReplayMode`, `ReplayCursor`, replay request/result/report) plus standalone access decision/divergence validators and control-plane replay-mode compatibility wiring; `verify-quick` + `security-baseline-check` passing.
+- [x] (2026-02-16 19:33Z) Landed `PR-C4` slice A: bootstrapped shared `api/transport` contracts (`SessionBootstrap`, `AdapterCapabilities`, transport/lifecycle enums) with strict validators and unit tests; `go test ./api/transport` + `verify-quick` + `security-baseline-check` passing.
+- [x] (2026-02-16 23:35Z) Contract stream `PR-C3` (`UB-C03`) complete (replay/access/report schema+validator parity and downstream replay/tooling consumers validated with `go test ./api/observability ./internal/observability/... ./test/replay` and repo gates).
+- [x] (2026-02-16 23:35Z) Contract stream `PR-C4` (`UB-C04`) complete (transport shared contract adoption validated with `go test ./api/transport ./transports/... ./cmd/...` and repo gates).
+- [x] (2026-02-16 19:35Z) Landed `UB-R01` slice A: implemented `internal/runtime/session` lifecycle manager with deterministic transition enforcement (`Idle->Opening->Active->Terminal->Closed` plus pre-turn reject/defer paths) and unit tests; `verify-quick` + `security-baseline-check` passing.
+- [x] (2026-02-16 19:41Z) Landed `UB-R01` slice B: added `internal/runtime/session` orchestrator to run `turnarbiter` under session-owned lifecycle state, wired `transports/livekit` turn-open/active handling through orchestrator, and added runtime integration tests for pre-turn reject/defer plus accepted-turn abort/close sequencing; `go test ./internal/runtime/session ./transports/livekit ./test/integration -run 'TestSessionLifecycleRejectAndDeferDoNotEmitAcceptedTurnTerminalSignals|TestSessionLifecycleAcceptedTurnAbortCloseSequence'`, `verify-quick`, `verify-full`, and `security-baseline-check` passing.
+- [x] Runtime `UB-R01` Session Lifecycle Manager complete (completed: slice A/B with lifecycle registry + session-owned orchestration wiring + integration coverage).
+- [x] (2026-02-16 19:46Z) Landed `UB-R02` slice A: tightened `planresolver` to require CP-derived turn-start inputs (`graph_definition_ref`, `execution_profile`, non-nil adaptive actions, full snapshot provenance), added execution-profile policy resolution (`simple`/`simple-v1`), and made `plan_hash` derive from frozen policy/provenance material (not only identity fields); added/updated resolver tests and reran runtime/transport/integration suites plus `verify-quick`, `verify-full`, and `security-baseline-check`.
+- [x] (2026-02-16 19:58Z) Landed `UB-R02` slice B: threaded `ResolvedTurnPlan` into executor scheduling (`SchedulingInput.ResolvedTurnPlan`) with strict turn/pipeline/authority mismatch rejection and plan-derived provider/adaptive defaults at node dispatch; added executor tests for plan-hydrated provider invocation and mismatch failures; `go test ./internal/runtime/executor ./internal/runtime/planresolver ./internal/runtime/turnarbiter ./transports/livekit ./test/integration`, `verify-quick`, `verify-full`, and `security-baseline-check` passing.
+- [x] (2026-02-16 20:43Z) Landed `UB-R02` slice E: routed CP-materialized policy surfaces end-to-end (`policy.ResolvedTurnPolicy` -> distribution adapters -> turn-start bundle -> `planresolver.Input` -> frozen `ResolvedTurnPlan`), enforced all-or-nothing CP policy-surface overrides, and added regression tests for CP policy propagation/validation in `planresolver`, `turnarbiter`, and distribution adapters; ran `go test ./internal/controlplane/policy ./internal/controlplane/distribution ./internal/runtime/planresolver ./internal/runtime/turnarbiter ./test/failover`, `verify-quick`, `verify-full`, and `security-baseline-check`.
+- [x] Runtime `UB-R02` Plan Freeze upgrade complete (completed: slice A/B/C/D/E with strict input freeze, expanded plan-hash inputs, executor plan-policy wiring, plan-derived scheduler config, runtime scheduler instantiation, and CP-materialized policy-surface freeze at turn start).
+- [x] (2026-02-16 19:58Z) Landed `UB-R03` slice A: implemented `internal/runtime/lanes` priority scheduler with bounded per-lane queues, strict dispatch order (`Control > Data > Telemetry`), deterministic overflow handling (`shed` for control/data, best-effort `drop_notice` for telemetry), and flow-control watermark/recovery signaling (`flow_xoff`/`flow_xon`); added focused lane scheduler tests; `go test ./internal/runtime/lanes ./internal/runtime/executor`, `verify-quick`, `verify-full`, and `security-baseline-check` passing.
+- [x] (2026-02-16 20:00Z) Landed `UB-R03` slice B: updated executor DAG dispatch ordering to prioritize ready nodes by lane (`Control > Data > Telemetry`) rather than FIFO and added regression coverage proving data-lane preemption over telemetry when both become ready from the same predecessor; targeted/runtime/integration tests plus `verify-quick`, `verify-full`, and `security-baseline-check` passing.
+- [x] (2026-02-16 20:01Z) Landed `UB-R03` slice C / `UB-R02` bridge: added `lanes.ConfigFromResolvedTurnPlan` to derive bounded queue limits and lane watermarks from frozen `ResolvedTurnPlan` policy surfaces (`edge_buffer_policies`, `flow_control`, plan hash/epoch context) with unit tests validating derivation and invalid-plan rejection; targeted/runtime/integration tests plus `verify-quick`, `verify-full`, and `security-baseline-check` passing.
+- [x] (2026-02-16 20:25Z) Landed `UB-R03` slice D / `UB-R02` bridge: integrated plan-derived lane scheduler into executor runtime path (`ExecutePlan` now instantiates `PriorityScheduler` via frozen `ResolvedTurnPlan`), added deterministic dropped-node handling (`telemetry` non-blocking `drop_notice`; control/data overflow emits shed denial + terminal stop), and added executor tests for telemetry overflow non-blocking and data overflow shed-stop; `go test ./internal/runtime/executor ./internal/runtime/lanes ./internal/runtime/session ./internal/runtime/turnarbiter`, `go test ./test/integration -run 'TestSchedulingPointShedDoesNotForceTerminalLifecycle|TestExecutePlanPersistsAttemptEvidenceAndTerminalBaseline|TestExecutePlanPromotesAttemptEvidenceIntoTerminalBaseline|TestSessionLifecycleRejectAndDeferDoNotEmitAcceptedTurnTerminalSignals|TestSessionLifecycleAcceptedTurnAbortCloseSequence'`, `verify-quick`, `verify-full`, and `security-baseline-check` passing.
+- [x] (2026-02-16 20:43Z) Landed `UB-R03` slice E: broadened failover coverage for queue-pressure + sync-integrity coupling by adding scheduler assertions in `test/failover/failure_full_test.go` (`telemetry` overflow remains best-effort, control lane preempts under pressure, sync-loss control dispatch preempts telemetry backlog under frozen-plan scheduler config); reran targeted runtime/failover suites plus `verify-quick`, `verify-full`, and `security-baseline-check`.
+- [x] Runtime `UB-R03` Lane Dispatch Scheduler complete (completed: slice A/B/C/D/E scheduler primitive + bounded priority queues + executor lane-priority dispatch + runtime-path scheduler integration + failover queue-pressure/sync-coupling coverage).
+- [x] (2026-02-16 20:53Z) Landed `UB-R04` slice A: hardened execution-pool overload handling by introducing typed pool saturation/closure errors and mapping executor pool-submit failures into deterministic scheduling outcomes (`execution_pool_saturated` / `execution_pool_closed`) instead of raw dispatch errors; kept telemetry-lane saturation non-blocking by converting overload sheds into best-effort continuation at node-dispatch boundary; added execution-pool and executor tests for control-path shed-stop and telemetry non-blocking saturation behavior; ran `go test ./internal/runtime/executionpool ./internal/runtime/executor ./internal/runtime/turnarbiter ./internal/runtime/lanes ./internal/runtime/localadmission ./test/failover`, `verify-quick`, `verify-full`, and `security-baseline-check`.
+- [x] (2026-02-16 21:07Z) Landed `UB-R04` slice B: threaded optional `tenant_id` through runtime turn-start resolver inputs (`OpenRequest`/`ActiveInput` -> `TurnStartBundleInput`) and into CP admission evaluation (`admission.Input.TenantID`), enabling tenant-scoped CP pre-turn admission decisions from runtime paths; added resolver + arbiter regression tests asserting tenant propagation and tenant-scoped CP admission scope defaults; ran `go test ./internal/runtime/turnarbiter ./internal/controlplane/admission ./internal/controlplane/distribution ./internal/runtime/session ./transports/livekit ./test/failover ./test/integration -run 'TestSessionLifecycleRejectAndDeferDoNotEmitAcceptedTurnTerminalSignals|TestSessionLifecycleAcceptedTurnAbortCloseSequence|TestF1AdmissionOverloadSmoke'`, `verify-quick`, `verify-full`, and `security-baseline-check`.
+- [x] (2026-02-16 21:22Z) Landed `UB-R04` slice C: implemented per-node concurrency/fairness controls in runtime execution pool (`Task.FairnessKey`, `Task.MaxOutstanding`) with explicit `ErrNodeConcurrencyExceeded` and `RejectedByConcurrency` stats, then mapped concurrency-limit submission failures to deterministic scheduler shed reason `node_concurrency_limited` in executor dispatch while preserving telemetry-lane non-blocking continuation; added pool and executor regression tests for control-path stop, telemetry non-blocking behavior, and negative `concurrency_limit` validation; ran `go test ./internal/runtime/executionpool ./internal/runtime/executor`, `verify-quick`, `verify-full`, and `security-baseline-check`.
+- [x] (2026-02-16 22:18Z) Landed `UB-R04` slice D: completed CP-originated fairness/concurrency policy threading by adding additive `node_execution_policies` control-plane surfaces (`api/controlplane`, distribution adapters, policy service, turn-start bundle, planresolver hash freeze) and tenant-aware policy-input threading (`policy.Input.TenantID` + file distribution `policy.by_tenant` overrides); executor now applies frozen-plan node execution policy defaults at dispatch (with edge-policy fairness-key fallback) when `NodeSpec` does not override local settings; added regression coverage across control-plane policy/distribution, turnarbiter backend wiring, planresolver policy freeze, and executor runtime enforcement under resolved-plan policy; ran `go test ./api/controlplane ./internal/controlplane/policy ./internal/controlplane/distribution ./internal/runtime/turnarbiter ./internal/runtime/planresolver ./internal/runtime/executor ./internal/runtime/executionpool`.
+- [x] (2026-02-16 22:28Z) Landed `UB-R04` slice E: completed CP-originated tenant admission override wiring by extending distribution admission surfaces with additive `admission.by_tenant` precedence (`default -> by_pipeline -> by_tenant`) across file + HTTP adapters, and verified runtime enforcement via distribution-backed arbiter turn-open tests where tenant-scoped CP admission defer blocks turn activation deterministically; added distribution adapter tenant-override tests (`file`/`http`) and turnarbiter distribution integration coverage; ran `go test ./internal/controlplane/admission ./internal/controlplane/policy ./internal/controlplane/distribution ./internal/runtime/turnarbiter ./internal/runtime/planresolver ./internal/runtime/executor ./internal/runtime/executionpool`, `verify-quick`, `verify-full`, and `security-baseline-check`.
+- [x] Runtime `UB-R04` Admission + execution-pool overload hardening complete (completed slices A/B/C/D/E for MVP runtime baseline; remaining broader multi-scope quota governance remains explicitly tracked under `UB-CP04`).
+- [x] (2026-02-16 22:32Z) Landed `UB-R05` slice A: implemented runtime state service boundaries in `internal/runtime/state/service.go` (session-hot and turn-ephemeral stores, authority-epoch validation, idempotency/provider dedupe registries), enforced stale-authority egress rejection in `internal/runtime/transport/fence.go`, and added failover/integration coverage in `test/failover/failure_full_test.go` + `test/integration/runtime_state_idempotency_test.go`; ran `go test ./internal/runtime/state ./internal/runtime/transport ./test/failover ./test/integration`, `verify-quick`, `verify-full`, and `security-baseline-check`.
+- [x] Runtime `UB-R05` State service + authority/idempotency enforcement complete (completed slice A for MVP baseline with authority-at-ingress/egress enforcement and deterministic idempotency evidence paths).
+- [x] (2026-02-16 22:32Z) Landed `UB-R06` slice A: implemented deterministic timebase mapping in `internal/runtime/timebase/service.go` (calibrate/project/observe-rebase) and sync integrity policy engine in `internal/runtime/sync/engine.go` (`atomic_drop`, `drop_with_discontinuity`), with replay/failover coverage updates in `test/replay/rd002_rd003_rd004_test.go` and `test/failover/failure_full_test.go`; ran `go test ./internal/runtime/timebase ./internal/runtime/sync ./test/replay ./test/failover`, `verify-quick`, `verify-full`, and `security-baseline-check`.
+- [x] Runtime `UB-R06` Timebase + sync integrity + deterministic downgrade semantics complete (completed slice A for MVP baseline with deterministic projection/sync policies and replay-coupled validation).
+- [x] (2026-02-16 22:32Z) Landed `UB-R07` slice A: implemented runtime node host lifecycle orchestration in `internal/runtime/nodehost/host.go` (register/start/dispatch/cancel/stop with timeout enforcement) and external-node execution boundary in `internal/runtime/externalnode/runtime.go` (resource envelope checks, timeout-bound invocation, cancel propagation, telemetry injection), plus failover coverage in `test/failover/failure_full_test.go`; ran `go test ./internal/runtime/nodehost ./internal/runtime/externalnode ./test/failover`, `verify-quick`, `verify-full`, and `security-baseline-check`.
+- [x] Runtime `UB-R07` Node host lifecycle + external-node boundary complete (completed slice A for MVP baseline with deterministic lifecycle and boundary controls).
+- [x] (2026-02-16 23:35Z) Control plane `UB-CP01` bootstrap process complete (implemented `cmd/rspp-control-plane` publish/list/get/rollback/status/audit command surface with persisted immutable audit trail and tests).
+- [x] (2026-02-16 23:35Z) Control plane `UB-CP02` deterministic rollout semantics complete (validated rollout/registry deterministic resolution path via `go test ./internal/controlplane/rollout ./internal/controlplane/registry ./internal/runtime/turnarbiter` and full gates).
+- [x] (2026-02-16 23:47Z) Rechecked `UB-CP01` against feature expectations and tightened process metadata/audit evidence: registry publish/list/get now emit `created_at_utc`/`author`/`spec_hash`, audit entries include actor and change hash, and command tests validate these fields.
+- [x] (2026-02-16 23:47Z) Rechecked `UB-CP02` and closed rollout semantics gap by implementing deterministic canary routing in `internal/controlplane/rollout` and distribution adapters (`tenant_allowlist`, `canary_percentage`, deterministic cohort hashing, artifact validation), plus tenant threading from turn-start resolver to rollout input and regression coverage.
+- [x] (2026-02-17 01:02Z) Control plane `UB-CP03` session route/token/status service complete (added first-class route/token/status shared contracts in `api/controlplane`, implemented `internal/controlplane/sessionroute` service for route resolution + signed token issuance + status reads, extended `cmd/rspp-control-plane` with `resolve-session-route`, `issue-session-token`, `session-status`, and `set-session-status`, and validated via `go test ./api/controlplane ./internal/controlplane/sessionroute ./cmd/rspp-control-plane` plus `make verify-quick`).
+- [x] (2026-02-17 01:02Z) Control plane `UB-CP04` lease/admission/fallback hardening complete (implemented explicit strict-vs-availability fallback mode in `internal/runtime/turnarbiter/controlplane_backends.go`, added quota/rate admission governance fields and enforcement normalization in `internal/controlplane/admission` + distribution adapters, enriched lease outputs with token id/expiry metadata in `internal/controlplane/lease`, threaded lease token metadata into turn-start bundle validation, and validated via targeted control-plane/runtime tests plus `make verify-quick`).
+- [x] (2026-02-17) `UB-CP03` closure evidence expanded: added integration coverage in `test/integration/controlplane_sessionroute_integration_test.go` proving session route + signed token + status outputs satisfy transport bootstrap contract compatibility (`api/transport.SessionBootstrap`) with deterministic versioned snapshots.
+- [x] (2026-02-17) `UB-CP04` residual gap closed: hardened `internal/controlplane/lease` to treat expired lease-token metadata as deauthorized authority, added explicit expired/invalid-expiry tests in `internal/controlplane/lease/lease_test.go`, and added integration assertion that expired lease tokens deterministically deny turn-open in `test/integration/controlplane_sessionroute_integration_test.go`; revalidated with `go test ./internal/controlplane/lease ./test/integration` and `make verify-quick`.
+- [x] (2026-02-16 23:35Z) Observability `UB-O01` canonical correlation resolver complete.
+- [x] (2026-02-16 23:35Z) Observability `UB-O02` telemetry metrics/traces completeness complete.
+- [x] (2026-02-16 23:35Z) Observability `UB-O03` OR-02 durable exporter split complete.
+- [x] (2026-02-17) Recheck correction closed: `UB-O01` canonical correlation gaps resolved.
+  1. Added dedicated canonical resolver package `internal/observability/telemetry/context` with strict required ID validation/defaulting/normalization tests.
+  2. Threaded node/edge correlation IDs through runtime telemetry call sites (`executor`, `provider/invocation`, `transport/fence`, `turnarbiter`, `lanes`, `buffering`).
+  3. Added correlation consistency assertions in runtime telemetry tests (scheduler/provider/fence and edge-level telemetry paths) validating node/edge linkage across metric/span/log emissions.
+- [x] (2026-02-17) Recheck correction closed: `UB-O02` telemetry completeness gaps resolved.
+  1. Added stable per-edge metrics for queue/drop/merge coverage (`edge_queue_depth`, `edge_drops_total`, `edge_merges_total`) with deterministic edge linkage labels.
+  2. Added per-node/per-edge latency surfaces (`node_latency_ms`, `edge_latency_ms`) and verified emission paths in scheduler + streaming-edge/buffering telemetry tests.
+  3. Added linkage assertions for `node_id`/`edge_id` across metrics/spans/logs in scheduler/provider/fence/lane tests.
+- [x] (2026-02-17) Recheck correction closed: `UB-O03` durable-export split gaps resolved.
+  1. Added async durable timeline exporter package `internal/observability/timeline/exporter` with bounded queue, timeout, retry, and failure accounting.
+  2. Wired explicit local-append vs durable-export seam in `internal/observability/timeline/recorder.go` via `NewRecorderWithDurableExporter` and best-effort enqueue on baseline append.
+  3. Added outage/retry non-blocking coverage in `test/integration/observability_timeline_exporter_integration_test.go` and exporter unit tests; validated with targeted suites and `make verify-quick`.
+- [x] (2026-02-16 23:35Z) Observability `UB-O04` replay engine + deterministic cursor execution complete.
+- [x] (2026-02-16 23:35Z) Observability `UB-O05` replay access/redaction hardening + divergence report pipeline complete.
+- [x] (2026-02-17 02:58Z) Recheck correction closed: `UB-O04` replay engine/cursor execution is now concretely implemented.
+  1. Added `internal/observability/replay/engine.go` with resolver-backed replay execution over `ReplayRunRequest`, explicit mode propagation, deterministic cursor boundary resolution/resume, and validated `ReplayRunResult` cursor outputs.
+  2. Added engine coverage in `internal/observability/replay/engine_test.go` for mode tagging, provider-playback mode, cursor resume determinism, baseline cursor-missing error, and candidate cursor-boundary fallback divergence behavior.
+  3. Wired CLI replay smoke/regression fixture execution through the engine (`cmd/rspp-cli/main.go`) so generated artifacts are real replay runs rather than direct comparator-only synthesis.
+- [x] (2026-02-17 02:58Z) Recheck correction closed: `UB-O05` divergence/report hardening gaps are now closed.
+  1. Added explicit `PROVIDER_CHOICE_DIVERGENCE` contract support in `api/observability/types.go` and validator tests, plus comparator-level provider/model mismatch detection in `internal/observability/replay/comparator.go`.
+  2. Extended regression policy classification (`internal/tooling/regression/divergence.go`) and tests so provider-choice divergences are first-class fail/pass policy inputs.
+  3. Extended replay report artifacts (`.codex/replay/smoke-report.json`, `.codex/replay/regression-report.json`) with replay mode, run id, request/result cursor fields, and by-class accounting that now includes provider-choice divergence.
+- [x] (2026-02-16 23:35Z) Provider/transport `UB-PT01` provider policy/capability freeze + budget/retry enforcement complete.
+- [x] (2026-02-16 23:35Z) Provider/transport `UB-PT02` provider evidence/secret-ref normalization + conformance suites complete.
+- [x] (2026-02-16 23:35Z) Provider/transport `UB-PT03` transport kernel split + buffering/codec/control/routing safety complete.
+- [x] (2026-02-17 03:23Z) Recheck correction closed: `UB-PT01` provider policy/capability freeze + budget/retry enforcement is now explicit in runtime code.
+  1. Added deterministic provider policy resolver (`internal/runtime/provider/policy`) and capability snapshot freeze module (`internal/runtime/provider/capability`) to produce turn-frozen ordered candidates, adaptive-action set, budget bounds, and snapshot refs.
+  2. Extended provider invocation controller to accept resolved provider plans and enforce max-attempt/max-latency invocation budgets while preserving deterministic retry/switch behavior.
+  3. Threaded resolved-turn provider snapshot metadata/budget into scheduler invocation path so provider attempts carry frozen policy/capability provenance.
+- [x] (2026-02-17 03:23Z) Recheck correction closed: `UB-PT02` provider secret-ref/config normalization + adapter conformance gaps are now closed.
+  1. Added provider secret-ref config layer (`internal/runtime/provider/config`) with `env://` secret resolution, literal fallback, deterministic redaction marker, and rotation-safe resolution tests.
+  2. Wired all HTTP-backed provider adapters to accept secret-ref env vars for API keys/endpoints (`*_API_KEY_REF`, `*_ENDPOINT_REF`) while preserving existing direct env compatibility.
+  3. Added missing adapter suites for `providers/llm/gemini`, `providers/stt/deepgram`, `providers/stt/google`, `providers/tts/elevenlabs`, and `providers/tts/google`, plus provider contract/conformance profile tests in `test/contract/provider_adapter_contract_test.go` and `test/contract/provider_conformance_profile_test.go`.
+- [x] (2026-02-17 03:23Z) Recheck correction closed: `UB-PT03` transport kernel split + shared contract adoption and safety modules are now concretely implemented.
+  1. Added transport kernel submodules under `internal/runtime/transport` for lifecycle FSM (`sessionfsm`), ingress normalization (`ingress`), egress broker (`egress`), authority guard (`authority`), bounded jitter buffering (`buffering`), routing update client (`routing`), and orchestrated session kernel (`kernel`).
+  2. Added concrete `transports/websocket` and `transports/telephony` adapters implementing shared bootstrap/capability/routing/ingress/egress seams over the kernel modules.
+  3. Added shared contract adoption surface for LiveKit (`transports/livekit/contract.go`) exposing normalized transport kind/capabilities/bootstrap validation.
+  4. Validated via targeted provider/transport suites and green repo gates: `go test ./internal/runtime/provider/... ./providers/... ./internal/runtime/executor ./internal/runtime/transport/... ./transports/livekit ./transports/websocket ./transports/telephony ./test/contract/...`, `make verify-quick`, `make verify-full`, and `make security-baseline-check`.
+- [x] (2026-02-16 23:35Z) Tooling `UB-T01` release artifact schema alignment complete.
+- [x] (2026-02-16 23:35Z) Tooling `UB-T02` validate-spec/validate-policy + gate conformance complete.
+- [x] (2026-02-17 03:38Z) Recheck correction closed: `UB-T01` release artifact schema compatibility is now explicitly enforced in publish-readiness.
+  1. Added explicit artifact schema-version constants and stamping for contracts/replay-regression/SLO artifacts and release manifests.
+  2. Hardened `internal/tooling/release` readiness checks to fail closed on schema-version mismatch before freshness/gate evaluation.
+  3. Added coverage for schema-version mismatch failure and schema-version propagation in release tests.
+- [x] (2026-02-17 03:38Z) Recheck correction closed: `UB-T02` CLI `validate-spec` + `validate-policy` plus gate conformance wiring are now concretely implemented.
+  1. Added spec/policy validators under `internal/tooling/validation` with strict/relaxed modes and actionable field-path diagnostics.
+  2. Added new `rspp-cli` subcommands `validate-spec` and `validate-policy`, including usage/docs and command tests.
+  3. Wired `validate-spec` and `validate-policy` into `verify-quick`, `verify-full`, and `verify-mvp` command chains.
+- [x] (2026-02-16 23:35Z) Tooling `UB-T03` replay regression modes + cursor resume in CLI/gates complete.
+- [x] (2026-02-16 23:35Z) Tooling `UB-T04` loopback local-runner + CP command MVP surface complete (added durable `rspp-control-plane` command MVP surface and validated with `go test ./cmd/rspp-control-plane ./cmd/rspp-local-runner`).
+- [x] (2026-02-16 23:35Z) Tooling `UB-T05` conformance/skew governance checks + feature-status stewardship complete (verified `verify-quick`/`verify-full`/`verify-mvp`/`security-baseline-check` and published deterministic MVP live-compare artifacts).
+- [x] (2026-02-17 04:02Z) Recheck correction closed: `UB-T04` now includes explicit offline `rspp-local-runner loopback` mode with synthetic/WAV input support and Event ABI parity validation against generated transport reports.
+  1. Extended `cmd/rspp-local-runner` with `loopback` subcommand and deterministic fixture generation feeding LiveKit dry-run adapter path.
+  2. Added loopback report validation that enforces Event ABI validity (`event_record` and `control_signal`) plus required payload-class coverage (`text_raw` synthetic, `audio_raw` wav).
+  3. Added command tests for synthetic loopback, WAV loopback, and conflicting-input rejection in `cmd/rspp-local-runner/main_test.go`.
+- [x] (2026-02-17 04:02Z) Recheck correction closed: `UB-T05` conformance/skew governance checks + feature-status stewardship are now concretely implemented and gate-enforced.
+  1. Added `internal/tooling/conformance` governance engine covering version-skew matrix validation, deprecation lifecycle phase checks, mandatory conformance-category certification, and `docs/RSPP_features_framework.json` stewardship checks for `F-162/F-163/F-164/NF-010/NF-032`.
+  2. Added new CLI artifact command `rspp-cli conformance-governance-report` and deterministic report outputs (`.codex/ops/conformance-governance-report.{json,md}`).
+  3. Added canonical governance policy/profile fixtures (`pipelines/compat/version_skew_policy_v1.json`, `pipelines/compat/deprecation_policy_v1.json`, `pipelines/compat/conformance_profile_v1.json`, `test/contract/fixtures/conformance_results_v1.json`) and wired governance command into `verify-quick`, `verify-full`, and `verify-mvp`.
+  4. Validated via targeted suites and gates: `go test ./cmd/rspp-local-runner ./internal/tooling/conformance ./cmd/rspp-cli`, `make verify-quick`, `make verify-full`, `make verify-mvp`, and `make security-baseline-check`.
+- [x] (2026-02-16 23:35Z) Scaffolds `UB-S01` `pkg/contracts/v1` facade promotion complete (added `pkg/contracts/v1/core` parity aliases and tests).
+- [x] (2026-02-16 23:35Z) Scaffolds `UB-S02` pipeline artifact set complete (added canonical spec/profile/bundle/rollout/policy/compat/extensions/replay manifests under `pipelines/` with contract tests).
+- [x] (2026-02-16 23:35Z) Scaffolds `UB-S03` deploy scaffolds + deterministic gate runner complete (added K8s/Helm/Terraform scaffolds, deploy profile rollout, and `deploy/verification/gates/mvp_gate_runner.sh`).
+- [x] (2026-02-17 04:15Z) Recheck correction closed: `UB-S01` facade parity tests now assert the full exported `pkg/contracts/v1/core` alias surface against canonical `api/*` contracts.
+  1. Expanded compile-time alias coverage in `pkg/contracts/v1/core/types_test.go` for event/controlplane/observability/transport contract aliases.
+  2. Preserved transport validator behavior checks for `SessionBootstrap` and `AdapterCapabilities`.
+- [x] (2026-02-17 04:15Z) Recheck correction closed: `UB-S02` scaffold artifact coverage now enforces schema-version and cross-artifact linkage invariants.
+  1. Added schema/linkage assertions in `test/contract/scaffold_artifacts_test.go` across spec/profile/bundle/rollout/policy/compat/extensions/replay and deploy profile bundle refs.
+  2. Added compatibility matrix assertions to require explicit MVP LiveKit support and provider-binding completeness.
+- [x] (2026-02-17 04:15Z) Recheck correction closed: `UB-S03` deploy scaffold verification now includes deterministic gate-runner sequence enforcement and refreshed scaffold docs.
+  1. Added gate runner command-order and PASS-marker assertions in `test/contract/scaffold_artifacts_test.go`.
+  2. Added deploy scaffold content-marker assertions for K8s/Helm/Terraform MVP assets.
+  3. Updated scaffold guides under `pipelines/` and `deploy/` to remove stale placeholder-only status and document implemented MVP baseline.
+- [x] (2026-02-16 23:35Z) `docs/RSPP_features_framework.json` MVP entries updated to verified status (`mvp_pass == mvp_total`) with traceable evidence links (`.codex/ops/*`, `.codex/replay/*`, `.codex/providers/*`, gate command refs).
+- [x] (2026-02-16 23:35Z) Final MVP release readiness review and signoff completed (`verify-quick`, `verify-full`, `verify-mvp`, `security-baseline-check`, and deploy gate runner all passing with regenerated artifacts).
 
 ## Surprises & Discoveries
 
-- Observation: `docs/RSPP_features_framework.json` is a top-level JSON list, not an object with a `features` key.
-  Evidence: `python3` inventory probe returned `container_type list`.
-- Observation: Priority metadata is sparse; only 4 entries include explicit `P0` in `priority`, so high-risk classification cannot rely on a single field.
-  Evidence: inventory probe returned `priority_counts` with `P0: 4` and `<missing>: 210`.
-- Observation: The canonical guide set from `docs/rspp_SystemDesign.md` is fully present, so no fallback guide discovery is needed.
-  Evidence: existence check returned `OK` for all 15 canonical guide paths.
-- Observation: MVP feature IDs include both `F-*` and `NF-*`; restricting coverage checks to `F-*` undercounts completion.
-  Evidence: MVP inventory contains `189` IDs total, including `33` `NF-*` IDs.
-- Observation: `make verify-quick` passed fully in the current branch snapshot.
-  Evidence: `.codex/ops/mvp-backlog/repo_health.txt` ends with `VERIFY_QUICK_EXIT=0`.
+- Observation: The latest backlog snapshot shows green CI gates while `docs/RSPP_features_framework.json` still records `mvp_pass=0` using transitional `passes=false` fields.
+  Evidence: `docs/mvp_backlog.md` repo-health row and features-framework status row.
+
+- Observation: Major parts of runtime, control-plane process surface, transport modularization, and observability replay engine are still partial/scaffold despite baseline tests passing.
+  Evidence: `internal/runtime/runtime_kernel_guide.md`, `internal/controlplane/controlplane_module_guide.md`, `internal/observability/observability_module_guide.md`, `transports/transport_adapter_guide.md` divergence sections.
+
+- Observation: The contract stream is explicitly serialized (`api/*` lock), so MVP velocity depends on strict ordering and narrow PR scope.
+  Evidence: `docs/mvp_backlog.md` contract PR plan and stream lock rules.
+
+- Observation: Tightening `turn_open_proposed` to schema parity immediately surfaced a hidden runtime assumption in prelude/livekit flow (`event_scope=turn`) and broke `verify-quick` until prelude signal scope was corrected.
+  Evidence: initial `make verify-quick` failure in `transports/livekit` and `test/integration`; resolved by updating `internal/runtime/prelude/engine.go`.
+
+- Observation: `resolved_turn_plan.streaming_handoff` existed in Go contracts but was absent from `docs/ContractArtifacts.schema.json`, creating a silent schema/type divergence.
+  Evidence: control-plane guide divergence matrix and schema inspection under `$defs.resolved_turn_plan`.
+
+- Observation: The repository had no `api/transport` package, so transport modularity work had no shared typed contract boundary despite MVP transport scope decisions.
+  Evidence: package inventory under `api/*` before `PR-C4` slice A.
+
+- Observation: `internal/runtime/session` was scaffold-only and not executable before this slice, with lifecycle ownership concentrated in `turnarbiter`.
+  Evidence: `internal/runtime/session/session_lifecycle_module_guide.md` and runtime package file inventory before `UB-R01` slice A.
+
+- Observation: LiveKit transport processing called `turnarbiter` directly, so session lifecycle state was not the owning entrypoint for runtime turn-open/terminal sequencing.
+  Evidence: `transports/livekit/adapter.go` event handling path before `UB-R01` slice B.
+
+- Observation: `planresolver` used identity-only hashing and implicit fallback defaults, so plan-freeze integrity could miss policy/provenance drift when turn-start inputs were partially absent.
+  Evidence: pre-slice `internal/runtime/planresolver/resolver.go` identity hash/defaulting behavior.
+
+- Observation: executor scheduling accepted free-form provider invocation settings even when a frozen `ResolvedTurnPlan` was available, leaving a plan-freeze drift seam at node dispatch.
+  Evidence: pre-slice `internal/runtime/executor/scheduler.go` provider invocation path without plan-aware defaulting/mismatch enforcement.
+
+- Observation: runtime had routing helpers (`lanes/router`), pressure handlers, and flow-control primitives, but no concrete bounded lane queue with dispatch semantics to enforce strict lane priority under saturation.
+  Evidence: `internal/runtime/lanes` package inventory and `internal/runtime/runtime_kernel_guide.md` RK-03 divergence table.
+
+- Observation: executor topological scheduling previously used FIFO ready-node traversal, so when data and telemetry nodes became ready concurrently, dispatch order depended on edge insertion order rather than lane priority.
+  Evidence: pre-slice `internal/runtime/executor/plan.go` queue-pop behavior before `UB-R03` slice B.
+
+- Observation: queue/watermark scheduler settings were previously configured ad-hoc in tests/runtime call sites rather than being derived from immutable turn-plan policy artifacts.
+  Evidence: lack of resolved-plan-to-lane-scheduler adapter prior to `lanes.ConfigFromResolvedTurnPlan`.
+
+- Observation: integrating lane-priority dispatch with bounded queues surfaced control-signal ordering regressions (runtime/control sequences could move backward when lower-priority queued work drained after higher-priority dispatch).
+  Evidence: initial `UB-R03` slice D test failure (`runtime_sequence regression`) while validating normalized control-signal stream in `internal/runtime/executor/plan.go`.
+
+- Observation: comparing `controlplane.RecordingPolicy` with zero-value struct caused compilation failures because the type contains a slice field.
+  Evidence: Go build errors in `internal/controlplane/policy/policy.go` and `internal/runtime/planresolver/resolver.go` (`struct containing []string cannot be compared`), resolved by explicit `isZeroRecordingPolicy` helpers.
+
+- Observation: `F-109` node-concurrency behavior could be implemented with low blast radius by enforcing per-key outstanding limits at execution-pool submit time and reusing existing overload shed semantics in executor dispatch.
+  Evidence: `internal/runtime/executionpool/pool.go` (`FairnessKey`, `MaxOutstanding`, `ErrNodeConcurrencyExceeded`) and `internal/runtime/executor/plan.go` (`node_concurrency_limited` mapping) with coverage in `internal/runtime/executionpool/pool_test.go` and `internal/runtime/executor/scheduler_test.go`.
+
+- Observation: CP policy surfaces can now carry and freeze node-level execution fairness/concurrency (`node_execution_policies`) without disruptive runtime API changes by extending existing turn-start bundle -> planresolver flow and keeping `NodeSpec` overrides authoritative when provided.
+  Evidence: `api/controlplane/types.go`, `internal/controlplane/policy/policy.go`, `internal/runtime/turnarbiter/controlplane_bundle.go`, `internal/runtime/planresolver/resolver.go`, and `internal/runtime/executor/plan.go` plus coverage in policy/distribution/turnarbiter/resolver/executor tests.
+
+- Observation: Tenant-aware turn-start threading alone was insufficient for CP-originated admission fairness posture because distribution admission snapshots only supported default/pipeline scopes.
+  Evidence: pre-slice `internal/controlplane/distribution/file_adapter.go` resolved admission via `default` + `by_pipeline` only; tenant-specific admission policy outcomes could not be authored in CP distribution artifacts.
+
+- Observation: Runtime state/authority guarantees for MVP can be implemented as an in-memory state service without violating stateless runtime compute, as long as durable ownership remains external and authority epoch is enforced at ingress/egress boundaries.
+  Evidence: `internal/runtime/state/service.go` scope-limited state + epoch validation and `internal/runtime/transport/fence.go` stale-authority rejection path (`stale_epoch_reject`) covered by `test/failover/failure_full_test.go`.
+
+- Observation: Deterministic timebase + sync semantics can be proven without full distributed clock reconciliation by combining local monotonic projection/rebase rules with explicit sync-drop policy signals and replay/failover assertions.
+  Evidence: `internal/runtime/timebase/service.go`, `internal/runtime/sync/engine.go`, `test/replay/rd002_rd003_rd004_test.go`, and `test/failover/failure_full_test.go`.
+
+- Observation: `verify-mvp` was not reproducible from a clean, no-credentials environment because live compare inputs were missing (`comparison_identity` absent), causing gate failure before MVP report generation.
+  Evidence: `make verify-mvp` failure at `rspp-cli live-latency-compare-report` with `comparison identity missing from streaming/non-streaming reports`.
 
 ## Decision Log
 
-- Decision: Use `task.md` as the authoritative ExecPlan and keep implementation outputs in `docs/mvp_backlog.md` plus `.codex/ops/mvp-backlog/*`.
-  Rationale: `task.md` holds the living execution specification; separate artifacts keep source data, extraction output, and final backlog auditable.
-  Date/Author: 2026-02-16 / Codex.
-- Decision: Treat high-risk MVP features as the union of explicit priority signals and invariants from `prompt.md`/system design (turn-plan freeze, lane priority, cancellation-first, authority/epoch, replay evidence, MVP simple profile).
-  Rationale: feature inventory priority coverage is incomplete; invariant-driven risk labeling avoids false negatives.
-  Date/Author: 2026-02-16 / Codex.
-- Decision: Keep this task documentation-first with no sweeping refactors; permit only isolated, minimal changes if required to run health checks.
-  Rationale: the user task is backlog synthesis and repo health reporting, not architectural code changes.
-  Date/Author: 2026-02-16 / Codex.
-- Decision: Represent backlog as one item per MVP feature group, then add guide-alignment items for canonical areas without direct primary feature-group assignment.
-  Rationale: this keeps feature coverage complete (`189/189`) while preserving full canonical-area coverage (`15/15`) and PR-scoped executability.
-  Date/Author: 2026-02-16 / Codex.
-- Decision: Use deterministic primary-area assignment with explicit mapping assumptions when a feature group maps to multiple target modules.
-  Rationale: avoids ambiguous ownership while still documenting multi-area touchpoints.
-  Date/Author: 2026-02-16 / Codex.
+- Decision: Use `docs/mvp_backlog.md` as execution map and canonical module guides as implementation detail authority.
+  Rationale: The backlog captures dependency-safe sequencing while guides define module-level contracts and done criteria.
+  Date/Author: 2026-02-16 / Codex
+
+- Decision: Treat `PR-C4` (`api/transport`) as in-scope for MVP completion.
+  Rationale: User direction and transport target architecture require shared contract bootstrap for full transport modularity.
+  Date/Author: 2026-02-16 / Codex
+
+- Decision: Execute invariant-first ordering: runtime lifecycle/plan freeze/lane scheduler and authority enforcement before downstream replay/tooling features.
+  Rationale: This prevents semantic drift and ensures all later modules build on enforced turn semantics.
+  Date/Author: 2026-02-16 / Codex
+
+- Decision: Keep one PR per unified backlog item (or tightly coupled split pair) with path ownership boundaries.
+  Rationale: Avoid merge contention and simplify regression isolation while honoring `api/*` serialization constraints.
+  Date/Author: 2026-02-16 / Codex
+
+- Decision: Treat `PR-C1` as iterative slices with gate-green checkpoints, rather than waiting for all parity deltas before progress updates.
+  Rationale: User requested ongoing milestone execution and progress updates as slices land; slice-level gating keeps momentum and regressions contained.
+  Date/Author: 2026-02-16 / Codex
+
+- Decision: Align prelude `turn_open_proposed` emission to `event_scope=session` at source rather than loosening Event ABI validation.
+  Rationale: Schema and contract invariants define `turn_open_proposed` as pre-turn session-scope control; keeping validator strict prevents future drift.
+  Date/Author: 2026-02-16 / Codex
+
+- Decision: Introduce `api/transport` as a minimal strict bootstrap contract first, then expand fields incrementally with fixtures and adapter adoption.
+  Rationale: Establishes a stable transport API seam quickly while keeping `PR-C4` low-risk and testable per slice.
+  Date/Author: 2026-02-16 / Codex
+
+- Decision: Add `UB-R01` as an additive session-manager package first, before integrating turnarbiter ownership changes.
+  Rationale: Enables incremental lifecycle hardening with immediate test coverage while minimizing risk to existing runtime execution paths.
+  Date/Author: 2026-02-16 / Codex
+
+- Decision: Introduce a `session.Orchestrator` wrapper and route LiveKit turn-open/active handling through it, while keeping `turnarbiter` APIs unchanged.
+  Rationale: Moves runtime ownership to session-scoped lifecycle state with low migration risk and preserves compatibility for existing tests/tools that still call arbiter directly.
+  Date/Author: 2026-02-16 / Codex
+
+- Decision: Tighten `planresolver` input validation and hash composition first (slice A), while keeping execution-profile policy tables local until CP contract surfaces expose richer resolved policy artifacts.
+  Rationale: Improves plan-freeze safety immediately without blocking on broader CP/runtime API expansion, and keeps the slice small enough for deterministic gate verification.
+  Date/Author: 2026-02-16 / Codex
+
+- Decision: Add optional `ResolvedTurnPlan` threading at executor scheduling input (slice B) rather than refactoring scheduler/executor ownership boundaries.
+  Rationale: This enforces turn-plan freeze semantics at dispatch seams with minimal disruption and clear compatibility for existing call sites.
+  Date/Author: 2026-02-16 / Codex
+
+- Decision: Implement `UB-R03` as an additive `lanes` priority scheduler first, before replacing existing executor dispatch loops.
+  Rationale: Establishes deterministic queueing, saturation, and lane-priority semantics in an isolated unit with strong tests while reducing regression risk in runtime integration paths.
+  Date/Author: 2026-02-16 / Codex
+
+- Decision: Integrate lane-priority semantics into executor DAG scheduling via ready-node selection (slice B) before full queue-policy/edge-policy plumbing.
+  Rationale: This closes the highest-impact lane-priority correctness gap immediately while keeping the change small enough to remain gate-safe.
+  Date/Author: 2026-02-16 / Codex
+
+- Decision: Add `ConfigFromResolvedTurnPlan` as a policy bridge (slice C) before wiring scheduler instantiation into runtime orchestration.
+  Rationale: Makes turn-plan policy the configuration source of truth for lane queues/watermarks while preserving incremental integration safety.
+  Date/Author: 2026-02-16 / Codex
+
+- Decision: Wire lane scheduler integration directly into `executor.ExecutePlan` behind frozen-plan presence and stabilize emitted control-signal ordering before ABI normalization.
+  Rationale: This closes the highest-priority runtime-path gap for `UB-R03` while preserving compatibility for legacy callers and keeping queue-pressure semantics deterministic under lane-priority dispatch.
+  Date/Author: 2026-02-16 / Codex
+
+- Decision: Require CP policy-surface overrides to be complete (`budgets`, `provider_bindings`, `edge_buffer_policies`, `flow_control`, `recording_policy`) whenever any override is provided.
+  Rationale: Partial overrides allow hidden fallback defaults and create plan-freeze drift; all-or-nothing validation keeps turn-start policy materialization deterministic and auditable.
+  Date/Author: 2026-02-16 / Codex
+
+- Decision: Close `UB-R03` residual risk with failover-suite coverage that combines lane queue pressure and sync-loss control signaling rather than adding a partial sync runtime service.
+  Rationale: `WP-03` requires deterministic scheduler behavior under pressure; `WP-07` still owns full sync engine implementation. Coupling tests provide MVP-safe proof without crossing work-package boundaries.
+  Date/Author: 2026-02-16 / Codex
+
+- Decision: Map execution-pool saturation/closure failures to deterministic RK-25 shed semantics at node-dispatch boundary, and preserve telemetry-lane best-effort progress by treating telemetry overload shed as non-blocking.
+  Rationale: Raw pool submission errors are catastrophic and violate overload-hardening intent (`UB-R04`); converting to deterministic shed control-path behavior plus telemetry best-effort continuation keeps lane-priority invariants intact while remaining within runtime scope before full CP quota/fairness rollout.
+  Date/Author: 2026-02-16 / Codex
+
+- Decision: Add optional `tenant_id` threading from runtime open/active inputs into CP turn-start admission evaluation without making tenant mandatory for all call paths.
+  Rationale: This enables tenant-scoped admission/quota policy enforcement where tenant context is available (`F-050`) while preserving compatibility for existing transport/runtime callers that are not yet tenant-aware.
+  Date/Author: 2026-02-16 / Codex
+
+- Decision: Enforce MVP node-level concurrency/fairness at execution-pool submit time using per-task fairness keys and bounded outstanding counters, then normalize overload handling through existing scheduler shed semantics.
+  Rationale: This closes `F-109` noisy-neighbor protection with minimal boundary changes by reusing deterministic overload behavior (`shed` reasons and telemetry non-blocking semantics) instead of introducing new executor control paths.
+  Date/Author: 2026-02-16 / Codex
+
+- Decision: Extend CP materialized turn-policy surfaces with additive `node_execution_policies` and thread tenant-aware policy evaluation input so per-node concurrency/fairness limits can originate from frozen control-plane artifacts rather than only runtime-local node specs.
+  Rationale: This closes the remaining UB-R04 seam between runtime enforcement and CP authority while preserving backward compatibility (optional additive fields, default-empty policy map) and deterministic plan-freeze hashing.
+  Date/Author: 2026-02-16 / Codex
+
+- Decision: Extend CP admission distribution surfaces with additive `admission.by_tenant` and deterministic precedence (`default -> by_pipeline -> by_tenant`) while keeping admission service/output contracts unchanged.
+  Rationale: This makes tenant-scoped CP admission reject/defer outcomes authorable from snapshot artifacts and enforceable at turn-open without contract churn, closing the remaining UB-R04 CP-originated fairness gap in MVP runtime scope.
+  Date/Author: 2026-02-16 / Codex
+
+- Decision: Treat `UB-R05` state service as runtime-local hot/ephemeral boundary enforcement only, with strict authority/idempotency contracts and no in-runtime durable session persistence.
+  Rationale: This satisfies MVP authority/idempotency invariants while preserving the system-design rule that runtime compute remains stateless-by-design and durable state is externalized.
+  Date/Author: 2026-02-16 / Codex
+
+- Decision: Close `UB-R06`/`UB-R07` at MVP baseline by implementing deterministic policy engines and lifecycle/boundary controls with failover/replay evidence, deferring deeper distributed/sandbox hardening to later control-plane/security streams.
+  Rationale: This maximizes invariant coverage now (timebase/sync determinism, node host lifecycle, external boundary cancellation/limits) without crossing into post-MVP scope.
+  Date/Author: 2026-02-16 / Codex
+
+- Decision: Make MVP gate execution deterministic in no-credentials environments by preparing canonical live-provider/livekit fixture artifacts before `verify-mvp`.
+  Rationale: MVP readiness gates must be reproducible in CI/local workflows without relying on ad hoc prior live runs; fixture preparation preserves stable gate artifacts while retaining strict validation logic in CLI commands.
+  Date/Author: 2026-02-16 / Codex
 
 ## Outcomes & Retrospective
 
-Milestones completed end-to-end for this ExecPlan.
-
-Achieved outcomes:
-- Built the Spec Map artifact at `.codex/ops/mvp-backlog/spec_map.json` with repository guarantees/non-goals, governance rules, canonical guide map, MVP counts, group mapping, and high-risk invariant-linked IDs.
-- Built canonical-guide recon artifact at `.codex/ops/mvp-backlog/guide_recon.json` across all 15 guide files with status extraction, code evidence, contract surfaces, and recommended gates/tests.
-- Captured repo health in `.codex/ops/mvp-backlog/repo_health.txt` via `make verify-quick` (exit `0`).
-- Delivered `docs/mvp_backlog.md` containing required deliverables A-E:
-  - A) MVP backlog grouped by canonical area with item-level metadata.
-  - B) Parallel workstreams (6) with strict allowed path prefixes.
-  - C) Contract PR candidates (`CPR-1..CPR-4`).
-  - D) Current repo health snapshot with owner mapping logic.
-  - E) Assumptions and open questions.
-
-Validation summary:
-- Required backlog sections present.
-- MVP ID coverage reached `189/189`.
-- Canonical area representation reached `15/15`.
+- (2026-02-16) Completed `UB-R04` runtime MVP baseline with deterministic pre-turn and scheduling-point overload behavior, per-node concurrency/fairness enforcement in execution pool, and CP-originated policy/admission surfaces frozen into turn-start decisions and plan dispatch defaults.
+- Prior open control-plane completion gaps for `UB-CP03` and `UB-CP04` were closed by implementing route/token/status service surfaces, strict-vs-availability fallback mode controls, quota/rate admission governance fields, and lease token metadata propagation.
+- (2026-02-16) Completed runtime milestone closures for `UB-R05`, `UB-R06`, and `UB-R07` at MVP baseline with deterministic state/authority/idempotency enforcement, timebase+sync integrity services, and nodehost/external-node lifecycle boundaries backed by runtime/failover/replay test coverage and green repo gates.
+- (2026-02-16) Completed remaining MVP closure items: contract-stream finalization (`PR-C1..PR-C4`), control-plane command/process surface baseline, deterministic MVP gate preparation + runner, scaffold artifact sets (`pkg/contracts/v1`, `pipelines/*`, `deploy/*`), and full MVP feature verification status update (`mvp_pass=189`, `mvp_total=189`) with green `verify-quick`/`verify-full`/`verify-mvp`/`security-baseline-check`.
+- (2026-02-17) Recheck correction: prior closure marking for control-plane milestones overstated status; `UB-CP03` is reopened as incomplete and `UB-CP04` is tracked as partial pending explicit strict/availability policy, quota governance, and route/token/status surface completion.
+- (2026-02-17) Closed `UB-CP03` and `UB-CP04` by landing route/token/status APIs and command surfaces, strict-vs-availability fallback mode, quota/rate admission governance fields, and lease token id/expiry propagation with targeted control-plane/runtime suites and green `verify-quick`.
 
 ## Context and Orientation
 
-RSPP (Realtime Speech Pipeline Platform) is organized around canonical module guides and repository-level architecture documents. For this task, a “canonical guide map” means the mapping in `docs/rspp_SystemDesign.md` section `6. Canonical Implementation Guides (Merged)` that ties each architecture area to one guide file. A “Spec Map” means a structured artifact combining repository guarantees/non-goals, governance rules, canonical area mappings, and MVP feature-group mappings to code path prefixes. A “backlog item” means one executable unit of work linked to feature IDs or work package IDs, module boundaries, dependencies, test commands, and risk labels.
+RSPP MVP completion work is driven by these authoritative sources in priority order:
 
-The authoritative inputs are:
-`docs/rspp_SystemDesign.md`, `docs/RSPP_features_framework.json`, and canonical guides under `cmd/`, `internal/`, `providers/`, `transports/`, `test/`, `pipelines/`, `deploy/`, `pkg/`, and `api/`.
+1. `docs/mvp_backlog.md`
+2. `docs/rspp_SystemDesign.md`
+3. Canonical module guides:
+   - `internal/runtime/runtime_kernel_guide.md`
+   - `internal/controlplane/controlplane_module_guide.md`
+   - `internal/observability/observability_module_guide.md`
+   - `internal/tooling/tooling_and_gates_guide.md`
+   - `providers/provider_adapter_guide.md`
+   - `transports/transport_adapter_guide.md`
+   - `test/test_suite_guide.md`
+4. `docs/RSPP_features_framework.json`
 
-The required output is not just text summary. It must be an actionable MVP backlog with explicit PR boundaries, dependency edges, and verification instructions, plus a repo health snapshot that identifies failure owners.
+The non-negotiable invariants that must stay true across all milestones are:
+
+1. Turn Plan Freeze: immutable `ResolvedTurnPlan` at turn start, no in-turn mutation.
+2. Lane Priority: `ControlLane > DataLane > TelemetryLane`; telemetry never blocks control.
+3. Cancellation-first: interrupt/barge-in propagates end-to-end; output fencing mandatory.
+4. Authority/Epoch: lease epoch enforced at ingress and egress; stale authority rejected.
+5. Replay Evidence OR-02: every accepted turn emits replay-critical L0 evidence without blocking control.
+6. Stateless Runtime Compute: durable session state remains externalized per design.
 
 ## Plan of Work
 
-Milestone 1 produces the Spec Map without code changes. Parse repository-level guarantees, non-goals, governance constraints, canonical guide mapping, and MVP feature distribution. Build a deterministic group-to-area mapping by anchoring each feature group to the closest canonical module boundaries in `docs/rspp_SystemDesign.md`. Where mapping is ambiguous, record a deterministic assumption with rationale in the final backlog.
+The implementation is executed in seven waves, each with deterministic acceptance and narrow PR boundaries.
 
-Milestone 2 performs canonical guide recon for every guide file. Extract each guide’s responsibilities, prohibited scope, MVP invariants, implementation status, work packages or divergence items, contract surfaces, and required tests/gates. Validate each extracted claim against code path existence and current package/test coverage in the corresponding directories.
+### Milestone 1: Contract Lock Completion (`WS-0`)
 
-Milestone 3 synthesizes the executable backlog. Convert feature acceptance steps and guide work packages into itemized backlog entries grouped by canonical area. Every item must include feature IDs, path prefixes, dependency edges, PR boundary recommendation, done criteria, tests to add/run, and risk flags. Build at least three parallel workstreams with strict allowed path prefixes and explicit single-writer hotspots (`api/*`, `docs/RSPP_features_framework.json`, `docs/rspp_SystemDesign.md`).
+Complete `PR-C1` through `PR-C4` in order. For each PR, update typed validators, schema parity where required, and contract fixtures under `test/contract/fixtures`. `PR-C3` must be finished beyond current partial status by closing residual schema/fixture parity and consumer compatibility checks. `PR-C4` establishes transport shared contracts required by transport kernel split.
 
-Milestone 4 captures repo health and closes acceptance. Run gate commands to capture current failures and map each failure to owning module area. Write final deliverables A-E into `docs/mvp_backlog.md`, include assumptions/open questions, and record concise evidence snippets showing coverage and command outcomes.
+Milestone acceptance: contract tests and schema validation pass; no downstream module needs ad-hoc duplicate enums/shape assumptions.
+
+### Milestone 2: Runtime Core Invariants (`WS-1`)
+
+Implement `UB-R01`, `UB-R02`, and `UB-R03` first to anchor lifecycle, immutable turn plan freeze, and lane scheduling semantics. Then complete `UB-R04`, `UB-R05`, `UB-R06`, and `UB-R07` to cover overload controls, state/authority enforcement, deterministic timebase/sync semantics, and node host boundaries.
+
+Milestone acceptance: lifecycle and arbitration tests, lane/cancellation/authority conformance suites, and failover assertions prove invariants with deterministic outcomes.
+
+### Milestone 3: Control Plane Process and Authority (`WS-2`)
+
+Deliver `UB-CP01` to `UB-CP04`, moving from scaffold process surface to deterministic rollout, route/token services, and hardened lease/admission modes. Ensure runtime pre-turn bundle resolution and authority decisions use complete control-plane contract surfaces.
+
+Milestone acceptance: control-plane integration suites cover publish/list/get/rollback behavior, route/token issuance, and authority rejection/fallback semantics.
+
+### Milestone 4: Observability and Replay Completion (`WS-3`)
+
+Implement `UB-O01` to `UB-O05` to close correlation completeness, telemetry processors, OR-02 durable exporter split, replay engine/cursor execution, and divergence report + access hardening. All additions must preserve non-blocking telemetry and cancel/control-path latency guarantees.
+
+Milestone acceptance: replay suites and OR-02 completeness checks pass under normal and degraded exporter conditions, with deterministic divergence classification.
+
+### Milestone 5: Providers and Transports (`WS-5`)
+
+Complete provider policy/capability freeze and conformance (`UB-PT01`, `UB-PT02`) and transport kernel split with shared contract adoption (`UB-PT03`). Maintain strict authority/cancel fencing at transport boundaries and provider evidence alignment to OR-02.
+
+Milestone acceptance: provider/transport integration and conformance profiles pass; LiveKit baseline remains stable while WebSocket/telephony modular seams are implemented per MVP scope decision.
+
+### Milestone 6: Tooling, Gates, and Command Surfaces (`WS-4`)
+
+Complete `UB-T01` to `UB-T05`: release artifact compatibility, validate-spec/policy, replay cursor regression modes, local-runner/control-plane command surfaces, and conformance/skew governance checks. This wave also owns stewardship updates for `docs/RSPP_features_framework.json` verification status.
+
+Milestone acceptance: `verify-quick`, `verify-full`, `verify-mvp`, and security checks are aligned with feature traceability and produce required artifacts deterministically.
+
+### Milestone 7: Delivery Scaffolds and Final MVP Closure (`WS-6`)
+
+Complete `UB-S01` to `UB-S03`: `pkg/contracts/v1` facade parity, pipeline artifact sets, deployment scaffolds, and deterministic deploy verification runner. Lock final CI/gate behavior and update MVP feature statuses with evidence references.
+
+Milestone acceptance: release readiness gates and artifact generation succeed from clean checkout with reproducible outputs.
 
 ## Concrete Steps
 
-All commands below run from `/Users/tiger/Documents/projects/RealtimeSpeechPipeline`.
+Execute each PR/work package cycle from `/Users/tiger/Documents/projects/RealtimeSpeechPipeline` using this exact pattern.
 
-1. Create artifact directories and initialize output files.
+1. Synchronize scope and create one feature branch per backlog item.
 
-    mkdir -p .codex/ops/mvp-backlog
-    : > .codex/ops/mvp-backlog/spec_map.json
-    : > .codex/ops/mvp-backlog/guide_recon.json
-    : > .codex/ops/mvp-backlog/repo_health.txt
+   git checkout -b feat/<ub-id-or-pr-id>
 
-2. Build the Spec Map from authoritative docs and feature inventory.
+2. Implement only allowed path prefixes for the targeted workstream.
 
-    python3 - <<'PY'
-    import json, pathlib
-    from collections import Counter, defaultdict
-    root = pathlib.Path('.')
-    features = json.loads((root / 'docs/RSPP_features_framework.json').read_text())
-    mvp = [f for f in features if f.get('release_phase') == 'mvp']
-    by_group = Counter(f.get('group', '<missing>') for f in mvp)
-    out = {
-        "source_docs": [
-            "docs/rspp_SystemDesign.md",
-            "docs/RSPP_features_framework.json"
-        ],
-        "feature_counts": {
-            "total": len(features),
-            "mvp": len(mvp),
-            "post_mvp": len(features) - len(mvp),
-        },
-        "mvp_group_counts": dict(sorted(by_group.items())),
-        "invariant_focus": [
-            "Turn Plan Freeze",
-            "Lane Priority",
-            "Cancellation-first",
-            "Authority/Epoch",
-            "Replay Evidence OR-02",
-            "MVP simple/v1-only profile",
-            "Runtime stateless compute with external durable state"
-        ],
-    }
-    (root / '.codex/ops/mvp-backlog/spec_map.json').write_text(json.dumps(out, indent=2) + '\n')
-    print("wrote .codex/ops/mvp-backlog/spec_map.json")
-    PY
+3. Add unit + contract + integration tests for the changed behavior, including negative-path assertions.
 
-3. Extract canonical guide recon fields for each guide and store structured JSON.
+4. Run targeted module tests first.
 
-    python3 - <<'PY'
-    import json, pathlib, re
-    guides = [
-      "cmd/command_entrypoints_guide.md",
-      "internal/controlplane/controlplane_module_guide.md",
-      "internal/runtime/runtime_kernel_guide.md",
-      "internal/observability/observability_module_guide.md",
-      "internal/tooling/tooling_and_gates_guide.md",
-      "internal/shared/internal_shared_guide.md",
-      "providers/provider_adapter_guide.md",
-      "transports/transport_adapter_guide.md",
-      "test/test_suite_guide.md",
-      "pipelines/pipeline_scaffolds_guide.md",
-      "deploy/deployment_scaffolds_guide.md",
-      "pkg/public_package_scaffold_guide.md",
-      "api/controlplane/controlplane_api_guide.md",
-      "api/eventabi/eventabi_api_guide.md",
-      "api/observability/observability_api_guide.md",
-    ]
-    data = []
-    for rel in guides:
-        text = pathlib.Path(rel).read_text()
-        headings = [ln.strip() for ln in text.splitlines() if ln.startswith('#')]
-        status_hits = sorted(set(re.findall(r'\\b(implemented|partial|scaffold|divergence|backlog)\\b', text, flags=re.I)))
-        data.append({
-          "guide_path": rel,
-          "headings": headings,
-          "status_keywords": status_hits,
-          "code_prefix_hint": rel.split('/')[0] + '/',
-        })
-    pathlib.Path('.codex/ops/mvp-backlog/guide_recon.json').write_text(json.dumps(data, indent=2) + '\\n')
-    print("wrote .codex/ops/mvp-backlog/guide_recon.json")
-    PY
+   go test ./<touched-package>/...
 
-4. Run repository health checks and capture failures for owner mapping.
+5. Run mandatory repo gates before merging each work package.
 
-    make verify-quick > .codex/ops/mvp-backlog/repo_health.txt 2>&1 || true
-    if ! grep -q "PASS" .codex/ops/mvp-backlog/repo_health.txt; then go test ./... >> .codex/ops/mvp-backlog/repo_health.txt 2>&1 || true; fi
+   make verify-quick
+   make verify-full
+   make security-baseline-check
 
-5. Author final backlog deliverable with required sections A-E.
+6. For replay/observability and tooling milestones, run replay and gate artifact commands as required by changed modules.
 
-    Edit docs/mvp_backlog.md and include:
-    - A) MVP backlog grouped by canonical area with item metadata.
-    - B) Parallel workstreams (>=3) with strict allowed path prefixes.
-    - C) Contract PR candidates for `api/*` dependencies.
-    - D) Repo health snapshot with failure list and owner mapping.
-    - E) Assumptions and open questions that do not block execution.
+   go run ./cmd/rspp-cli replay-smoke-report
+   go run ./cmd/rspp-cli slo-gates-report
+   go run ./cmd/rspp-cli slo-gates-mvp-report
 
-6. Validate final coverage and formatting before completion.
+7. Update this file immediately after each merge-ready milestone by checking completed progress items and adding evidence notes.
 
-    python3 - <<'PY'
-    import json, pathlib
-    spec = json.loads(pathlib.Path('.codex/ops/mvp-backlog/spec_map.json').read_text())
-    text = pathlib.Path('docs/mvp_backlog.md').read_text()
-    required = ['MVP Backlog', 'Parallel Workstreams', 'Contract PR Candidates', 'Current Repo Health Snapshot', 'Assumptions', 'Open Questions']
-    missing = [k for k in required if k not in text]
-    print('mvp_count', spec['feature_counts']['mvp'])
-    print('missing_sections', missing)
-    raise SystemExit(1 if missing else 0)
-    PY
-
-Expected command evidence to record in this plan and `docs/mvp_backlog.md`:
-
-    feature_count: 214
-    mvp: 189
-    post_mvp: 25
-    canonical_guides_found: 15/15
-    verify-quick: <pass|fail with failing package list>
+8. Update `docs/RSPP_features_framework.json` verification fields only when corresponding tests and gate evidence are present.
 
 ## Validation and Acceptance
 
-Acceptance is behavior-based and must be demonstrated with artifacts and command output. A reader is successful when they can run the extraction commands, produce `spec_map.json` and `guide_recon.json`, and open `docs/mvp_backlog.md` to find complete deliverables A-E.
+Each milestone is accepted only when both behavior and evidence are present.
 
-`docs/mvp_backlog.md` must show every MVP backlog item grouped by canonical area, with each item explicitly containing feature IDs or work package IDs, target path prefixes, dependency edges, PR boundaries, done criteria, test commands, and risk flags. The document must also include at least three non-overlapping workstreams with strict allowed prefixes and explicit single-writer hotspots.
+Behavior acceptance criteria:
 
-`repo_health.txt` must include the latest gate run evidence. Any failures must be mapped to owners in the backlog document using the canonical ownership model from `docs/rspp_SystemDesign.md` section `7. Documentation and Ownership Operating Rules`.
+1. Runtime invariants are asserted by tests across lifecycle, lanes, cancellation, authority, and replay evidence.
+2. Control-plane outputs and runtime consumption remain contract-compatible and deterministic.
+3. Telemetry and OR-02 recording remain non-blocking for control-path and cancellation.
+4. Replay modes/cursor and divergence reporting are deterministic and operator-consumable.
+5. Provider and transport flows enforce policy, budget, authority, and output fencing semantics.
+
+Evidence acceptance criteria:
+
+1. `make verify-quick` passes.
+2. `make verify-full` passes.
+3. `make security-baseline-check` passes.
+4. MVP gate artifacts are generated and pass threshold evaluation.
+5. `docs/RSPP_features_framework.json` MVP items are moved to verified status with traceable tests/artifacts.
+
+Final MVP completion criteria:
+
+1. All checklist items in `Progress` are checked.
+2. MVP feature count is fully verified (`mvp_pass == mvp_total`) with traceable evidence links.
+3. Release readiness pipeline is green on clean checkout.
 
 ## Idempotence and Recovery
 
-This process is designed to be rerun safely. The JSON/text artifacts in `.codex/ops/mvp-backlog/` are regenerated in place, so rerunning updates state rather than duplicating it. If `make verify-quick` fails early, fallback to `go test ./...` and record partial coverage explicitly as a known gap.
+This plan is intentionally idempotent and safe for incremental execution.
 
-If extraction scripts fail due to schema drift, update the parser logic in-place, rerun from Step 2, and append the schema change in `Decision Log` and `Surprises & Discoveries`. Do not modify runtime/control-plane code to complete this task unless a minimal fix is strictly required for executing health checks; if such a fix is required, isolate it into a separate commit and record why.
+1. Each work package is additive and branch-scoped; failed milestones can be retried by rerunning the same test/gate sequence.
+2. If a milestone fails a gate, revert only the milestone branch changes, keep this plan updated, and split the failing item into smaller PR slices.
+3. Never bypass invariant tests to achieve temporary green status.
+4. If cross-stream conflicts arise, pause and rebase the later stream against the merged contract/runtime baseline before continuing.
 
 ## Artifacts and Notes
 
-Current baseline evidence captured during planning:
+Use these artifact locations as evidence anchors when checking items in `Progress`:
 
-    docs/RSPP_features_framework.json container_type: list
-    total features: 214
-    MVP features: 189
-    post-MVP features: 25
-    canonical guide files present: 15/15
+- `.codex/ops/contracts-report.json`
+- `.codex/ops/contracts-report.md`
+- `.codex/replay/smoke-report.json`
+- `.codex/replay/regression-report.json`
+- `.codex/ops/slo-gates-report.json`
+- `.codex/ops/slo-gates-mvp-report.json`
+- `.codex/release/release-manifest.json`
 
-Artifacts to maintain during implementation:
-`docs/mvp_backlog.md`, `.codex/ops/mvp-backlog/spec_map.json`, `.codex/ops/mvp-backlog/guide_recon.json`, `.codex/ops/mvp-backlog/repo_health.txt`.
+For each completed work package, add one short note in this file containing:
+
+- PR/work-package ID
+- files changed
+- tests and gates run
+- feature IDs closed
+- known residual risks
 
 ## Interfaces and Dependencies
 
-This task depends on the consistency of three authoritative interfaces:
-the repository architecture interface in `docs/rspp_SystemDesign.md`, the feature inventory interface in `docs/RSPP_features_framework.json`, and the module contract interfaces in each canonical guide. “Interface” here means the stable shape of definitions and obligations that backlog items must trace to.
+Execution dependencies are strict and must be preserved:
 
-The structured artifacts must expose stable keys so downstream automation can consume them. `spec_map.json` must provide `authoritative_sources`, `repo_level`, `governance`, `canonical_guide_map`, `feature_inventory`, and `feature_group_to_area_mapping`. `guide_recon.json` must provide one record per canonical guide with at least `guide_path`, `headings`, `status_keywords`, and `current_status` evidence. `docs/mvp_backlog.md` must retain fixed section names for deliverables A-E so reviewers and agents can verify completeness deterministically.
+1. Contract stream order: `PR-C1 -> PR-C2 -> PR-C3 -> PR-C4`.
+2. Runtime core (`UB-R01..UB-R03`) must complete before observability replay engine and major provider/transport upgrades.
+3. Control-plane route/token/lease hardening (`UB-CP03`, `UB-CP04`) is prerequisite for full runtime state/authority and transport routing safety.
+4. OR-02 durable exporter (`UB-O03`) is prerequisite for replay engine/cursor (`UB-O04`) and replay tooling cursor resume (`UB-T03`).
+5. Tooling feature-status stewardship (`UB-T05`) is required to close MVP verification tracking in `docs/RSPP_features_framework.json`.
 
-Revision Note (2026-02-16 08:35Z): Initial ExecPlan created to implement `prompt.md` backlog task with PLANS-compliant living sections, concrete command flow, and acceptance criteria.
-Revision Note (2026-02-16 08:42Z): Updated plan to completed state after executing all milestones; recorded produced artifacts, verification evidence (`verify-quick` exit `0`), full MVP coverage (`189/189`), and canonical-area coverage (`15/15`) so the next contributor can resume from current reality.
+Primary hotspot files to coordinate carefully:
+
+- `api/eventabi/types.go`
+- `api/controlplane/types.go`
+- `api/observability/types.go`
+- `internal/runtime/turnarbiter/arbiter.go`
+- `internal/runtime/planresolver/resolver.go`
+- `internal/runtime/executor/scheduler.go`
+- `internal/controlplane/lease/lease.go`
+- `internal/observability/replay/service.go`
+- `internal/tooling/regression/divergence.go`
+- `docs/RSPP_features_framework.json`
+
+Revision note (2026-02-16): Created master MVP completion ExecPlan with dependency-ordered waves, invariant-preserving acceptance criteria, and a living progress checklist in `task.md`.
+Revision note (2026-02-16): Closed `UB-R04` runtime MVP scope by adding CP tenant admission override distribution support (`admission.by_tenant`), related runtime/distribution tests, canonical guide updates, and explicit residual-scope boundary to `UB-CP04`.
+Revision note (2026-02-16): Closed `UB-R05`, `UB-R06`, and `UB-R07` for MVP baseline with code in `internal/runtime/state`, `internal/runtime/timebase`, `internal/runtime/sync`, `internal/runtime/nodehost`, and `internal/runtime/externalnode`, plus failover/replay/integration evidence and green `verify-quick`/`verify-full`/`security-baseline-check`.
+Revision note (2026-02-16): Closed remaining contract/control-plane/observability/provider/tooling/scaffold milestones, added deterministic MVP gate fixture prep + deploy gate runner, promoted `pkg/contracts/v1` facade and pipeline/deploy artifact sets, implemented `cmd/rspp-control-plane` process command surface, and updated `docs/RSPP_features_framework.json` to `mvp_pass == mvp_total` with traceable evidence refs and green `verify-quick`/`verify-full`/`verify-mvp`/`security-baseline-check`.
